@@ -233,6 +233,8 @@
     <ClCompile Include="CullingManager.cpp" />
     <ClCompile Include="GrpBase.cpp" />
     <ClCompile Include="GrpDetector.cpp" />
+    <ClCompile Include="DX11Device.cpp" />
+    <ClCompile Include="DX11ShaderLibrary.cpp" />
     <ClCompile Include="GrpDevice.cpp" />
     <ClCompile Include="GrpMath.cpp" />
     <ClCompile Include="GrpScreen.cpp" />
@@ -310,6 +312,8 @@
     <ClInclude Include="CullingManager.h" />
     <ClInclude Include="GrpBase.h" />
     <ClInclude Include="GrpDetector.h" />
+    <ClInclude Include="DX11Device.h" />
+    <ClInclude Include="DX11ShaderLibrary.h" />
     <ClInclude Include="GrpDevice.h" />
     <ClInclude Include="GrpMath.h" />
     <ClInclude Include="GrpScreen.h" />
