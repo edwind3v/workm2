@@ -33,8 +33,15 @@ void CGrannyMesh::LoadIndices(void * dstBaseIndices) const
 	// during character animation can yield invalid debug-heap values such as
 	// 0xCDCD / 0xDDDD after the source topology's lifetime has ended.
 	const char* mode = graphics::GetDX11GrannyCaptureMode();
+	const bool characterMode = strcmp(mode, "character") == 0;
 	const int vertexCount = GrannyGetMeshVertexCount(pgrnMesh);
 	const int indexCount = GrannyGetMeshIndexCount(pgrnMesh);
+	// Full-character capture must retain small costume detail meshes too.
+	// Keep the original larger minimum for the single-mesh diagnostic.
+	const int minVertices = characterMode ? 3 : 12;
+	const int minIndices = characterMode ? 3 : 36;
+	const int maxVertices = characterMode ? 60000 : 30000;
+	const int maxIndices = characterMode ? 180000 : 90000;
 	if (indexCount > 0 && m_dx11PreviewIndices.size() == static_cast<size_t>(indexCount))
 	{
 		memcpy(dstIndices, m_dx11PreviewIndices.data(),
@@ -43,8 +50,8 @@ void CGrannyMesh::LoadIndices(void * dstBaseIndices) const
 	}
 	if (strcmp(mode, "off") != 0 &&
 		(strcmp(mode, "skinned") != 0 || !GrannyMeshIsRigid(pgrnMesh)) &&
-		vertexCount >= 12 && vertexCount <= 30000 &&
-		indexCount >= 36 && indexCount <= 90000 && indexCount % 3 == 0)
+		vertexCount >= minVertices && vertexCount <= maxVertices &&
+		indexCount >= minIndices && indexCount <= maxIndices && indexCount % 3 == 0)
 	{
 		const size_t bytes = static_cast<size_t>(indexCount) * sizeof(TIndex);
 		if (bytes <= kDX11PreviewIndexBudget - s_dx11PreviewIndexBytes)
@@ -86,7 +93,7 @@ void CGrannyMesh::LoadPNTVertices(void * dstBaseVertices) const
 	if (strcmp(graphics::GetDX11GrannyCaptureMode(), "character") == 0)
 	{
 		const int count = GrannyGetMeshVertexCount(pgrnMesh);
-		if (count >= 12 && count <= 30000 && m_dx11PreviewRigidVertices.empty())
+		if (count >= 3 && count <= 60000 && m_dx11PreviewRigidVertices.empty())
 		{
 			const size_t bytes = static_cast<size_t>(count) * sizeof(TPNTVertex);
 			if (bytes <= kDX11PreviewRigidVertexBudget - s_dx11PreviewRigidVertexBytes)
@@ -113,7 +120,7 @@ void CGrannyMesh::NEW_LoadVertices(void * dstBaseVertices) const
 	if (strcmp(graphics::GetDX11GrannyCaptureMode(), "character") == 0)
 	{
 		const int count = GrannyGetMeshVertexCount(pgrnMesh);
-		if (count >= 12 && count <= 30000 && m_dx11PreviewRigidVertices.empty())
+		if (count >= 3 && count <= 60000 && m_dx11PreviewRigidVertices.empty())
 		{
 			const size_t bytes = static_cast<size_t>(count) * sizeof(TPNTVertex);
 			if (bytes <= kDX11PreviewRigidVertexBudget - s_dx11PreviewRigidVertexBytes)

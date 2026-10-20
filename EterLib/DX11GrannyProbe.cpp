@@ -708,13 +708,18 @@ bool CaptureDX11GrannyMesh(const DX11GrannyVertex* vertices, UINT vertexCount,
 	// Checking WantsDX11GrannyCapture here would consume/reject that attempt.
 	if (!CaptureEnabled(skinned))
 		return RejectCapture("not_pending", 0, skinned ? 1 : 0, 1);
-	if (!vertices || !indices || vertexCount < 12 || vertexCount > kMaxVertices ||
-		indexCount < 36 || indexCount > kMaxIndices || indexCount % 3 != 0)
-		return RejectCapture("invalid_geometry", 0, vertexCount, indexCount);
-	if (groupCount > kMaxMaterialGroups || (groupCount && !groups))
-		return RejectCapture("invalid_group_count", 0, groupCount, kMaxMaterialGroups);
-	DX11GrannySnapshot& capture = PendingSnapshot();
 	const bool composite = GetCaptureConfig().primaryCharacter;
+	const UINT minVertices = composite ? 3u : 12u;
+	const UINT minIndices = composite ? 3u : 36u;
+	const UINT maxVertices = composite ? kMaxCharacterVertices : kMaxVertices;
+	const UINT maxIndices = composite ? kMaxCharacterIndices : kMaxIndices;
+	const UINT maxGroups = composite ? kMaxCharacterGroups : kMaxMaterialGroups;
+	if (!vertices || !indices || vertexCount < minVertices || vertexCount > maxVertices ||
+		indexCount < minIndices || indexCount > maxIndices || indexCount % 3 != 0)
+		return RejectCapture("invalid_geometry", 0, vertexCount, indexCount);
+	if (groupCount > maxGroups || (groupCount && !groups))
+		return RejectCapture("invalid_group_count", 0, groupCount, maxGroups);
+	DX11GrannySnapshot& capture = PendingSnapshot();
 	if (composite &&
 		(capture.vertices.size() + vertexCount > kMaxCharacterVertices ||
 		capture.indices.size() + indexCount > kMaxCharacterIndices ||

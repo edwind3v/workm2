@@ -56,6 +56,15 @@ void CGrannyModelInstance::TryCaptureDX11ModelPreview(const TPNTVertex* deformed
 		return;
 	static_assert(sizeof(TPNTVertex) == sizeof(graphics::DX11GrannyVertex),
 		"Granny TPNTVertex must be POSITION/NORMAL/TEXCOORD0 float3/float3/float2");
+	const bool compositeMode = graphics::IsDX11PrimaryCharacterCaptureActive();
+	const int minVertices = compositeMode ? 3 : 12;
+	const int minIndices = compositeMode ? 3 : 36;
+	const int maxVertices = compositeMode ? 60000 : 30000;
+	const int maxIndices = compositeMode ? 180000 : 90000;
+	static unsigned reportedSkips = 0;
+	static unsigned reportedScans = 0;
+	unsigned skippedSize = 0;
+	unsigned skippedUncached = 0;
 	unsigned matchingMeshes = 0;
 	unsigned eligibleMeshes = 0;
 	unsigned cachedMeshes = 0;
@@ -72,9 +81,15 @@ void CGrannyModelInstance::TryCaptureDX11ModelPreview(const TPNTVertex* deformed
 		++matchingMeshes;
 		const int vertexCount = GrannyGetMeshVertexCount(grannyMesh);
 		const int indexCount = GrannyGetMeshIndexCount(grannyMesh);
-		if (vertexCount < 12 || vertexCount > 30000 ||
-			indexCount < 36 || indexCount > 90000 || indexCount % 3)
+		if (vertexCount < minVertices || vertexCount > maxVertices ||
+			indexCount < minIndices || indexCount > maxIndices || indexCount % 3)
+		{
+			++skippedSize;
+			if (compositeMode && reportedSkips++ < 24)
+				TraceError("DX11_CHARACTER_SKIP name=\"%s\" reason=geometry_limits vertices=%d indices=%d",
+					grannyMesh->Name ? grannyMesh->Name : "", vertexCount, indexCount);
 			continue;
+		}
 		++eligibleMeshes;
 
 		// Use the CPU index copy made when the model's working DX9Ex index
@@ -82,7 +97,14 @@ void CGrannyModelInstance::TryCaptureDX11ModelPreview(const TPNTVertex* deformed
 		// by the time the live actor is deformed/rendered.
 		const std::vector<WORD>& meshIndices = mesh->GetDX11PreviewIndices();
 		if (meshIndices.size() != static_cast<size_t>(indexCount))
+		{
+			++skippedUncached;
+			if (compositeMode && reportedSkips++ < 24)
+				TraceError("DX11_CHARACTER_SKIP name=\"%s\" reason=uncached_indices vertices=%d indices=%d cached=%u",
+					grannyMesh->Name ? grannyMesh->Name : "", vertexCount, indexCount,
+					static_cast<UINT>(meshIndices.size()));
 			continue;
+		}
 		++cachedMeshes;
 		std::vector<TPNTVertex> rigidVertices;
 		const TPNTVertex* source = nullptr;
@@ -207,6 +229,12 @@ void CGrannyModelInstance::TryCaptureDX11ModelPreview(const TPNTVertex* deformed
 				const graphics::DX11GrannyMaterialGroup& b) {
 				return a.firstIndex < b.firstIndex;
 			});
+		// If a GR2 has polygons outside its material groups, the preview
+		// cannot shade those triangles. Record coverage for diagnosis without
+		// changing the material ranges used by the working DX9Ex path.
+		unsigned groupedIndices = 0;
+		for (const auto& group : materials)
+			groupedIndices += group.indexCount;
 		++submittedMeshes;
 		if (graphics::CaptureDX11GrannyMesh(
 			previewVertices.data(),
@@ -216,16 +244,23 @@ void CGrannyModelInstance::TryCaptureDX11ModelPreview(const TPNTVertex* deformed
 		{
 			capturedAny = true;
 			if (composite)
-				TraceError("DX11_CHARACTER_MESH name=\"%s\" type=%s source=%s vertices=%d indices=%d repaired_normals=%u repaired_uvs=%u space=world",
+				TraceError("DX11_CHARACTER_MESH name=\"%s\" type=%s source=%s vertices=%d indices=%d groups=%u grouped_indices=%u repaired_normals=%u repaired_uvs=%u space=world",
 					grannyMesh->Name ? grannyMesh->Name : "", chooseDeformed ? "skinned" : "rigid",
 					chooseDeformed ? "deformed" : usedRigidCache ? "load_cache" : "granny_copy",
-					vertexCount, indexCount, repairedNormals, repairedUVs);
+					vertexCount, indexCount, static_cast<UINT>(materials.size()),
+					groupedIndices, repairedNormals, repairedUVs);
 			// A single-mesh probe stops here. The explicit main-character
 			// scope collects every eligible mesh across active costume parts.
 			if (!graphics::IsDX11PrimaryCharacterCaptureActive())
 				return;
 		}
 	}
+	// Report once per model instance in the main actor's one-shot capture.
+	// This distinguishes a missing GR2 mesh from a texture/material problem.
+	if (compositeMode && matchingMeshes && reportedScans++ < 24)
+		TraceError("DX11_CHARACTER_SCAN mode=%s matching=%u eligible=%u cached=%u submitted=%u skipped_limits=%u skipped_uncached=%u",
+			chooseDeformed ? "skinned" : "rigid", matchingMeshes, eligibleMeshes,
+			cachedMeshes, submittedMeshes, skippedSize, skippedUncached);
 	if (capturedAny)
 		return;
 	if (graphics::IsDX11PrimaryCharacterCaptureActive() && matchingMeshes == 0)

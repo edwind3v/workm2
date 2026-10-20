@@ -389,6 +389,29 @@ private SM5 bytecode, are intentionally not bundled with the public source.
   still report `DX11_MODEL_MATERIAL_FALLBACK advanced_pixels=0`, advanced
   shader parity is a **separate unresolved task**, even if geometry improves.
 
+## Character costume mesh-completeness checkpoint
+
+- The original diagnostic rejected meshes with fewer than 12 vertices or
+  36 indices (12 triangles), even when collecting a full character. In
+  `M2_DX11_CHARACTER_COMPOSITE=1` mode, eligible GR2 pieces now need only
+  three vertices and one triangle. The single-mesh diagnostic retains its
+  previous limits.
+- At load time, cache small mesh indices and rigid vertex data through the
+  same bounded capture paths used by the working preview. This prevents
+  tiny costume ornaments or attachments from disappearing solely because
+  they fell below a diagnostic-only threshold.
+- `DX11_CHARACTER_SKIP` identifies meshes skipped for geometry bounds or
+  unavailable cached indices (first 24 only).
+  `DX11_CHARACTER_SCAN` summarizes matching, eligible, cached, submitted,
+  and skipped counts for up to 24 model-instance visits.
+  `DX11_CHARACTER_MESH` now also reports its material `groups`,
+  `grouped_indices`, and total `indices`. If `grouped_indices` is less
+  than `indices`, some polygons are not assigned to a DX11 material group.
+- This is an opt-in **static diagnostic capture**, not live animation or
+  a completed Baerim-equivalent renderer. Uncaptured models, missing material
+  groups, equipment effects, and non-Granny attachments require separate
+  verification on a Windows game session.
+
 ## Build guidance
 
 Open `Metin2Client.sln` in Visual Studio and compile `eterlib` as `Win32`.
