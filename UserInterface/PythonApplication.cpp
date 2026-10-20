@@ -539,9 +539,22 @@ bool CPythonApplication::Process()
 					modelCoveredPixels,
 					modelPixel[0], modelPixel[1], modelPixel[2], modelPixel[3]);
 				if (!snapshot.groups.empty())
+				{
 					TraceError("DX11_MODEL_MATERIAL first_diffuse=\"%.180s\" first_opacity=\"%.180s\"",
 						snapshot.groups[0].diffusePath.c_str(),
 						snapshot.groups[0].opacityPath.c_str());
+					UINT blendedGroups = 0;
+					UINT twoSidedGroups = 0;
+					UINT specularGroups = 0;
+					for (const auto& group : snapshot.groups)
+					{
+						if (group.alphaBlend) ++blendedGroups;
+						if (group.twoSided) ++twoSidedGroups;
+						if (group.specularEnabled) ++specularGroups;
+					}
+					TraceError("DX11_MODEL_MATERIAL_STATE blend_groups=%u two_sided_groups=%u specular_groups=%u model_params_bytes=48 sphere_map=unimplemented",
+						blendedGroups, twoSidedGroups, specularGroups);
+				}
 			}
 			else
 			{

@@ -90,12 +90,26 @@ cbuffer ObjectTransform : register(b0)
 };
 cbuffer ModelParamsPS : register(b1)
 {
-    // X: diffuse is bound, Y: opacity mask is bound.
+    // Matches the 48-byte reflected layout of the reference model-preview PS.
+    float AlphaRef;
+    float Reflection;
+    float2 _pad_cb1_0_zw;
+    float SpecularPower;
+    float UseDiffuse;
+    float UseSphereMap;
+    float AddColor;
+    float ModulateColor;
+    float3 PreviewEyePos;
+};
+cbuffer PreviewMaterialExt : register(b2)
+{
+    // X: opacity map bound, Y: alpha-blended group.
     float4 materialFlags;
 };
-Texture2D Diffuse : register(t0);
-Texture2D Opacity : register(t1);
-SamplerState DiffSamp : register(s0);
+Texture2D Diffuse : register(t7);
+// The reference shader uses t8 for a sphere map; not yet ported here.
+Texture2D Opacity : register(t9);
+SamplerState DiffSamp : register(s1);
 struct VSInput
 {
     float3 position : POSITION;
@@ -118,24 +132,56 @@ VSOutput VSMain(VSInput input)
 }
 float4 PSMain(VSOutput input) : SV_Target
 {
-    float light = 0.32 + 0.68 * saturate(dot(normalize(input.normal),
-                                                   normalize(float3(0.4, 0.3, 0.85))));
+    float3 normal = normalize(input.normal);
+    float3 lightDirection = normalize(float3(0.4, 0.3, 0.85));
+    float light = 0.32 + 0.68 * saturate(dot(normal, lightDirection));
     // Diffuse is an actual CGrannyMaterial texture, decoded from the pack.
     // Missing textures retain the earlier cyan diagnostic material.
     float3 albedo = float3(0.25, 0.74, 0.94);
-    if (materialFlags.x > 0.5)
+    float alpha = 1.0;
+    if (UseDiffuse > 0.5)
     {
         float4 texel = Diffuse.Sample(DiffSamp, input.uv);
-        clip(texel.a - 0.05);
+        alpha = texel.a;
         albedo = texel.rgb;
     }
     else
         albedo *= 0.88 + 0.12 * sin(input.uv.x * 30.0) * sin(input.uv.y * 30.0);
-    if (materialFlags.y > 0.5)
-        clip(Opacity.Sample(DiffSamp, input.uv).r - 0.05);
-    return float4(albedo * light, 1.0);
+    if (materialFlags.x > 0.5)
+        alpha *= Opacity.Sample(DiffSamp, input.uv).r;
+    // Opaque and cutout materials discard transparent texels. Blended
+    // materials preserve their alpha for the explicit D3D11 blend pass.
+    if (materialFlags.y < 0.5)
+        clip(alpha - AlphaRef);
+    float3 highlight = float3(0, 0, 0);
+    if (Reflection > 0.0)
+    {
+        float3 eyeDirection = normalize(PreviewEyePos);
+        float3 halfVector = normalize(lightDirection + eyeDirection);
+        float power = clamp(8.0 + SpecularPower * 0.5, 8.0, 128.0);
+        highlight = Reflection * pow(saturate(dot(normal, halfVector)), power);
+    }
+    return float4(saturate((albedo * light + highlight + AddColor) * ModulateColor),
+        materialFlags.y > 0.5 ? alpha : 1.0);
 }
 )";
+
+// Reflected reference model_preview_ps ModelParamsPS layout: 48 bytes, b1.
+// Our shader is independently authored; this enables incremental parity
+// without embedding or depending on the private compiled shader bytecode.
+struct ModelParamsPSData
+{
+	float alphaRef;
+	float reflection;
+	float padding[2];
+	float specularPower;
+	float useDiffuse;
+	float useSphereMap;
+	float addColor;
+	float modulateColor;
+	float previewEyePos[3];
+};
+static_assert(sizeof(ModelParamsPSData) == 48, "Preview material constant layout");
 
 struct ModelPipeline
 {
@@ -144,9 +190,12 @@ struct ModelPipeline
 	DX11Buffer vb;
 	DX11Buffer ib;
 	DX11Buffer cb;
+	DX11Buffer materialParams;
 	DX11Buffer materialFlags;
 	DX11InputLayout layout;
 	Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthState;
+	Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthReadOnlyState;
+	Microsoft::WRL::ComPtr<ID3D11BlendState> alphaBlendState;
 	Microsoft::WRL::ComPtr<ID3D11RasterizerState> rasterizer;
 	Microsoft::WRL::ComPtr<ID3D11SamplerState> sampler;
 };
@@ -278,6 +327,13 @@ HRESULT CreateModelPipeline(ID3D11Device* device,
 	D3DXMatrixMultiply(&viewProjection, &view, &projection);
 	hr = pipeline->cb.CreateConstant(device, &viewProjection, sizeof(viewProjection));
 	if (FAILED(hr)) return hr;
+	ModelParamsPSData params = {};
+	params.modulateColor = 1.0f;
+	params.previewEyePos[0] = eye.x;
+	params.previewEyePos[1] = eye.y;
+	params.previewEyePos[2] = eye.z;
+	hr = pipeline->materialParams.CreateConstant(device, &params, sizeof(params), true);
+	if (FAILED(hr)) return hr;
 	const float flags[4] = {};
 	hr = pipeline->materialFlags.CreateConstant(device, flags, sizeof(flags), true);
 	if (FAILED(hr)) return hr;
@@ -296,6 +352,21 @@ HRESULT CreateModelPipeline(ID3D11Device* device,
 	depth.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
 	hr = device->CreateDepthStencilState(&depth, pipeline->depthState.GetAddressOf());
 	if (FAILED(hr)) return hr;
+	depth.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+	hr = device->CreateDepthStencilState(&depth, pipeline->depthReadOnlyState.GetAddressOf());
+	if (FAILED(hr)) return hr;
+	D3D11_BLEND_DESC blend = {};
+	D3D11_RENDER_TARGET_BLEND_DESC& alpha = blend.RenderTarget[0];
+	alpha.BlendEnable = TRUE;
+	alpha.SrcBlend = D3D11_BLEND_SRC_ALPHA;
+	alpha.DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+	alpha.BlendOp = D3D11_BLEND_OP_ADD;
+	alpha.SrcBlendAlpha = D3D11_BLEND_ONE;
+	alpha.DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+	alpha.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+	alpha.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+	hr = device->CreateBlendState(&blend, pipeline->alphaBlendState.GetAddressOf());
+	if (FAILED(hr)) return hr;
 	D3D11_RASTERIZER_DESC raster = {};
 	raster.FillMode = D3D11_FILL_SOLID;
 	raster.CullMode = D3D11_CULL_NONE;
@@ -312,27 +383,53 @@ HRESULT DrawModel(ID3D11DeviceContext* context, ModelPipeline& pipeline,
 	pipeline.vb.BindVertex(context);
 	pipeline.ib.BindIndex(context);
 	pipeline.cb.BindVSConstant(context);
-	pipeline.materialFlags.BindPSConstant(context, 1);
+	pipeline.materialParams.BindPSConstant(context, 1);
+	pipeline.materialFlags.BindPSConstant(context, 2);
 	ID3D11SamplerState* sampler = pipeline.sampler.Get();
-	context->PSSetSamplers(0, 1, &sampler);
+	context->PSSetSamplers(1, 1, &sampler);
 	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	pipeline.vs.Bind(context);
 	pipeline.ps.Bind(context);
-	for (size_t groupIndex = 0; groupIndex < snapshot.groups.size(); ++groupIndex)
+	// Draw all opaque groups first; then blended groups with depth testing
+	// but no depth writes. Per-triangle sorting is not yet part of this preview.
+	for (int blendPass = 0; blendPass < 2; ++blendPass)
 	{
-		const DX11GrannyMaterialGroup& group = snapshot.groups[groupIndex];
-		const ModelMaterial& material = materials[groupIndex];
-		const float flags[4] = { material.diffuse ? 1.0f : 0.0f,
-			material.opacity ? 1.0f : 0.0f, 0.0f, 0.0f };
-		const HRESULT hr = pipeline.materialFlags.Update(context, flags, sizeof(flags));
-		if (FAILED(hr)) return hr;
-		ID3D11ShaderResourceView* empty = nullptr;
-		context->PSSetShaderResources(0, 1, &empty);
-		context->PSSetShaderResources(1, 1, &empty);
-		if (material.diffuse) material.diffuse->BindPS(context, 0);
-		if (material.opacity) material.opacity->BindPS(context, 1);
-		context->DrawIndexed(group.indexCount, group.firstIndex, 0);
+		const bool blended = blendPass != 0;
+		context->OMSetDepthStencilState(blended ?
+			pipeline.depthReadOnlyState.Get() : pipeline.depthState.Get(), 0);
+		context->OMSetBlendState(blended ? pipeline.alphaBlendState.Get() :
+			nullptr, nullptr, 0xffffffff);
+		for (size_t groupIndex = 0; groupIndex < snapshot.groups.size(); ++groupIndex)
+		{
+			const DX11GrannyMaterialGroup& group = snapshot.groups[groupIndex];
+			if (group.alphaBlend != blended)
+				continue;
+			const ModelMaterial& material = materials[groupIndex];
+			ModelParamsPSData params = {};
+			params.alphaRef = blended ? 0.0f : 0.05f;
+			params.reflection = group.specularEnabled ? 0.18f : 0.0f;
+			params.specularPower = std::isfinite(group.specularPower) ?
+				(std::max)(0.0f, (std::min)(256.0f, group.specularPower)) : 0.0f;
+			params.useDiffuse = material.diffuse ? 1.0f : 0.0f;
+			params.modulateColor = 1.0f;
+			params.previewEyePos[0] = 2.8f;
+			params.previewEyePos[1] = -3.0f;
+			params.previewEyePos[2] = 2.0f;
+			HRESULT hr = pipeline.materialParams.Update(context, &params, sizeof(params));
+			if (FAILED(hr)) return hr;
+			const float flags[4] = { material.opacity ? 1.0f : 0.0f,
+				blended ? 1.0f : 0.0f, 0.0f, 0.0f };
+			hr = pipeline.materialFlags.Update(context, flags, sizeof(flags));
+			if (FAILED(hr)) return hr;
+			ID3D11ShaderResourceView* empty = nullptr;
+			context->PSSetShaderResources(7, 1, &empty);
+			context->PSSetShaderResources(9, 1, &empty);
+			if (material.diffuse) material.diffuse->BindPS(context, 7);
+			if (material.opacity) material.opacity->BindPS(context, 9);
+			context->DrawIndexed(group.indexCount, group.firstIndex, 0);
+		}
 	}
+	context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
 	return S_OK;
 }
 }

@@ -133,6 +133,10 @@ void CGrannyModelInstance::TryCaptureDX11ModelPreview(const TPNTVertex* deformed
 				const CGraphicImage* opacity = original.GetImagePointer(1);
 				if (diffuse) material.diffusePath = diffuse->GetFileName();
 				if (opacity) material.opacityPath = opacity->GetFileName();
+				material.alphaBlend = original.GetType() == CGrannyMaterial::TYPE_BLEND_PNT;
+				material.twoSided = original.IsTwoSided();
+				material.specularEnabled = original.__IsSpecularEnabled();
+				material.specularPower = original.__GetSpecularPower();
 				materials.push_back(std::move(material));
 			}
 		}

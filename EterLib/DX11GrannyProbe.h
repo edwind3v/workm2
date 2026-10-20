@@ -25,6 +25,10 @@ struct DX11GrannyMaterialGroup
 	UINT indexCount = 0;
 	std::string diffusePath;
 	std::string opacityPath;
+	bool alphaBlend = false;
+	bool twoSided = false;
+	bool specularEnabled = false;
+	float specularPower = 0.0f;
 };
 
 struct DX11GrannySnapshot

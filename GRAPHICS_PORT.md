@@ -256,6 +256,30 @@ private SM5 bytecode, are intentionally not bundled with the public source.
   draw calls, and Debug-vs-Release build separately. No normal gameplay draws
   have been switched to DX11 by these checkpoints.
 
+## Eighth checkpoint: material-state shader parity and blending
+
+- A real skinned mesh with 2,185 vertices, 9,453 indices, and one live DDS
+  material was captured, drawn, and presented in the game using DX11.
+- Captured material groups now also preserve their original `TYPE_BLEND_PNT`
+  state, two-sided flag, specular enablement, and specular power. A new
+  **opaque-then-blended** render sequence uses D3D11 alpha blending and
+  depth-test-only state for translucent groups. Nonblended groups continue
+  to write depth and use a simple alpha cutout threshold.
+- The independently compiled preview PS now uses the reference's reflected 48-byte
+  `ModelParamsPS` constant layout at `b1` (alpha reference, reflection,
+  specular power, material switches, and eye position), and its `Diffuse`
+  binding at `t7` and `DiffSamp` at `s1`. Our separate preview extension
+  at `b2` and opacity texture at `t9` handle Granny's two-texture materials.
+  **This does not mean the shaders or final output are pixel-identical to
+  the reference**; no private bytecode is embedded.
+- `DX11_MODEL_MATERIAL_STATE blend_groups=... two_sided_groups=...
+  specular_groups=...` verifies that these flags were extracted from the
+  actual CGrannyMaterial palette. Two-sided materials remain visible because
+  the preview still uses a no-cull rasterizer for *all* groups, pending
+  verified Granny winding conventions. Sphere-map textures and light data,
+  accurate transparent-triangle sorting, and the DX11 scene renderer remain
+  future integration work.
+
 ## Pending before switching Metin2 gameplay to DX11
 
 1. Replace the diagnostic asset decode bridge with a persistent DX11-side
