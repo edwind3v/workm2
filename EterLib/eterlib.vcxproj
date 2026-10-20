@@ -233,6 +233,7 @@
     <ClCompile Include="CullingManager.cpp" />
     <ClCompile Include="GrpBase.cpp" />
     <ClCompile Include="GrpDetector.cpp" />
+    <ClCompile Include="DX11AssetProbe.cpp" />
     <ClCompile Include="DX11Device.cpp" />
     <ClCompile Include="DX11Probe.cpp" />
     <ClCompile Include="DX11Resources.cpp" />

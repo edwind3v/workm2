@@ -2,6 +2,7 @@
 #include "../eterBase/Error.h"
 #include "../eterlib/Camera.h"
 #include "../eterlib/AttributeInstance.h"
+#include "../eterLib/DX11Probe.h"
 #include "../gamelib/AreaTerrain.h"
 #include "../EterGrnLib/Material.h"
 #include "../CWebBrowser/CWebBrowser.h"
@@ -424,6 +425,42 @@ bool CPythonApplication::Process()
 	if (CheckLatestFiles_PollEvent())
 		return false;
 #endif
+	// Diagnostic migration step: load one genuine game texture via the pack
+	// manager and preview it through the independent DX11 resource path.
+	// This runs once only when explicitly requested, never during normal play.
+	static bool s_dx11AssetAttempted = false;
+	if (!s_dx11AssetAttempted)
+	{
+		s_dx11AssetAttempted = true;
+		char assetPath[512] = {};
+		const DWORD assetPathLength = GetEnvironmentVariableA(
+			"M2_DX11_ASSET_PATH", assetPath, ARRAYSIZE(assetPath));
+		if (assetPathLength >= ARRAYSIZE(assetPath))
+		{
+			TraceError("DX11_ASSET_FAILED stage=AssetPathTooLong hr=0x%08X game_renderer=DX9Ex",
+				static_cast<unsigned>(HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW)));
+		}
+		else if (assetPathLength > 0 && m_isWindowed)
+		{
+			graphics::DX11ProbeResult assetResult;
+			const HRESULT assetHr = graphics::RunDX11AssetProbe(
+				GetWindowHandle(), m_grpDevice.GetDevice(), assetPath,
+				L"dx11_asset_probe.bmp", &assetResult);
+			if (SUCCEEDED(assetHr))
+			{
+				TraceError("DX11_ASSET_DRAW path=\"%s\" source=%ux%u center_rgba=%u,%u,%u,%u image_saved=%u game_renderer=DX9Ex",
+					assetPath, assetResult.sourceWidth, assetResult.sourceHeight,
+					assetResult.centerPixelRGBA[0], assetResult.centerPixelRGBA[1],
+					assetResult.centerPixelRGBA[2], assetResult.centerPixelRGBA[3],
+					assetResult.bitmapSaved ? 1 : 0);
+			}
+			else
+			{
+				TraceError("DX11_ASSET_FAILED path=\"%s\" stage=%s hr=0x%08X game_renderer=DX9Ex",
+					assetPath, assetResult.stage, static_cast<unsigned>(assetHr));
+			}
+		}
+	}
 	ELTimer_SetFrameMSec();
 
 	// 	m_Profiler.Clear();

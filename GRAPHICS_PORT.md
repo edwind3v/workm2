@@ -83,10 +83,39 @@ private SM5 bytecode, are intentionally not bundled with the public source.
 - Both DX11 tests remain opt-in, diagnostic, and safe to fail without stopping
   the playable DX9Ex client. No private game-specific shaders or assets added.
 
+## Fourth checkpoint: one real game texture from the pack manager
+
+- With `M2_DX11_ASSET_PATH` set to the virtual path of a **real texture** in
+  the running client's packs, `CPythonApplication::Process` performs one
+  additional test after game initialization. For example, use a known TGA,
+  DDS or PNG path from your own client's game data; paths inside a pack do
+  not have to exist as loose files.
+- `DX11AssetProbe.cpp` retrieves the resource through `CEterPackManager`,
+  temporarily decodes it to CPU-side RGBA8 using the existing D3DX9 loader,
+  uploads an immutable D3D11 texture, and draws an aspect-correct indexed
+  quad on a separate 256x256 render target. The result is read back as
+  `dx11_asset_probe.bmp` in the current working directory.
+- Successful log: `DX11_ASSET_DRAW path="..." source=<W>x<H>
+  center_rgba=<R>,<G>,<B>,<A> image_saved=1 game_renderer=DX9Ex`.
+  On failure, `DX11_ASSET_FAILED path="..." stage=<stage> hr=<HRESULT>`
+  distinguishes a missing packed file, unsupported image and DX11 failures.
+- To run both DX11 tests and the real-asset test in Visual Studio, set the
+  **Debugging > Environment** property to two separate lines:
+
+  ```text
+  M2_DX11_TEST=1
+  M2_DX11_ASSET_PATH=<actual in-pack image path>
+  ```
+
+- This is an asset-upload integration checkpoint, **not** proof of model,
+  texture-atlas, or material parity with the reference renderer. The D3DX9
+  decode bridge is only temporary; it is not part of the final DX11 frame
+  renderer and does not run during normal play.
+
 ## Pending before switching Metin2 gameplay to DX11
 
-1. Wire the new DX11 resource types into real Metin2 texture and model loading,
-   with update/release behavior tied to the appropriate D3D11 device lifetime.
+1. Replace the diagnostic asset decode bridge with a persistent DX11-side
+   resource manager and implement real game texture/model lifetime handling.
 2. Translate the complete D3D9 render/sampler state matrix, blending, culling,
    alpha testing, depth, and fixed-function texture stages to DX11 pipelines.
 3. Populate the per-frame, per-material, and per-object constant buffers from
