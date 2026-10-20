@@ -509,20 +509,30 @@ bool CPythonApplication::Process()
 			m_dx11ModelPreviewAttempted = true;
 			unsigned char modelPixel[4] = {};
 			UINT modelCoveredPixels = 0;
+			UINT modelTexturesLoaded = 0;
+			UINT modelTexturesMissing = 0;
 			const char* modelStage = "NotAttempted";
 			const char* sharedFormat = "none";
 			const HRESULT modelHr = graphics::RunDX11GrannyPreview(
 				GetWindowHandle(), m_grpDevice.GetDevice(), snapshot,
 				&m_dx11ModelPreviewTexture, modelPixel, &modelCoveredPixels,
+				&modelTexturesLoaded, &modelTexturesMissing,
 				&modelStage, &sharedFormat);
 			if (SUCCEEDED(modelHr))
 			{
-				TraceError("DX11_MODEL_READY source=%s vertices=%u indices=%u format=%s drawn_pixels=%u center_rgba=%u,%u,%u,%u game_renderer=DX9Ex",
+				TraceError("DX11_MODEL_READY source=%s mesh=\"%.80s\" vertices=%u indices=%u material_groups=%u textures_loaded=%u textures_missing=%u format=%s drawn_pixels=%u center_rgba=%u,%u,%u,%u game_renderer=DX9Ex",
 					snapshot.skinned ? "granny_deformed" : "granny_rigid",
+					snapshot.meshName.c_str(),
 					static_cast<unsigned>(snapshot.vertices.size()),
-					static_cast<unsigned>(snapshot.indices.size()), sharedFormat,
+					static_cast<unsigned>(snapshot.indices.size()),
+					static_cast<unsigned>(snapshot.groups.size()),
+					modelTexturesLoaded, modelTexturesMissing, sharedFormat,
 					modelCoveredPixels,
 					modelPixel[0], modelPixel[1], modelPixel[2], modelPixel[3]);
+				if (!snapshot.groups.empty())
+					TraceError("DX11_MODEL_MATERIAL first_diffuse=\"%.180s\" first_opacity=\"%.180s\"",
+						snapshot.groups[0].diffusePath.c_str(),
+						snapshot.groups[0].opacityPath.c_str());
 			}
 			else
 			{

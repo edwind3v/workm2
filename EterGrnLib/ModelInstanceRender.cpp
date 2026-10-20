@@ -4,6 +4,8 @@
 #include "Model.h"
 #include "../eterLib/DX11GrannyProbe.h"
 
+#include <algorithm>
+#include <utility>
 #include <vector>
 
 #ifdef _TEST
@@ -48,11 +50,11 @@ void CGrannyModelInstance::DeformNoSkin(const D3DXMATRIX * c_pWorldMatrix)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void CGrannyModelInstance::TryCaptureDX11ModelPreview(const TPNTVertex* deformedVertices) const
 {
-	if (!m_pModel || !graphics::WantsDX11GrannyCapture())
+	const bool chooseDeformed = deformedVertices != nullptr;
+	if (!m_pModel || !graphics::WantsDX11GrannyCapture(chooseDeformed))
 		return;
 	static_assert(sizeof(TPNTVertex) == sizeof(graphics::DX11GrannyVertex),
 		"Granny TPNTVertex must be POSITION/NORMAL/TEXCOORD0 float3/float3/float2");
-	const bool chooseDeformed = deformedVertices != nullptr;
 	for (int meshIndex = 0; meshIndex < m_pModel->GetMeshCount(); ++meshIndex)
 	{
 		const CGrannyMesh* mesh = m_pModel->GetMeshPointer(meshIndex);
@@ -92,10 +94,45 @@ void CGrannyModelInstance::TryCaptureDX11ModelPreview(const TPNTVertex* deformed
 			output.uv[0] = input.texCoord.x;
 			output.uv[1] = input.texCoord.y;
 		}
+		// Retain the *instance's* material overrides and the engine's Granny
+		// triangle-group ranges. The index buffer below is mesh-local, whereas
+		// TTriGroupNode::idxPos is relative to the complete model index buffer.
+		std::vector<graphics::DX11GrannyMaterialGroup> materials;
+		const int meshIndexBase = mesh->GetIndexBasePosition();
+		for (int materialType = 0; materialType < CGrannyMaterial::TYPE_MAX_NUM; ++materialType)
+		{
+			const CGrannyMesh::TTriGroupNode* group = mesh->GetTriGroupNodeList(
+				static_cast<CGrannyMaterial::EType>(materialType));
+			for (; group; group = group->pNextTriGroupNode)
+			{
+				const int offset = group->idxPos - meshIndexBase;
+				if (group->triCount <= 0 || group->triCount > indexCount / 3)
+					continue;
+				const int count = group->triCount * 3;
+				if (offset < 0 || offset > indexCount || count > indexCount - offset ||
+					group->mtrlIndex >= m_kMtrlPal.GetMaterialCount())
+					continue;
+				graphics::DX11GrannyMaterialGroup material;
+				material.firstIndex = static_cast<UINT>(offset);
+				material.indexCount = static_cast<UINT>(count);
+				const CGrannyMaterial& original = m_kMtrlPal.GetMaterialRef(group->mtrlIndex);
+				const CGraphicImage* diffuse = original.GetImagePointer(0);
+				const CGraphicImage* opacity = original.GetImagePointer(1);
+				if (diffuse) material.diffusePath = diffuse->GetFileName();
+				if (opacity) material.opacityPath = opacity->GetFileName();
+				materials.push_back(std::move(material));
+			}
+		}
+		std::sort(materials.begin(), materials.end(),
+			[](const graphics::DX11GrannyMaterialGroup& a,
+				const graphics::DX11GrannyMaterialGroup& b) {
+				return a.firstIndex < b.firstIndex;
+			});
 		if (graphics::CaptureDX11GrannyMesh(
 			previewVertices.data(),
 			static_cast<UINT>(vertexCount), meshIndices.data(),
-			static_cast<UINT>(indexCount), chooseDeformed))
+			static_cast<UINT>(indexCount), chooseDeformed,
+			materials.data(), static_cast<UINT>(materials.size()), grannyMesh->Name))
 			return;
 	}
 }

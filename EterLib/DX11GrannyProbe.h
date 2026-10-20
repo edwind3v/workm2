@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Windows.h>
+#include <string>
 #include <vector>
 
 struct IDirect3DDevice9Ex;
@@ -18,17 +19,29 @@ struct DX11GrannyVertex
 	float uv[2];
 };
 
+struct DX11GrannyMaterialGroup
+{
+	UINT firstIndex = 0;
+	UINT indexCount = 0;
+	std::string diffusePath;
+	std::string opacityPath;
+};
+
 struct DX11GrannySnapshot
 {
 	std::vector<DX11GrannyVertex> vertices;
 	std::vector<WORD> indices;
+	std::vector<DX11GrannyMaterialGroup> groups;
+	std::string meshName;
 	bool skinned = false;
 };
 
 // One-shot, opt-in snapshot from actual CGrannyModelInstance data.
-bool WantsDX11GrannyCapture();
+// M2_DX11_MODEL_TARGET=skinned restricts capture to CPU-deformed meshes.
+bool WantsDX11GrannyCapture(bool skinned);
 bool CaptureDX11GrannyMesh(const DX11GrannyVertex* vertices, UINT vertexCount,
-	const WORD* indices, UINT indexCount, bool skinned);
+	const WORD* indices, UINT indexCount, bool skinned,
+	const DX11GrannyMaterialGroup* groups, UINT groupCount, const char* meshName);
 bool TakeDX11GrannySnapshot(DX11GrannySnapshot* out);
 
 // Draw the *captured game mesh* using D3D11 VS/PS, indexed geometry, depth
@@ -37,5 +50,6 @@ bool TakeDX11GrannySnapshot(DX11GrannySnapshot* out);
 HRESULT RunDX11GrannyPreview(HWND gameWindow, IDirect3DDevice9Ex* gameDevice,
 	const DX11GrannySnapshot& snapshot, IDirect3DTexture9** texture,
 	unsigned char rgba[4], UINT* coveredPixels,
+	UINT* texturesLoaded, UINT* texturesMissing,
 	const char** stage, const char** format);
 }

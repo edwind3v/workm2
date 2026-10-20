@@ -188,6 +188,43 @@ private SM5 bytecode, are intentionally not bundled with the public source.
   stages on the path toward the Baerim model/shadow shaders. Setting the
   variable to `0` disables all model capture code on normal clients.
 
+## Seventh checkpoint: original Granny materials and skinned mesh targeting
+
+- The model snapshot now carries its mesh name and the original Granny
+  triangle-group ranges. Each group looks up the active instance's material
+  palette, including armour/texture overrides, and records the `CGraphicImage`
+  resource paths for the diffuse and optional opacity texture.
+- During the **one-shot preview only**, the client decodes those textures from
+  its existing EterPack assets through the proven D3DX9 SYSTEMMEM bridge,
+  uploads RGBA8 to DX11, and draws each original material group with its own
+  DX11 texture binding and a material-aware SM5 pixel shader. Duplicate paths
+  share one uploaded DX11 texture. A 64 MiB aggregate texture budget protects
+  this debugging checkpoint. Missing/unsupported textures fall back to cyan.
+- The shader's vertex inputs (`POSITION`, `NORMAL`, `TEXCOORD`) and names such
+  as `Diffuse`, `DiffSamp`, and `ModelParamsPS` are intentionally aligned with
+  the signatures recovered from Baerim's `model_preview_vs/ps`. These are
+  **new HLSL implementations**, not copied private `.cso` files, and are not
+  yet visually or behaviorally identical to Baerim.
+- To capture an **animated character mesh** instead of the first rigid prop,
+  add a second line in **UserInterface > Debugging > Environment**:
+
+  ```text
+  M2_DX11_MODEL_PREVIEW=1
+  M2_DX11_MODEL_TARGET=skinned
+  ```
+
+  The model preview should become a textured body part or equipment mesh.
+  It remains a single static pose on an independent 144x144 inspection camera;
+  this step does not replace any world draws. The logs now include
+  `DX11_MODEL_READY source=granny_deformed mesh="..." material_groups=...
+  textures_loaded=... textures_missing=... drawn_pixels=...` and
+  `DX11_MODEL_MATERIAL first_diffuse="..." first_opacity="..."`.
+  If `textures_loaded=0`, send the material path and errors for the next fix.
+- This implements diffuse sampling and basic opacity cutout only. Baerim's
+  specular/sphere maps, transparency blending, scene lights, shadow passes,
+  continuous GPU/CPU skinning, complete characters, and native DX11 scene
+  presentation still require substantial further integration and testing.
+
 ## Pending before switching Metin2 gameplay to DX11
 
 1. Replace the diagnostic asset decode bridge with a persistent DX11-side
