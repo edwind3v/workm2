@@ -16,4 +16,8 @@ struct DX11ProbeResult
 };
 
 HRESULT RunDX11Probe(HWND gameWindow, const wchar_t* bitmapPath, DX11ProbeResult* result);
+
+// Exercises reusable vertex/index/constant buffers, input layouts, textures
+// and explicit D3D11 pipeline states with an indexed textured quad.
+HRESULT RunDX11MeshProbe(HWND gameWindow, const wchar_t* bitmapPath, DX11ProbeResult* result);
 }

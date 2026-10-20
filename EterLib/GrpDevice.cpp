@@ -688,6 +688,24 @@ RETRY:
 			TraceError("DX11_TEST_DRAW mode=offscreen center_rgba=%u,%u,%u,%u image_saved=%u game_renderer=DX9Ex",
 				result.centerPixelRGBA[0], result.centerPixelRGBA[1],
 				result.centerPixelRGBA[2], result.centerPixelRGBA[3], result.bitmapSaved ? 1 : 0);
+
+			// Exercise the new reusable DX11 mesh/resource path independently
+			// of D3D9. A failure remains diagnostic and never aborts startup.
+			graphics::DX11ProbeResult meshResult;
+			const HRESULT meshProbeResult = graphics::RunDX11MeshProbe(
+				hWnd, L"dx11_mesh_probe.bmp", &meshResult);
+			if (SUCCEEDED(meshProbeResult))
+			{
+				TraceError("DX11_MESH_DRAW mode=offscreen vertices=4 indices=6 center_rgba=%u,%u,%u,%u image_saved=%u game_renderer=DX9Ex",
+					meshResult.centerPixelRGBA[0], meshResult.centerPixelRGBA[1],
+					meshResult.centerPixelRGBA[2], meshResult.centerPixelRGBA[3],
+					meshResult.bitmapSaved ? 1 : 0);
+			}
+			else
+			{
+				TraceError("DX11_MESH_FAILED stage=%s hr=0x%08X game_renderer=DX9Ex",
+					meshResult.stage, static_cast<unsigned>(meshProbeResult));
+			}
 		}
 		else
 		{

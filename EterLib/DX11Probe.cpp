@@ -1,6 +1,7 @@
 #include "StdAfx.h"
 #include "DX11Probe.h"
 #include "DX11ShaderLibrary.h"
+#include "DX11Resources.h"
 
 #include <d3dcompiler.h>
 #include <cstring>
@@ -222,6 +223,167 @@ HRESULT RunDX11Probe(HWND gameWindow, const wchar_t* bitmapPath, DX11ProbeResult
 		result->centerPixelRGBA[1] < 110 || result->centerPixelRGBA[1] > 145 ||
 		result->centerPixelRGBA[2] < 55 || result->centerPixelRGBA[2] > 75 ||
 		result->centerPixelRGBA[3] != 255)
+		return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+	result->stage = "Complete";
+	return S_OK;
+}
+
+HRESULT RunDX11MeshProbe(HWND gameWindow, const wchar_t* bitmapPath,
+	DX11ProbeResult* result)
+{
+	if (!result)
+		return E_POINTER;
+	*result = DX11ProbeResult();
+
+	DX11Device renderer;
+	if (!renderer.CreateOffscreen(gameWindow, kProbeSize, kProbeSize))
+		return renderer.GetLastResult();
+	result->adapter = renderer.GetAdapterInfo();
+	result->featureLevel = renderer.GetFeatureLevel();
+	ID3D11Device* device = renderer.GetDevice();
+	ID3D11DeviceContext* context = renderer.GetContext();
+
+	// The vertex stream and indices are deliberately separate. Real scene
+	// meshes can use this same resource path when their layouts are mapped.
+	constexpr char kMeshHLSL[] = R"(
+cbuffer ObjectConstants : register(b0) { float4 offset; };
+Texture2D diffuse : register(t0);
+SamplerState linearSampler : register(s0);
+struct VSInput { float2 position : POSITION; float2 uv : TEXCOORD0; };
+struct VSOutput { float4 position : SV_Position; float2 uv : TEXCOORD0; };
+VSOutput VSMain(VSInput input)
+{
+    VSOutput result;
+    result.position = float4(input.position + offset.xy, 0.5, 1.0);
+    result.uv = input.uv;
+    return result;
+}
+float4 PSMain(VSOutput input) : SV_Target
+{
+    return diffuse.Sample(linearSampler, input.uv);
+}
+)";
+
+	result->stage = "CompileMeshVS";
+	Microsoft::WRL::ComPtr<ID3DBlob> vertexCode;
+	HRESULT hr = D3DCompile(kMeshHLSL, sizeof(kMeshHLSL) - 1,
+		nullptr, nullptr, nullptr, "VSMain", "vs_5_0",
+		D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, vertexCode.GetAddressOf(), nullptr);
+	if (FAILED(hr)) return hr;
+	result->stage = "CompileMeshPS";
+	Microsoft::WRL::ComPtr<ID3DBlob> pixelCode;
+	hr = D3DCompile(kMeshHLSL, sizeof(kMeshHLSL) - 1,
+		nullptr, nullptr, nullptr, "PSMain", "ps_5_0",
+		D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, pixelCode.GetAddressOf(), nullptr);
+	if (FAILED(hr)) return hr;
+
+	result->stage = "CreateMeshShaders";
+	DX11ShaderProgram vertexShader;
+	DX11ShaderProgram pixelShader;
+	hr = DX11ShaderLibrary::CreateFromMemory(device, DX11ShaderStage::Vertex,
+		vertexCode->GetBufferPointer(), vertexCode->GetBufferSize(), &vertexShader);
+	if (FAILED(hr)) return hr;
+	hr = DX11ShaderLibrary::CreateFromMemory(device, DX11ShaderStage::Pixel,
+		pixelCode->GetBufferPointer(), pixelCode->GetBufferSize(), &pixelShader);
+	if (FAILED(hr)) return hr;
+
+	result->stage = "CreateInputLayout";
+	const D3D11_INPUT_ELEMENT_DESC elements[] = {
+		{ "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0,
+			D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 8,
+			D3D11_INPUT_PER_VERTEX_DATA, 0 }
+	};
+	DX11InputLayout inputLayout;
+	hr = inputLayout.Create(device, vertexShader, elements, ARRAYSIZE(elements));
+	if (FAILED(hr)) return hr;
+
+	struct MeshVertex { float x, y, u, v; };
+	const MeshVertex vertices[] = {
+		{ -0.6f, -0.6f, 0.0f, 1.0f },
+		{  0.6f, -0.6f, 1.0f, 1.0f },
+		{  0.6f,  0.6f, 1.0f, 0.0f },
+		{ -0.6f,  0.6f, 0.0f, 0.0f }
+	};
+	const unsigned short indices[] = { 0, 1, 2, 0, 2, 3 };
+	result->stage = "CreateMeshBuffers";
+	DX11Buffer vertexBuffer;
+	DX11Buffer indexBuffer;
+	DX11Buffer objectConstants;
+	hr = vertexBuffer.CreateVertex(device, vertices, sizeof(MeshVertex),
+		ARRAYSIZE(vertices));
+	if (FAILED(hr)) return hr;
+	hr = indexBuffer.CreateIndex(device, indices, DXGI_FORMAT_R16_UINT,
+		ARRAYSIZE(indices));
+	if (FAILED(hr)) return hr;
+	const float initialOffset[4] = {};
+	hr = objectConstants.CreateConstant(device, initialOffset,
+		sizeof(initialOffset));
+	if (FAILED(hr)) return hr;
+	const float translatedOffset[4] = { 0.125f, 0.0f, 0.0f, 0.0f };
+	hr = objectConstants.Update(context, translatedOffset, sizeof(translatedOffset));
+	if (FAILED(hr)) return hr;
+
+	result->stage = "CreateMeshTexture";
+	const unsigned char rgba[] = {
+		32, 160, 224, 255, 32, 160, 224, 255,
+		32, 160, 224, 255, 32, 160, 224, 255
+	};
+	const unsigned char blankTexture[sizeof(rgba)] = {};
+	DX11Texture texture;
+	hr = texture.CreateRGBA8(device, 2, 2, blankTexture, 8, true);
+	if (FAILED(hr)) return hr;
+	hr = texture.UpdateRGBA8(context, rgba, 8);
+	if (FAILED(hr)) return hr;
+	result->stage = "CreateMeshStates";
+	DX11RenderStates states;
+	hr = states.Create(device);
+	if (FAILED(hr)) return hr;
+
+	result->stage = "DrawIndexed";
+	const float clearColor[4] = { 0, 0, 0, 1 };
+	if (!renderer.BeginFrame(clearColor)) return E_FAIL;
+	states.BindOpaqueTwoSided(context);
+	inputLayout.Bind(context);
+	vertexBuffer.BindVertex(context);
+	indexBuffer.BindIndex(context);
+	objectConstants.BindVSConstant(context);
+	texture.BindPS(context);
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	vertexShader.Bind(context);
+	pixelShader.Bind(context);
+	context->DrawIndexed(indexBuffer.GetCount(), 0, 0);
+
+	result->stage = "ReadbackMesh";
+	D3D11_TEXTURE2D_DESC stagingDesc = {};
+	renderer.GetColorTexture()->GetDesc(&stagingDesc);
+	stagingDesc.Usage = D3D11_USAGE_STAGING;
+	stagingDesc.BindFlags = 0;
+	stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+	stagingDesc.MiscFlags = 0;
+	Microsoft::WRL::ComPtr<ID3D11Texture2D> staging;
+	hr = device->CreateTexture2D(&stagingDesc, nullptr, staging.GetAddressOf());
+	if (FAILED(hr)) return hr;
+	context->OMSetRenderTargets(0, nullptr, nullptr);
+	context->CopyResource(staging.Get(), renderer.GetColorTexture());
+	D3D11_MAPPED_SUBRESOURCE mapped = {};
+	hr = context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+	if (FAILED(hr)) return hr;
+	const unsigned char* pixels = static_cast<const unsigned char*>(mapped.pData);
+	const unsigned char* center = pixels +
+		static_cast<size_t>(mapped.RowPitch) * (kProbeSize / 2) + (kProbeSize / 2) * 4;
+	std::memcpy(result->centerPixelRGBA, center, 4);
+	const bool borderIsClear = pixels[0] == 0 && pixels[1] == 0 &&
+		pixels[2] == 0 && pixels[3] == 255;
+	if (bitmapPath && *bitmapPath)
+		result->bitmapSaved = SUCCEEDED(WriteBitmap(bitmapPath, pixels,
+			mapped.RowPitch, kProbeSize, kProbeSize));
+	context->Unmap(staging.Get(), 0);
+
+	result->stage = "ValidateMeshPixels";
+	if (result->centerPixelRGBA[0] != 32 || result->centerPixelRGBA[1] != 160 ||
+		result->centerPixelRGBA[2] != 224 || result->centerPixelRGBA[3] != 255 ||
+		!borderIsClear)
 		return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
 	result->stage = "Complete";
 	return S_OK;
