@@ -238,6 +238,10 @@ private SM5 bytecode, are intentionally not bundled with the public source.
   size-eligible meshes, and submitted meshes were found. If none succeeds,
   `DX11_MODEL_CAPTURE_STOP` indicates that further expensive retries have
   stopped. `DX11_MODEL_READY` is still the definitive success indicator.
+- When an eligible mesh is submitted but rejected, up to four
+  `DX11_MODEL_CAPTURE_REJECT reason=...` messages identify the precise
+  validation issue (invalid vertex, out-of-range index, material-group range,
+  or capture state). Do not bypass validation just to show a preview.
 - Performance degradation with the preview **off** is not caused by this DX11
   model capture path. Investigate the existing DX9Ex renderer, actor count,
   draw calls, and Debug-vs-Release build separately. No normal gameplay draws

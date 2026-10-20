@@ -72,6 +72,17 @@ bool CaptureEnabled(bool skinned)
 		!SnapshotTaken() && PendingSnapshot().vertices.empty();
 }
 
+bool RejectCapture(const char* reason, UINT entry, UINT actual, UINT expected)
+{
+	// This is strictly a one-shot diagnostic. A bounded number of detailed
+	// rejects explains why a candidate was skipped without filling syserr.
+	static UINT logged = 0;
+	if (logged++ < 4)
+		TraceError("DX11_MODEL_CAPTURE_REJECT reason=%s entry=%u actual=%u expected=%u",
+			reason, entry, actual, expected);
+	return false;
+}
+
 constexpr char kModelPreviewShader[] = R"(
 cbuffer ObjectTransform : register(b0)
 {
@@ -366,24 +377,30 @@ bool CaptureDX11GrannyMesh(const DX11GrannyVertex* vertices, UINT vertexCount,
 {
 	// The caller already reserved a throttled attempt before copying the mesh.
 	// Checking WantsDX11GrannyCapture here would consume/reject that attempt.
-	if (!CaptureEnabled(skinned) || !vertices || !indices ||
-		vertexCount < 12 || vertexCount > kMaxVertices ||
-		indexCount < 36 || indexCount > kMaxIndices || indexCount % 3 != 0 ||
-		groupCount > kMaxMaterialGroups || (groupCount && !groups))
-		return false;
+	if (!CaptureEnabled(skinned))
+		return RejectCapture("not_pending", 0, skinned ? 1 : 0, 1);
+	if (!vertices || !indices || vertexCount < 12 || vertexCount > kMaxVertices ||
+		indexCount < 36 || indexCount > kMaxIndices || indexCount % 3 != 0)
+		return RejectCapture("invalid_geometry", 0, vertexCount, indexCount);
+	if (groupCount > kMaxMaterialGroups || (groupCount && !groups))
+		return RejectCapture("invalid_group_count", 0, groupCount, kMaxMaterialGroups);
 	for (UINT i = 0; i < vertexCount; ++i)
 		for (UINT j = 0; j < 3; ++j)
-			if (!std::isfinite(vertices[i].position[j]) ||
-				!std::isfinite(vertices[i].normal[j]))
-				return false;
+		{
+			if (!std::isfinite(vertices[i].position[j]))
+				return RejectCapture("nonfinite_position", i, j, vertexCount);
+			if (!std::isfinite(vertices[i].normal[j]))
+				return RejectCapture("nonfinite_normal", i, j, vertexCount);
+		}
 	for (UINT i = 0; i < indexCount; ++i)
 		if (indices[i] >= vertexCount)
-			return false;
+			return RejectCapture("index_out_of_bounds", i, indices[i], vertexCount);
 	for (UINT i = 0; i < groupCount; ++i)
 		if (groups[i].firstIndex > indexCount ||
 			groups[i].indexCount > indexCount - groups[i].firstIndex ||
 			groups[i].indexCount == 0 || groups[i].indexCount % 3)
-			return false;
+			return RejectCapture("invalid_group_range", i,
+				groups[i].firstIndex, groups[i].indexCount);
 	DX11GrannySnapshot& capture = PendingSnapshot();
 	capture.vertices.assign(vertices, vertices + vertexCount);
 	capture.indices.assign(indices, indices + indexCount);
