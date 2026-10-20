@@ -171,9 +171,11 @@ float4 PSMain(VSOutput input) : SV_Target
         albedo *= 0.88 + 0.12 * sin(input.uv.x * 30.0) * sin(input.uv.y * 30.0);
     if (materialFlags.x > 0.5)
         alpha *= Opacity.Sample(DiffSamp, input.uv).r;
-    // Opaque and cutout materials discard transparent texels. Blended
-    // materials preserve their alpha for the explicit D3D11 blend pass.
-    if (materialFlags.y < 0.5)
+    // Granny's opaque diffuse groups do not necessarily use texture alpha
+    // as a cutout mask (the alpha channel can be unused or carry other data).
+    // Only apply alpha testing when a separate opacity map was supplied.
+    // Explicit blended groups retain texture alpha for D3D11 blending.
+    if (materialFlags.y < 0.5 && materialFlags.x > 0.5)
         clip(alpha - AlphaRef);
     float3 highlight = float3(0, 0, 0);
     if (Reflection > 0.0)
@@ -214,7 +216,8 @@ float4 PSMain(VSOutput input) : SV_Target
     if (materialFlags.x > 0.5)
     {
         float4 texel = Diffuse.Sample(DiffSamp, input.uv);
-        clip(texel.a - 0.05);
+        // The fallback also respects opaque diffuse groups: do not discard
+        // geometry solely because the diffuse texture has a low alpha value.
         albedo = texel.rgb;
     }
     else

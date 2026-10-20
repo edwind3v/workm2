@@ -412,6 +412,16 @@ private SM5 bytecode, are intentionally not bundled with the public source.
   groups, equipment effects, and non-Granny attachments require separate
   verification on a Windows game session.
 
+## Opaque material alpha parity
+
+- In the diagnostic D3D11 character shader, ordinary opaque Granny diffuse
+  materials no longer discard pixels based solely on the diffuse texture's
+  alpha channel. The previous unconditional `clip` could make captured
+  triangles disappear even though mesh and material-group coverage was
+  complete. Explicit opacity-map masking and blended-material alpha remain.
+- This affects only the opt-in preview and does not change DX9Ex rendering.
+  A visual comparison against the same costume in-game is still required.
+
 ## Build guidance
 
 Open `Metin2Client.sln` in Visual Studio and compile `eterlib` as `Win32`.
