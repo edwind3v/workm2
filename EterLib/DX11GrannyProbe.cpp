@@ -262,7 +262,7 @@ HRESULT CreateModelPipeline(ID3D11Device* device,
 	return device->CreateRasterizerState(&raster, pipeline->rasterizer.GetAddressOf());
 }
 
-HRESULT DrawModel(ID3D11DeviceContext* context, const ModelPipeline& pipeline,
+HRESULT DrawModel(ID3D11DeviceContext* context, ModelPipeline& pipeline,
 	const DX11GrannySnapshot& snapshot, const std::vector<ModelMaterial>& materials)
 {
 	context->OMSetDepthStencilState(pipeline.depthState.Get(), 0);
