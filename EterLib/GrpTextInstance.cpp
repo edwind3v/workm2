@@ -1,6 +1,7 @@
 #include "StdAfx.h"
 #include "GrpTextInstance.h"
 #include "StateManager.h"
+#include "TextPerformance.h"
 #include "IME.h"
 #include "TextTag.h"
 #include "../EterLocale/StringCodec.h"
@@ -11,6 +12,55 @@
 #include <array>
 #include <filesystem>
 #include <fmt/fmt.h>
+#endif
+
+#ifdef ENABLE_FIX_MOBS_LAG
+#include <algorithm>
+#include <map>
+
+namespace
+{
+	typedef std::map<CGraphicImageTexture*, std::vector<SPDTVertexRaw>> TFontVertexBatches;
+
+	void AppendFontQuad(std::vector<SPDTVertexRaw>& batch, const SPDTVertexRaw* quad)
+	{
+		// The tutorial path is retained for opt-in renderer comparison.
+		static const unsigned order[6] = { 0, 1, 2, 2, 1, 3 };
+		for (const unsigned vertex : order)
+		{
+			if (CGraphicTextInstance::IsWorldTextBatchActive() && batch.size() == batch.capacity())
+				CTextPerformance::Get().Add(CTextPerformance::CapacityGrowths);
+			batch.push_back(quad[vertex]);
+		}
+	}
+
+	void DrawFontBatches(TFontVertexBatches& batches)
+	{
+		const bool profileWorld = CGraphicTextInstance::IsWorldTextBatchActive();
+		if (profileWorld) CTextPerformance::Get().Add(CTextPerformance::TransientMapNodes, batches.size());
+		// Keep complete glyph quads in each upload (198 of 200 vertices).
+		const std::size_t batchCapacity = (LARGE_PDT_VERTEX_BUFFER_SIZE / 6) * 6;
+		for (auto& batch : batches)
+		{
+			if (!batch.first || !batch.first->GetD3DTexture())
+				continue;
+			STATEMANAGER.SetTexture(0, batch.first->GetD3DTexture());
+			for (std::size_t offset = 0; offset < batch.second.size(); )
+			{
+				const UINT count = static_cast<UINT>(std::min<std::size_t>(
+					batchCapacity, batch.second.size() - offset));
+				if (profileWorld) CTextPerformance::Get().Add(CTextPerformance::Locks);
+				if (CGraphicBase::SetPDTStream(&batch.second[offset], count))
+				{
+					if (profileWorld) CTextPerformance::Get().Add(CTextPerformance::Draws);
+					if (profileWorld) CTextPerformance::Get().Add(CTextPerformance::UploadBytes, count * sizeof(SPDTVertexRaw));
+					STATEMANAGER.DrawPrimitive(D3DPT_TRIANGLELIST, 0, count / 3);
+				}
+				offset += count;
+			}
+		}
+	}
+}
 #endif
 
 extern DWORD GetDefaultCodePage();
@@ -185,6 +235,9 @@ void CGraphicTextInstance::Update()
 {
 	if (m_isUpdate)
 		return;
+#ifdef ENABLE_FIX_MOBS_LAG
+	m_cachedGeometry.reset();
+#endif
 
 	if (m_roText.IsNull())
 	{
@@ -590,7 +643,9 @@ void CGraphicTextInstance::Update()
 	}
 
 	pFontTexture->UpdateTexture();
-
+#ifdef ENABLE_FIX_MOBS_LAG
+	m_layoutFontRevision = pFontTexture->GetGeometryRevision();
+#endif
 	m_isUpdate = true;
 }
 
@@ -606,6 +661,18 @@ void CGraphicTextInstance::Render(RECT * pClipRect)
 	CGraphicFontTexture* pFontTexture = pkText->GetFontTexturePointer();
 	if (!pFontTexture)
 		return;
+
+#ifdef ENABLE_FIX_MOBS_LAG
+	if (m_layoutFontRevision != pFontTexture->GetGeometryRevision())
+	{
+		m_isUpdate = false;
+		Update();
+		if (!m_isUpdate) return;
+	}
+	if (QueueWorldText(pFontTexture, pClipRect))
+		return;
+	FlushWorldTextBatch();
+#endif
 
 	float fStanX = m_v3Position.x;
 	float fStanY = m_v3Position.y + 1.0f;
@@ -665,6 +732,118 @@ void CGraphicTextInstance::Render(RECT * pClipRect)
 	STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG2,	D3DTA_DIFFUSE);
 	STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAOP,	D3DTOP_MODULATE);
 
+#ifdef ENABLE_FIX_MOBS_LAG
+	{
+		TFontVertexBatches outlineBatches;
+		TFontVertexBatches glyphBatches;
+		float currentX = fStanX;
+		float currentY = fStanY;
+		float lineHeight = 0.0f;
+
+		for (std::size_t i = 0; i < m_pCharInfoVector.size(); ++i)
+		{
+			const auto* info = m_pCharInfoVector[i];
+			const float width = static_cast<float>(info->width);
+			const float height = static_cast<float>(info->height);
+			const float advance = info->advance;
+			if ((currentX + width) - m_v3Position.x > m_fLimitWidth)
+			{
+				if (!m_isMultiLine)
+					break;
+				currentX = fStanX;
+				currentY += lineHeight;
+				lineHeight = 0.0f;
+			}
+			lineHeight = std::max<float>(lineHeight, height);
+			CGraphicImageTexture* texture = pFontTexture->GetTexture(info->index);
+			if (!texture || width <= 0.0f || height <= 0.0f)
+			{
+				currentX += advance;
+				continue;
+			}
+
+			float left = currentX - 0.5f;
+			float top = currentY - 0.5f;
+			float right = left + width;
+			float bottom = top + height;
+			float uLeft = info->left;
+			float vTop = info->top;
+			float uRight = info->right;
+			float vBottom = info->bottom;
+#if defined(__BL_CLIP_MASK__)
+			if (pClipRect)
+			{
+				if (right <= pClipRect->left || bottom <= pClipRect->top ||
+					left >= pClipRect->right || top >= pClipRect->bottom)
+				{
+					currentX += advance;
+					continue;
+				}
+				const float uScale = (info->right - info->left) / width;
+				const float vScale = (info->bottom - info->top) / height;
+				if (left < pClipRect->left)
+				{
+					uLeft += (pClipRect->left - left) * uScale;
+					left = static_cast<float>(pClipRect->left);
+				}
+				if (top < pClipRect->top)
+				{
+					vTop += (pClipRect->top - top) * vScale;
+					top = static_cast<float>(pClipRect->top);
+				}
+				if (right > pClipRect->right)
+				{
+					uRight -= (right - pClipRect->right) * uScale;
+					right = static_cast<float>(pClipRect->right);
+				}
+				if (bottom > pClipRect->bottom)
+				{
+					vBottom -= (bottom - pClipRect->bottom) * vScale;
+					bottom = static_cast<float>(pClipRect->bottom);
+				}
+			}
+#else
+			if (pClipRect && currentY <= pClipRect->top)
+			{
+				currentX += advance;
+				continue;
+			}
+#endif
+			SPDTVertexRaw quad[4] = {
+				{ left, top, m_v3Position.z, m_dwColorInfoVector[i], uLeft, vTop },
+				{ left, bottom, m_v3Position.z, m_dwColorInfoVector[i], uLeft, vBottom },
+				{ right, top, m_v3Position.z, m_dwColorInfoVector[i], uRight, vTop },
+				{ right, bottom, m_v3Position.z, m_dwColorInfoVector[i], uRight, vBottom }
+			};
+			AppendFontQuad(glyphBatches[texture], quad);
+
+			if (m_isOutline)
+			{
+				auto& outlineVertices = outlineBatches[texture];
+				static const float offsets[4][2] = {
+					{ -1.0f, 0.0f }, { 1.0f, 0.0f }, { 0.0f, -1.0f }, { 0.0f, 1.0f }
+				};
+				for (const auto& offset : offsets)
+				{
+					SPDTVertexRaw outlineQuad[4];
+					for (int vertex = 0; vertex < 4; ++vertex)
+					{
+						outlineQuad[vertex] = quad[vertex];
+						outlineQuad[vertex].px += offset[0];
+						outlineQuad[vertex].py += offset[1];
+						outlineQuad[vertex].diffuse = m_dwOutLineColor;
+					}
+					AppendFontQuad(outlineVertices, outlineQuad);
+				}
+			}
+			currentX += advance;
+		}
+
+		// All outline pages precede all foreground pages, including mixed atlases.
+		DrawFontBatches(outlineBatches);
+		DrawFontBatches(glyphBatches);
+	}
+#else
 	{
 		constexpr float fFontHalfWeight=1.0f;
 
@@ -1109,6 +1288,8 @@ void CGraphicTextInstance::Render(RECT * pClipRect)
 		}
 	}
 
+#endif
+
 	if (m_isCursor)
 	{
 		// Draw Cursor
@@ -1294,6 +1475,9 @@ void CGraphicTextInstance::CreateSystem(UINT uCapacity)
 
 void CGraphicTextInstance::DestroySystem()
 {
+#ifdef ENABLE_FIX_MOBS_LAG
+	ClearWorldTextCache();
+#endif
 	ms_kPool.Destroy();
 }
 
@@ -1357,6 +1541,9 @@ void CGraphicTextInstance::SetOutLineColor(float r, float g, float b, float a)
 
 void CGraphicTextInstance::SetSecret(bool Value)
 {
+#ifdef ENABLE_FIX_MOBS_LAG
+	if (m_isSecret != Value) { m_cachedGeometry.reset(); m_isUpdate = false; }
+#endif
 	m_isSecret = Value;
 }
 
@@ -1379,16 +1566,25 @@ void CGraphicTextInstance::SetFeather(bool Value)
 
 void CGraphicTextInstance::SetMultiLine(bool Value)
 {
+#ifdef ENABLE_FIX_MOBS_LAG
+	if (m_isMultiLine != Value) m_cachedGeometry.reset();
+#endif
 	m_isMultiLine = Value;
 }
 
 void CGraphicTextInstance::SetHorizonalAlign(int hAlign)
 {
+#ifdef ENABLE_FIX_MOBS_LAG
+	if (m_hAlign != hAlign) m_cachedGeometry.reset();
+#endif
 	m_hAlign = hAlign;
 }
 
 void CGraphicTextInstance::SetVerticalAlign(int vAlign)
 {
+#ifdef ENABLE_FIX_MOBS_LAG
+	if (m_vAlign != vAlign) m_cachedGeometry.reset();
+#endif
 	m_vAlign = vAlign;
 }
 
@@ -1399,6 +1595,9 @@ void CGraphicTextInstance::SetMax(int iMax)
 
 void CGraphicTextInstance::SetLimitWidth(float fWidth)
 {
+#ifdef ENABLE_FIX_MOBS_LAG
+	if (m_fLimitWidth != fWidth) m_cachedGeometry.reset();
+#endif
 	m_fLimitWidth = fWidth;
 }
 
@@ -1429,6 +1628,9 @@ void CGraphicTextInstance::SetPosition(float fx, float fy, float fz)
 
 void CGraphicTextInstance::SetTextPointer(CGraphicText* pText)
 {
+#ifdef ENABLE_FIX_MOBS_LAG
+	if (m_roText.GetPointer() != pText) { m_cachedGeometry.reset(); m_isUpdate = false; }
+#endif
 	m_roText = pText;
 }
 
@@ -1492,6 +1694,10 @@ int CGraphicTextInstance::GetHorizontalAlign() const
 
 void CGraphicTextInstance::__Initialize()
 {
+#ifdef ENABLE_FIX_MOBS_LAG
+	m_cachedGeometry.reset();
+	m_layoutFontRevision = 0;
+#endif
 	m_roText = nullptr;
 
 	m_hAlign = HORIZONTAL_ALIGN_LEFT;

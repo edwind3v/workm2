@@ -35,6 +35,9 @@ bool CGraphicFontTexture::IsEmpty() const
 
 void CGraphicFontTexture::Destroy()
 {
+#ifdef ENABLE_FIX_MOBS_LAG
+	++m_geometryRevision;
+#endif
 	const HDC hDC = m_dib.GetDCHandle();
 	if (hDC)
 		SelectObject(hDC, m_hFontOld);
@@ -334,3 +337,10 @@ void CGraphicFontTexture::SelectTexture(DWORD dwTexture)
 	m_lpd3dTexture = m_pFontTextureVector[dwTexture]->GetD3DTexture();
 }
 
+#ifdef ENABLE_FIX_MOBS_LAG
+CGraphicImageTexture* CGraphicFontTexture::GetTexture(DWORD dwTexture) const
+{
+	assert(CheckTextureIndex(dwTexture));
+	return CheckTextureIndex(dwTexture) ? m_pFontTextureVector[dwTexture] : nullptr;
+}
+#endif

@@ -49,6 +49,7 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
     <_ProjectFileVersion>10.0.30319.1</_ProjectFileVersion>
+    <LocalDebuggerWorkingDirectory Condition="'$(LocalDebuggerWorkingDirectory)' == '' Or '$(LocalDebuggerWorkingDirectory)' == '$(ProjectDir)'">$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\..\..\..\..\Game Client\'))</LocalDebuggerWorkingDirectory>
     <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(SolutionDir)bin\$(Configuration)\</OutDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(SolutionDir)bin\int\$(ProjectName)\$(Configuration)\</IntDir>
     <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -191,7 +192,7 @@
     </Manifest>
     <PostBuildEvent>
       <Command>copy /y "$(TargetPath)" "$(LocalDebuggerWorkingDirectory)$(TargetFileName)"</Command>
-      <Message>copying launcher to debug working path...</Message>
+      <Message>Copying Release client to $(LocalDebuggerWorkingDirectory)...</Message>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -312,6 +313,7 @@
     <ClInclude Include="PythonSafeBox.h" />
     <ClInclude Include="PythonShop.h" />
     <ClInclude Include="PythonTextTail.h" />
+    <ClInclude Include="TextTailSpatialGrid.h" />
     <ClInclude Include="ProcessScanner.h" />
     <ClInclude Include="PythonApplication.h" />
     <ClInclude Include="PythonLoading.h" />

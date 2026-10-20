@@ -65,6 +65,9 @@ protected:
 	void __InitializePDTVertexBufferList() const;
 	void __DestroyPDTVertexBufferList() const;
 	bool __CreatePDTVertexBufferList() const;
+#ifdef ENABLE_FIX_MOBS_LAG
+	bool __ResetDeviceWithPDTBuffers() const;
+#endif
 
 	DWORD CreatePNTStreamVertexShader() const;
 	DWORD CreatePNT2StreamVertexShader() const;
@@ -73,5 +76,8 @@ protected:
 	DWORD						m_uBackBufferCount;
 	std::map<UINT, std::string>	m_kMap_strWarningMessage;
 	CStateManager*				m_pStateManager;
+#ifdef ENABLE_FIX_MOBS_LAG
+	mutable bool m_isPDTResetPending;
+#endif
 };
 

@@ -1,6 +1,10 @@
 #pragma once
 
 #include "../eterBase/Singleton.h"
+#ifdef ENABLE_FIX_MOBS_LAG
+#include <vector>
+#include <cstdint>
+#endif
 
 class CPythonTextTail : public CSingleton<CPythonTextTail>
 {
@@ -22,6 +26,10 @@ class CPythonTextTail : public CSingleton<CPythonTextTail>
 
 			float							x{}, y{}, z{};
 			float							fDistanceFromPlayer{};
+#ifdef ENABLE_FIX_MOBS_LAG
+			float distanceSquared{};
+			std::uint64_t shownFrame{};
+#endif
 			D3DXCOLOR						Color{};
 			BOOL							bNameFlag{};
 
@@ -37,7 +45,11 @@ class CPythonTextTail : public CSingleton<CPythonTextTail>
 		} TTextTail;
 
 		typedef std::map<DWORD, TTextTail*>		TTextTailMap;
+#ifdef ENABLE_FIX_MOBS_LAG
+		typedef std::vector<TTextTail*> TTextTailList;
+#else
 		typedef std::list<TTextTail*>			TTextTailList;
+#endif
 		typedef TTextTailMap					TChatTailMap;
 
 	public:
@@ -92,6 +104,11 @@ class CPythonTextTail : public CSingleton<CPythonTextTail>
 		void UpdateDistance(const TPixelPosition & c_rCenterPosition, TTextTail * pTextTail) const;
 
 		bool isIn(TTextTail * pSource, TTextTail * pTarget) const;
+#ifdef ENABLE_FIX_MOBS_LAG
+		void ShowCharacterTextTail(TTextTail* tail);
+		void ShowItemTextTail(TTextTail* tail);
+		std::uint64_t m_visibilityFrame = 1;
+#endif
 
 	protected:
 		TTextTailMap				m_CharacterTextTailMap;

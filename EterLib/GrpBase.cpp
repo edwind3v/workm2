@@ -93,8 +93,13 @@ std::vector<TIndex>		CGraphicBase::ms_fillCubeIdxVector;
 LPD3DXMESH				CGraphicBase::ms_lpSphereMesh = nullptr;
 LPD3DXMESH				CGraphicBase::ms_lpCylinderMesh = nullptr;
 
+#ifdef ENABLE_FIX_MOBS_LAG
+IDirect3DVertexBuffer9* CGraphicBase::m_smallPdtVertexBuffer = nullptr;
+IDirect3DVertexBuffer9* CGraphicBase::m_largePdtVertexBuffer = nullptr;
+#else
 LPDIRECT3DVERTEXBUFFER9	CGraphicBase::ms_alpd3dPDTVB[PDT_VERTEXBUFFER_NUM];
 LPDIRECT3DVERTEXBUFFER9	CGraphicBase::ms_alpd3dTextLinePDTVB = nullptr;
+#endif
 
 LPDIRECT3DINDEXBUFFER9	CGraphicBase::ms_alpd3dDefIB[DEFAULT_IB_NUM];
 
@@ -146,6 +151,43 @@ bool CGraphicBase::SetPDTStream(SPDTVertex* pVertices, UINT uVtxCount)
 	return SetPDTStream((SPDTVertexRaw*)pVertices, uVtxCount);
 }
 
+#ifdef ENABLE_FIX_MOBS_LAG
+bool CGraphicBase::SetPDTStream(SPDTVertexRaw* pSrcVertices, UINT uVtxCount)
+{
+	if (!pSrcVertices || !uVtxCount)
+		return false;
+
+	assert(uVtxCount <= LARGE_PDT_VERTEX_BUFFER_SIZE);
+	if (uVtxCount > LARGE_PDT_VERTEX_BUFFER_SIZE)
+		return false;
+
+	IDirect3DVertexBuffer9* vertexBuffer = uVtxCount <= SMALL_PDT_VERTEX_BUFFER_SIZE
+		? GetSmallPdtVertexBuffer() : GetLargePdtVertexBuffer();
+	if (!vertexBuffer)
+	{
+		STATEMANAGER.SetStreamSource(0, nullptr, 0);
+		return false;
+	}
+
+	static_assert(sizeof(SPDTVertexRaw) == sizeof(TPDTVertex), "PDT vertex layouts must match");
+	TPDTVertex* destination;
+	const UINT bytes = sizeof(TPDTVertex) * uVtxCount;
+	if (FAILED(vertexBuffer->Lock(0, bytes, reinterpret_cast<void**>(&destination), D3DLOCK_DISCARD)))
+	{
+		STATEMANAGER.SetStreamSource(0, nullptr, 0);
+		return false;
+	}
+
+	memcpy(destination, pSrcVertices, bytes);
+	if (FAILED(vertexBuffer->Unlock()))
+	{
+		STATEMANAGER.SetStreamSource(0, nullptr, 0);
+		return false;
+	}
+	STATEMANAGER.SetStreamSource(0, vertexBuffer, sizeof(TPDTVertex));
+	return true;
+}
+#else
 bool CGraphicBase::SetPDTStream(SPDTVertexRaw* pSrcVertices, UINT uVtxCount)
 {
 	if (!uVtxCount)
@@ -206,6 +248,8 @@ bool CGraphicBase::SetPDTTextLineStream(SPDTVertexRaw* pSrcVertices, UINT uVtxCo
 
 	return true;
 }
+
+#endif
 
 DWORD CGraphicBase::GetAvailableTextureMemory()
 {

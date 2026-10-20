@@ -720,6 +720,10 @@ bool CPythonApplication::Process()
 		}
 		else
 		{
+#ifdef ENABLE_FIX_MOBS_LAG
+			// CheckDeviceState owns resource release, reset, and reconstruction.
+			canRender = (DEVICE_STATE_OK == CheckDeviceState());
+#else
 			if (m_pyGraphic.IsLostDevice())
 			{
 				// Do not hold an external D3D9Ex render-target texture across
@@ -743,6 +747,7 @@ bool CPythonApplication::Process()
 				else
 					canRender = false;
 			}
+#endif
 		}
 
 		if (!IsActive())
@@ -960,9 +965,28 @@ int CPythonApplication::CheckDeviceState()
 		return DEVICE_STATE_SKIP;
 
 	case CGraphicDevice::DEVICESTATE_NEEDS_RESET:
+#ifdef ENABLE_FIX_MOBS_LAG
+		// This client has shadow targets and DX11 preview textures, but no
+		// CRenderTargetManager. Release its actual external targets here.
+		if (m_dx11SharedPreviewTexture)
+		{
+			m_dx11SharedPreviewTexture->Release();
+			m_dx11SharedPreviewTexture = nullptr;
+		}
+		if (m_dx11ModelPreviewTexture)
+		{
+			m_dx11ModelPreviewTexture->Release();
+			m_dx11ModelPreviewTexture = nullptr;
+		}
+		m_pyBackground.ReleaseCharacterShadowTexture();
+#endif
 		if (!m_grpDevice.Reset())
 			return DEVICE_STATE_SKIP;
-
+#ifdef ENABLE_FIX_MOBS_LAG
+		m_pyBackground.CreateCharacterShadowTexture();
+		// Resume drawing on the following frame after resource recovery.
+		return DEVICE_STATE_SKIP;
+#endif
 		break;
 	}
 

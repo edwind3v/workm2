@@ -1,5 +1,6 @@
 #include "StdAfx.h"
 #include "GrpDevice.h"
+#include "GrpTextInstance.h"
 #include "DX11Probe.h"
 #include "../eterBase/Stl.h"
 #include "../eterBase/Debug.h"
@@ -39,6 +40,9 @@ void CGraphicDevice::__Initialize()
 	ms_dwFlashingEndTime = 0;
 
 	m_pStateManager		= nullptr;
+#ifdef ENABLE_FIX_MOBS_LAG
+	m_isPDTResetPending = false;
+#endif
 
 	__InitializeDefaultIndexBufferList();
 	__InitializePDTVertexBufferList();
@@ -83,13 +87,20 @@ void CGraphicDevice::EnableWebBrowserMode(const RECT& c_rcWebPage) const
 	rkD3DPP.MultiSampleType = D3DMULTISAMPLE_NONE;
 	rkD3DPP.MultiSampleQuality = 0;
 
+#ifdef ENABLE_FIX_MOBS_LAG
+	if (!__ResetDeviceWithPDTBuffers())
+		return;
+#else
 	IDirect3DDevice9Ex& rkD3DDev=*ms_lpd3dDevice;
 	const HRESULT hr=rkD3DDev.ResetEx(&rkD3DPP, nullptr);
 	if (FAILED(hr))
 		return;
+#endif
 
+#ifndef ENABLE_FIX_MOBS_LAG
 	rkD3DDev.SetMaximumFrameLatency(1);
 	STATEMANAGER.SetDefaultState();
+#endif
 }
 
 void CGraphicDevice::DisableWebBrowserMode() const
@@ -103,13 +114,20 @@ void CGraphicDevice::DisableWebBrowserMode() const
 
 	rkD3DPP=g_kD3DPP;
 
+#ifdef ENABLE_FIX_MOBS_LAG
+	if (!__ResetDeviceWithPDTBuffers())
+		return;
+#else
 	IDirect3DDevice9Ex& rkD3DDev=*ms_lpd3dDevice;
 	const HRESULT hr=rkD3DDev.ResetEx(&rkD3DPP, nullptr);
 	if (FAILED(hr))
 		return;
+#endif
 
+#ifndef ENABLE_FIX_MOBS_LAG
 	rkD3DDev.SetMaximumFrameLatency(1);
 	STATEMANAGER.SetDefaultState();
+#endif
 }
 
 bool CGraphicDevice::ResizeBackBuffer(UINT uWidth, UINT uHeight) const
@@ -125,16 +143,22 @@ bool CGraphicDevice::ResizeBackBuffer(UINT uWidth, UINT uHeight) const
 			rkD3DPP.BackBufferWidth=uWidth;
 			rkD3DPP.BackBufferHeight=uHeight;
 
+#ifdef ENABLE_FIX_MOBS_LAG
+			if (!__ResetDeviceWithPDTBuffers())
+				return false;
+#else
 			IDirect3DDevice9Ex& rkD3DDev=*ms_lpd3dDevice;
-
 			const HRESULT hr=rkD3DDev.ResetEx(&rkD3DPP, nullptr);
 			if (FAILED(hr))
 			{
 				return false;
 			}
+#endif
 
+#ifndef ENABLE_FIX_MOBS_LAG
 			rkD3DDev.SetMaximumFrameLatency(1);
 			STATEMANAGER.SetDefaultState();
+#endif
 		}
 	}
 
@@ -153,6 +177,23 @@ DWORD CGraphicDevice::CreatePNT2StreamVertexShader() const
 	return D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1 | D3DFVF_TEX2;
 }
 
+#ifdef ENABLE_FIX_MOBS_LAG
+CGraphicDevice::EDeviceState CGraphicDevice::GetDeviceState() const
+{
+	if (!ms_lpd3dDevice)
+		return DEVICESTATE_NULL;
+
+	const HRESULT state = ms_lpd3dDevice->CheckDeviceState(ms_hWnd);
+	if (state == D3DERR_DEVICENOTRESET || state == S_PRESENT_MODE_CHANGED)
+		return DEVICESTATE_NEEDS_RESET;
+	if (FAILED(state) || state == S_PRESENT_OCCLUDED)
+		return DEVICESTATE_BROKEN;
+
+	// Retry a failed allocation even if ResetEx itself already succeeded.
+	return (m_smallPdtVertexBuffer && m_largePdtVertexBuffer && !m_isPDTResetPending)
+		? DEVICESTATE_OK : DEVICESTATE_NEEDS_RESET;
+}
+#else
 CGraphicDevice::EDeviceState CGraphicDevice::GetDeviceState() const
 {
 	if (!ms_lpd3dDevice)
@@ -186,6 +227,8 @@ CGraphicDevice::EDeviceState CGraphicDevice::GetDeviceState() const
 	return DEVICESTATE_OK;
 }
 
+#endif
+
 void CGraphicDevice::LostDevice()
 {
 	__DestroyPDTVertexBufferList();
@@ -197,6 +240,74 @@ void CGraphicDevice::ResetDevice()
 	__CreatePDTVertexBufferList();
 }
 
+#ifdef ENABLE_FIX_MOBS_LAG
+bool CGraphicDevice::__ResetDeviceWithPDTBuffers() const
+{
+	if (!ms_lpd3dDevice || !m_pStateManager)
+		return false;
+
+	// Keep explicit resize/browser resets pending if the device is unavailable.
+	m_isPDTResetPending = true;
+	const HRESULT state = ms_lpd3dDevice->CheckDeviceState(ms_hWnd);
+	if (state == S_PRESENT_OCCLUDED ||
+		(FAILED(state) && state != D3DERR_DEVICENOTRESET))
+		return false;
+
+	if (state == S_PRESENT_MODE_CHANGED && ms_d3dPresentParameter.Windowed)
+	{
+		D3DDISPLAYMODEEX desktopMode = {};
+		desktopMode.Size = sizeof(desktopMode);
+		if (FAILED(ms_lpd3d->GetAdapterDisplayModeEx(ms_iD3DAdapterInfo, &desktopMode, nullptr)))
+			return false;
+		ms_d3dPresentParameter.BackBufferFormat = desktopMode.Format;
+	}
+	__DestroyPDTVertexBufferList();
+	D3DDISPLAYMODEEX displayModeReset = {};
+	if (!ms_d3dPresentParameter.Windowed)
+	{
+		displayModeReset.Size = sizeof(D3DDISPLAYMODEEX);
+		displayModeReset.Width = ms_d3dPresentParameter.BackBufferWidth;
+		displayModeReset.Height = ms_d3dPresentParameter.BackBufferHeight;
+		displayModeReset.Format = ms_d3dPresentParameter.BackBufferFormat;
+		displayModeReset.RefreshRate = ms_d3dPresentParameter.FullScreen_RefreshRateInHz;
+		displayModeReset.ScanLineOrdering = D3DSCANLINEORDERING_PROGRESSIVE;
+	}
+	const HRESULT result = ms_lpd3dDevice->ResetEx(&ms_d3dPresentParameter,
+		ms_d3dPresentParameter.Windowed ? nullptr : &displayModeReset);
+	if (FAILED(result))
+	{
+		TraceError("Failed to reset device (0x%08X)", static_cast<unsigned>(result));
+		return false;
+	}
+	if (ms_d3dPresentParameter.Windowed)
+		ms_lpd3dDevice->SetMaximumFrameLatency(1);
+	m_isPDTResetPending = false;
+	m_pStateManager->SetDefaultState();
+	return __CreatePDTVertexBufferList();
+}
+
+bool CGraphicDevice::Reset() const
+{
+	if (!ms_lpd3dDevice || !m_pStateManager)
+		return false;
+
+	const HRESULT state = ms_lpd3dDevice->CheckDeviceState(ms_hWnd);
+	if (state == D3DERR_DEVICENOTRESET || state == S_PRESENT_MODE_CHANGED)
+		return __ResetDeviceWithPDTBuffers();
+	if (FAILED(state) || state == S_PRESENT_OCCLUDED)
+		return false;
+	if (m_isPDTResetPending)
+		return __ResetDeviceWithPDTBuffers();
+
+	if (!m_smallPdtVertexBuffer || !m_largePdtVertexBuffer)
+	{
+		if (!__CreatePDTVertexBufferList())
+			return false;
+		m_pStateManager->SetDefaultState();
+	}
+	return true;
+}
+#else
 bool CGraphicDevice::Reset() const
 {
 	HRESULT hr;
@@ -220,6 +331,8 @@ bool CGraphicDevice::Reset() const
 
 	return true;
 }
+
+#endif
 
 static LPDIRECT3DSURFACE9 s_lpStencil;
 static DWORD   s_MaxTextureWidth, s_MaxTextureHeight;
@@ -717,6 +830,54 @@ RETRY:
 	return (iRet);
 }
 
+#ifdef ENABLE_FIX_MOBS_LAG
+void CGraphicDevice::__InitializePDTVertexBufferList() const
+{
+	m_smallPdtVertexBuffer = nullptr;
+	m_largePdtVertexBuffer = nullptr;
+}
+
+void CGraphicDevice::__DestroyPDTVertexBufferList() const
+{
+	// Unbind before releasing so the state cache cannot retain a dead pointer.
+	if (ms_lpd3dDevice && m_pStateManager)
+	{
+		STATEMANAGER.SetStreamSource(0, nullptr, 0);
+		STATEMANAGER.SetIndices(nullptr, 0);
+	}
+	CGraphicTextInstance::DestroyWorldTextDeviceObjects();
+	safe_release(m_smallPdtVertexBuffer);
+	safe_release(m_largePdtVertexBuffer);
+}
+
+bool CGraphicDevice::__CreatePDTVertexBufferList() const
+{
+	if (m_smallPdtVertexBuffer && m_largePdtVertexBuffer)
+		return true;
+	__DestroyPDTVertexBufferList();
+	if (!ms_lpd3dDevice)
+		return false;
+
+	HRESULT result = ms_lpd3dDevice->CreateVertexBuffer(
+		sizeof(TPDTVertex) * SMALL_PDT_VERTEX_BUFFER_SIZE,
+		D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, TPDTVertex::kFVF,
+		D3DPOOL_DEFAULT, &m_smallPdtVertexBuffer, nullptr);
+	if (SUCCEEDED(result))
+		result = ms_lpd3dDevice->CreateVertexBuffer(
+			sizeof(TPDTVertex) * LARGE_PDT_VERTEX_BUFFER_SIZE,
+			D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, TPDTVertex::kFVF,
+			D3DPOOL_DEFAULT, &m_largePdtVertexBuffer, nullptr);
+
+	if (FAILED(result))
+	{
+		TraceError("Failed to create PDT vertex buffers (0x%08X)", static_cast<unsigned>(result));
+		__DestroyPDTVertexBufferList();
+		return false;
+	}
+	CGraphicTextInstance::CreateWorldTextDeviceObjects(ms_lpd3dDevice);
+	return true;
+}
+#else
 void CGraphicDevice::__InitializePDTVertexBufferList() const
 {
 	for (UINT i=0; i<PDT_VERTEXBUFFER_NUM; ++i)
@@ -767,6 +928,8 @@ bool CGraphicDevice::__CreatePDTVertexBufferList() const
 
 	return true;
 }
+
+#endif
 
 void CGraphicDevice::__InitializeDefaultIndexBufferList() const
 {

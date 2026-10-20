@@ -41,6 +41,10 @@ public:
 	void DestroyDeviceObjects() const;
 
 	bool CheckTextureIndex(DWORD dwTexture) const;
+#ifdef ENABLE_FIX_MOBS_LAG
+	CGraphicImageTexture* GetTexture(DWORD dwTexture) const;
+	DWORD GetGeometryRevision() const { return m_geometryRevision; }
+#endif
 	void SelectTexture(DWORD dwTexture);
 
 	bool UpdateTexture();
@@ -78,6 +82,9 @@ protected:
 	int m_y;
 	int m_step;
 	bool m_isDirty;
+#ifdef ENABLE_FIX_MOBS_LAG
+	DWORD m_geometryRevision = 0;
+#endif
 
 	TCHAR	m_fontName[LF_FACESIZE];
 	LONG	m_fontSize;

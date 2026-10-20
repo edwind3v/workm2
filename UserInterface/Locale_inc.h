@@ -63,6 +63,12 @@
 // Preload character, effect, sound, and NPC data through the native C++ loader.
 #define ENABLE_LOADING_PERFORMANCE
 
+// Font batching and its device-reset corrections share this switch.
+#define ENABLE_FIX_MOBS_LAG
+
+// Remove dog colision for test
+#define REMOVE_DOG_COLISION
+
 #define ENABLE_NEW_EVENT_STRUCT
 #ifdef ENABLE_NEW_EVENT_STRUCT
 #define USE_NEW_EVENT_TEXT_AUTO_Y

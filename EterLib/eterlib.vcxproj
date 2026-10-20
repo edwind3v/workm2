@@ -260,6 +260,7 @@
     <ClCompile Include="GrpFontTexture.cpp" />
     <ClCompile Include="GrpText.cpp" />
     <ClCompile Include="GrpTextInstance.cpp" />
+    <ClCompile Include="WorldTextBatch.cpp" />
     <ClCompile Include="TextTag.cpp" />
     <ClCompile Include="BlockTexture.cpp" />
     <ClCompile Include="DibBar.cpp" />
@@ -342,6 +343,7 @@
     <ClInclude Include="GrpFontTexture.h" />
     <ClInclude Include="GrpText.h" />
     <ClInclude Include="GrpTextInstance.h" />
+    <ClInclude Include="TextPerformance.h" />
     <ClInclude Include="TextTag.h" />
     <ClInclude Include="BlockTexture.h" />
     <ClInclude Include="DibBar.h" />

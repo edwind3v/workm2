@@ -4,6 +4,8 @@
 #include "InstanceBase.h"
 #include "resource.h"
 #include "PythonTextTail.h"
+#include "TextTailSpatialGrid.h"
+#include "../EterLib/TextPerformance.h"
 #include "PythonCharacterManager.h"
 #include "PythonGuild.h"
 #include "Locale.h"
@@ -52,6 +54,10 @@ void CPythonTextTail::GetInfo(std::string* pstInfo)
 
 void CPythonTextTail::UpdateAllTextTail()
 {
+#ifdef ENABLE_FIX_MOBS_LAG
+	CTextPerformance::Get().BeginFrame();
+	CTextProfileScope profileScope(CTextPerformance::Distance);
+#endif
 	CInstanceBase * pInstance = CPythonCharacterManager::Instance().GetMainInstancePtr();
 	if (pInstance)
 	{
@@ -85,6 +91,9 @@ void CPythonTextTail::UpdateAllTextTail()
 
 void CPythonTextTail::UpdateShowingTextTail()
 {
+#ifdef ENABLE_FIX_MOBS_LAG
+	CTextProfileScope profileScope(CTextPerformance::Projection);
+#endif
 	TTextTailList::iterator itor;
 
 	for (itor = m_ItemTextTailList.begin(); itor != m_ItemTextTailList.end(); ++itor)
@@ -135,7 +144,11 @@ void CPythonTextTail::UpdateTextTail(TTextTail * pTextTail) const
 	pTextTail->x = floorf(pTextTail->x);
 	pTextTail->y = floorf(pTextTail->y);
 
+#ifdef ENABLE_FIX_MOBS_LAG
+	if (pTextTail->distanceSquared < 1300.0f * 1300.0f)
+#else
 	if (pTextTail->fDistanceFromPlayer < 1300.0f)
+#endif
 	{
 		pTextTail->z = 0.0f;
 	}
@@ -149,7 +162,13 @@ void CPythonTextTail::UpdateTextTail(TTextTail * pTextTail) const
 void CPythonTextTail::ArrangeTextTail()
 {
 	TTextTailList::iterator itor;
+#ifdef ENABLE_FIX_MOBS_LAG
+	CTextProfileScope profileScope(CTextPerformance::Arrangement);
+	static CTextTailSpatialGrid itemGrid;
+	itemGrid.Build(m_ItemTextTailList);
+#else
 	TTextTailList::iterator itorCompare;
+#endif
 
 	const DWORD dwTime = CTimer::Instance().GetCurrentMillisecond();
 
@@ -160,6 +179,19 @@ void CPythonTextTail::ArrangeTextTail()
 		const int yTemp = 5;
 		int LimitCount = 0;
 
+#ifdef ENABLE_FIX_MOBS_LAG
+		const std::size_t itemIndex = static_cast<std::size_t>(itor - m_ItemTextTailList.begin());
+		while (LimitCount < 20)
+		{
+			const std::size_t other = itemGrid.FirstOverlap(itemIndex,
+				[this](TTextTail* first, TTextTail* second) { return isIn(first, second); });
+			if (other == CTextTailSpatialGrid::None) break;
+			const TTextTail* compared = m_ItemTextTailList[other];
+			pInsertTextTail->y = compared->y + compared->yEnd + yTemp;
+			itemGrid.Moved(itemIndex);
+			++LimitCount;
+		}
+#else
 		for (itorCompare = m_ItemTextTailList.begin(); itorCompare != m_ItemTextTailList.end();)
 		{
 			TTextTail * pCompareTextTail = *itorCompare;
@@ -184,6 +216,8 @@ void CPythonTextTail::ArrangeTextTail()
 
 			++itorCompare;
 		}
+
+#endif
 
 		if (pInsertTextTail->pOwnerTextInstance)
 		{
@@ -300,6 +334,13 @@ void CPythonTextTail::ArrangeTextTail()
 
 void CPythonTextTail::Render()
 {
+#ifdef ENABLE_FIX_MOBS_LAG
+	CTextPerformance& profile = CTextPerformance::Get();
+	const double renderStart = profile.Enabled() ? profile.Now() : 0.0;
+	profile.Add(CTextPerformance::EligibleCharacters, m_CharacterTextTailList.size());
+	profile.Add(CTextPerformance::EligibleItems, m_ItemTextTailList.size());
+	CGraphicTextInstance::BeginWorldTextBatch();
+#endif
 	TTextTailList::iterator itor;
 
 	for (itor = m_CharacterTextTailList.begin(); itor != m_CharacterTextTailList.end(); ++itor)
@@ -308,6 +349,9 @@ void CPythonTextTail::Render()
 		pTextTail->pTextInstance->Render();
 		if (pTextTail->pMarkInstance && pTextTail->pGuildNameTextInstance)
 		{
+#ifdef ENABLE_FIX_MOBS_LAG
+			CGraphicTextInstance::FlushWorldTextBatch();
+#endif
 			pTextTail->pMarkInstance->Render();
 			pTextTail->pGuildNameTextInstance->Render();
 		}
@@ -325,6 +369,9 @@ void CPythonTextTail::Render()
 	{
 		TTextTail * pTextTail = *itor;
 
+#ifdef ENABLE_FIX_MOBS_LAG
+		CGraphicTextInstance::FlushWorldTextBatch();
+#endif
 		RenderTextTailBox(pTextTail);
 		pTextTail->pTextInstance->Render();
 		if (pTextTail->pOwnerTextInstance)
@@ -337,6 +384,11 @@ void CPythonTextTail::Render()
 		if (pTextTail->pOwner->isShow())
 			RenderTextTailName(pTextTail);
 	}
+#ifdef ENABLE_FIX_MOBS_LAG
+	CGraphicTextInstance::EndWorldTextBatch();
+	if (profile.Enabled()) profile.Time(CTextPerformance::Rendering, renderStart);
+	profile.EndFrame();
+#endif
 }
 
 void CPythonTextTail::RenderTextTailBox(TTextTail * pTextTail) const
@@ -365,32 +417,90 @@ void CPythonTextTail::HideAllTextTail()
 {
 	m_CharacterTextTailList.clear();
 	m_ItemTextTailList.clear();
+#ifdef ENABLE_FIX_MOBS_LAG
+	if (++m_visibilityFrame == 0)
+	{
+		for (const auto& pair : m_CharacterTextTailMap) pair.second->shownFrame = 0;
+		for (const auto& pair : m_ItemTextTailMap) pair.second->shownFrame = 0;
+		m_visibilityFrame = 1;
+	}
+#endif
 }
 
 void CPythonTextTail::UpdateDistance(const TPixelPosition & c_rCenterPosition, TTextTail * pTextTail) const
 {
 	const D3DXVECTOR3 & c_rv3Position = pTextTail->pOwner->GetPosition();
 	const D3DXVECTOR2 v2Distance(c_rv3Position.x - c_rCenterPosition.x, -c_rv3Position.y - c_rCenterPosition.y);
+#ifdef ENABLE_FIX_MOBS_LAG
+	pTextTail->distanceSquared = v2Distance.x * v2Distance.x + v2Distance.y * v2Distance.y;
+#else
 	pTextTail->fDistanceFromPlayer = D3DXVec2Length(&v2Distance);
+#endif
 }
 
 void CPythonTextTail::ShowAllTextTail()
 {
+#ifdef ENABLE_FIX_MOBS_LAG
+	CTextProfileScope profileScope(CTextPerformance::Selection);
+#endif
 	TTextTailMap::iterator itor;
 	for (itor = m_CharacterTextTailMap.begin(); itor != m_CharacterTextTailMap.end(); ++itor)
 	{
 		const TTextTail * pTextTail = itor->second;
+#ifdef ENABLE_FIX_MOBS_LAG
+		if (pTextTail->distanceSquared < 3500.0f * 3500.0f)
+			ShowCharacterTextTail(itor->second);
+#else
 		if (pTextTail->fDistanceFromPlayer < 3500.0f)
 			ShowCharacterTextTail(itor->first);
+#endif
 	}
 	for (itor = m_ItemTextTailMap.begin(); itor != m_ItemTextTailMap.end(); ++itor)
 	{
 		const TTextTail * pTextTail = itor->second;
+#ifdef ENABLE_FIX_MOBS_LAG
+		if (pTextTail->distanceSquared < 3500.0f * 3500.0f)
+			ShowItemTextTail(itor->second);
+#else
 		if (pTextTail->fDistanceFromPlayer < 3500.0f)
 			ShowItemTextTail(itor->first);
+#endif
 	}
 }
 
+#ifdef ENABLE_FIX_MOBS_LAG
+void CPythonTextTail::ShowCharacterTextTail(DWORD virtualID)
+{
+	const auto found = m_CharacterTextTailMap.find(virtualID);
+	if (found != m_CharacterTextTailMap.end()) ShowCharacterTextTail(found->second);
+}
+
+void CPythonTextTail::ShowCharacterTextTail(TTextTail* tail)
+{
+	if (tail->shownFrame == m_visibilityFrame || !tail->pOwner->isShow()) return;
+	CInstanceBase* instance = CPythonCharacterManager::Instance().GetInstancePtr(tail->dwVirtualID);
+	if (!instance || instance->IsGuildWall() || !instance->CanPickInstance()) return;
+	if (m_CharacterTextTailList.size() == m_CharacterTextTailList.capacity())
+		CTextPerformance::Get().Add(CTextPerformance::CapacityGrowths);
+	m_CharacterTextTailList.push_back(tail);
+	tail->shownFrame = m_visibilityFrame;
+}
+
+void CPythonTextTail::ShowItemTextTail(DWORD virtualID)
+{
+	const auto found = m_ItemTextTailMap.find(virtualID);
+	if (found != m_ItemTextTailMap.end()) ShowItemTextTail(found->second);
+}
+
+void CPythonTextTail::ShowItemTextTail(TTextTail* tail)
+{
+	if (tail->shownFrame == m_visibilityFrame) return;
+	if (m_ItemTextTailList.size() == m_ItemTextTailList.capacity())
+		CTextPerformance::Get().Add(CTextPerformance::CapacityGrowths);
+	m_ItemTextTailList.push_back(tail);
+	tail->shownFrame = m_visibilityFrame;
+}
+#else
 void CPythonTextTail::ShowCharacterTextTail(DWORD VirtualID)
 {
 	const auto itor = m_CharacterTextTailMap.find(VirtualID);
@@ -435,6 +545,8 @@ void CPythonTextTail::ShowItemTextTail(DWORD VirtualID)
 
 	m_ItemTextTailList.push_back(pTextTail);
 }
+
+#endif
 
 bool CPythonTextTail::isIn(CPythonTextTail::TTextTail * pSource, CPythonTextTail::TTextTail * pTarget) const
 {
@@ -747,6 +859,10 @@ CPythonTextTail::TTextTail * CPythonTextTail::RegisterTextTail(DWORD dwVirtualID
 {
 	TTextTail * pTextTail = m_TextTailPool.Alloc();
 
+#ifdef ENABLE_FIX_MOBS_LAG
+	pTextTail->shownFrame = 0;
+	pTextTail->distanceSquared = 0.0f;
+#endif
 	pTextTail->dwVirtualID = dwVirtualID;
 	pTextTail->pOwner = pOwner;
 	pTextTail->pTextInstance = CGraphicTextInstance::New();
@@ -779,6 +895,14 @@ CPythonTextTail::TTextTail * CPythonTextTail::RegisterTextTail(DWORD dwVirtualID
 
 void CPythonTextTail::DeleteTextTail(TTextTail * pTextTail)
 {
+#ifdef ENABLE_FIX_MOBS_LAG
+	if (pTextTail->shownFrame == m_visibilityFrame)
+	{
+		m_CharacterTextTailList.erase(std::remove(m_CharacterTextTailList.begin(), m_CharacterTextTailList.end(), pTextTail), m_CharacterTextTailList.end());
+		m_ItemTextTailList.erase(std::remove(m_ItemTextTailList.begin(), m_ItemTextTailList.end(), pTextTail), m_ItemTextTailList.end());
+	}
+	pTextTail->shownFrame = 0;
+#endif
 	if (pTextTail->pTextInstance)
 	{
 		CGraphicTextInstance::Delete(pTextTail->pTextInstance);
@@ -953,11 +1077,25 @@ void CPythonTextTail::Initialize() const
 
 void CPythonTextTail::Destroy()
 {
+#ifdef ENABLE_FIX_MOBS_LAG
+	Clear();
+#else
 	m_TextTailPool.Clear();
+#endif
 }
 
 void CPythonTextTail::Clear()
 {
+#ifdef ENABLE_FIX_MOBS_LAG
+	CGraphicTextInstance::EndWorldTextBatch();
+	m_CharacterTextTailList.clear();
+	m_ItemTextTailList.clear();
+	for (const auto& pair : m_CharacterTextTailMap) DeleteTextTail(pair.second);
+	for (const auto& pair : m_ItemTextTailMap) DeleteTextTail(pair.second);
+	for (const auto& pair : m_ChatTailMap) DeleteTextTail(pair.second);
+	CGraphicTextInstance::ClearWorldTextCache();
+	m_visibilityFrame = 1;
+#endif
 	m_CharacterTextTailMap.clear();
 	m_CharacterTextTailList.clear();
 	m_ItemTextTailMap.clear();

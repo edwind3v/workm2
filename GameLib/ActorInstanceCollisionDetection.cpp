@@ -577,6 +577,14 @@ BOOL CActorInstance::TestActorCollision(CActorInstance & rVictim)
 		return FALSE;
 #endif
 
+#ifdef REMOVE_DOG_COLISION
+	if (rVictim.GetRace() >= 101 && rVictim.GetRace() <= 99999 && !isAttacking())
+	{
+		if (!(rVictim.GetRace() >= 8001 && rVictim.GetRace() <= 8050))
+			return false;
+	}
+#endif
+
 	// Check Distance
 	const auto v3Distance = D3DXVECTOR3(rVictim.m_x - m_x, rVictim.m_y - m_y, rVictim.m_z - m_z);
 	const float fDistance = D3DXVec3LengthSq(&v3Distance);

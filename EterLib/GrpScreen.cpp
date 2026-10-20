@@ -737,8 +737,14 @@ void CScreen::Show(HWND hWnd) const
 	else
 	{
 		const HRESULT hr=ms_lpd3dDevice->PresentEx(nullptr, nullptr, hWnd, nullptr, 0);
+#ifdef ENABLE_FIX_MOBS_LAG
+		// Recovery runs at the start of the next frame in the application,
+		// where shadow/preview targets and PDT buffers can be rebuilt together.
+		(void)hr;
+#else
 		if (D3DERR_DEVICELOST == hr)
 			RestoreDevice();
+#endif
 	}
 }
 

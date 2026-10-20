@@ -3,6 +3,10 @@
 
 #include "Pool.h"
 #include "GrpText.h"
+#ifdef ENABLE_FIX_MOBS_LAG
+#include <memory>
+struct SCachedTextGeometry;
+#endif
 #ifdef ENABLE_EMOJI_SYSTEM
 #include "GrpImageInstance.h"
 #endif
@@ -38,6 +42,15 @@ class CGraphicTextInstance
 
 		void Update();
 		void Render(RECT * pClipRect = nullptr);
+#ifdef ENABLE_FIX_MOBS_LAG
+		static void CreateWorldTextDeviceObjects(IDirect3DDevice9Ex* device);
+		static void DestroyWorldTextDeviceObjects();
+		static void BeginWorldTextBatch();
+		static bool IsWorldTextBatchActive();
+		static void FlushWorldTextBatch();
+		static void EndWorldTextBatch();
+		static void ClearWorldTextCache();
+#endif
 
 		void ShowCursor();
 		void HideCursor();
@@ -125,6 +138,11 @@ class CGraphicTextInstance
 		D3DXVECTOR3 m_v3Position;
 
 	private:
+#ifdef ENABLE_FIX_MOBS_LAG
+		bool QueueWorldText(CGraphicFontTexture* font, RECT* clip);
+		std::shared_ptr<SCachedTextGeometry> m_cachedGeometry;
+		DWORD m_layoutFontRevision = 0;
+#endif
 		bool m_isUpdate;
 		bool m_isUpdateFontTexture;
 

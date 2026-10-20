@@ -4,6 +4,11 @@
 #include "Ray.h"
 #include <vector>
 
+#ifdef ENABLE_FIX_MOBS_LAG
+static const std::size_t SMALL_PDT_VERTEX_BUFFER_SIZE = 16;
+static const std::size_t LARGE_PDT_VERTEX_BUFFER_SIZE = 200;
+#endif
+
 void PixelPositionToD3DXVECTOR3(const D3DXVECTOR3& c_rkPPosSrc, D3DXVECTOR3* pv3Dst);
 void D3DXVECTOR3ToPixelPosition(const D3DXVECTOR3& c_rv3Src, D3DXVECTOR3* pv3Dst);
 
@@ -74,6 +79,9 @@ typedef struct SPDTVertex
 	TPosition	position;
 	TDiffuse	diffuse;
 	TTextureCoordinate texCoord;
+#ifdef ENABLE_FIX_MOBS_LAG
+	static const DWORD kFVF = D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1;
+#endif
 } TPDTVertex;
 
 typedef struct SPNTVertex
@@ -150,6 +158,10 @@ class CGraphicBase
 	public:
 		CGraphicBase();
 		virtual	~CGraphicBase();
+#ifdef ENABLE_FIX_MOBS_LAG
+		static IDirect3DVertexBuffer9* GetSmallPdtVertexBuffer() { return m_smallPdtVertexBuffer; }
+		static IDirect3DVertexBuffer9* GetLargePdtVertexBuffer() { return m_largePdtVertexBuffer; }
+#endif
 
 		void		SetSimpleCamera(float x, float y, float z, float pitch, float roll) const;
 		void		SetEyeCamera(float xEye, float yEye, float zEye, float xCenter, float yCenter, float zCenter, float xUp, float yUp, float zUp) const;
@@ -213,7 +225,9 @@ class CGraphicBase
 		static void SetDefaultIndexBuffer(UINT eDefIB);
 		static bool SetPDTStream(SPDTVertexRaw* pVertices, UINT uVtxCount);
 		static bool SetPDTStream(SPDTVertex* pVertices, UINT uVtxCount);
+#ifndef ENABLE_FIX_MOBS_LAG
 		static bool SetPDTTextLineStream(SPDTVertexRaw* pVertices, UINT uVtxCount);
+#endif
 
 	protected:
 		static D3DXMATRIX				ms_matIdentity;
@@ -304,8 +318,13 @@ class CGraphicBase
 		};
 
 	protected:
+#ifdef ENABLE_FIX_MOBS_LAG
+		static IDirect3DVertexBuffer9* m_smallPdtVertexBuffer;
+		static IDirect3DVertexBuffer9* m_largePdtVertexBuffer;
+#else
 		static LPDIRECT3DVERTEXBUFFER9	ms_alpd3dPDTVB[PDT_VERTEXBUFFER_NUM];
 		static LPDIRECT3DVERTEXBUFFER9	ms_alpd3dTextLinePDTVB;
+#endif
 		static LPDIRECT3DINDEXBUFFER9	ms_alpd3dDefIB[DEFAULT_IB_NUM];
 };
 
