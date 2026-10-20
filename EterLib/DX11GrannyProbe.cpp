@@ -729,6 +729,36 @@ bool CaptureDX11GrannyMesh(const DX11GrannyVertex* vertices, UINT vertexCount,
 			if (!std::isfinite(vertices[i].normal[j]))
 				return RejectCapture("nonfinite_normal", i, j, vertexCount);
 		}
+	// A single corrupt attachment can contain *finite* but astronomical
+	// positions and make the orthographic camera bounds unusable. Character
+	// parts should be near their main actor, with bounded local extents.
+	// Reject the malformed piece before it poisons the merged snapshot.
+	if (composite)
+	{
+		constexpr float kMaxWorldCoordinate = 1.0e8f;
+		constexpr float kMaxPartExtent = 10000.0f;
+		float low[3] = { FLT_MAX, FLT_MAX, FLT_MAX };
+		float high[3] = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
+		for (UINT i = 0; i < vertexCount; ++i)
+			for (UINT j = 0; j < 3; ++j)
+			{
+				const float value = vertices[i].position[j];
+				if (std::fabs(value) > kMaxWorldCoordinate)
+					return RejectCapture("implausible_world_position", i, j, vertexCount);
+				low[j] = (std::min)(low[j], value);
+				high[j] = (std::max)(high[j], value);
+			}
+		for (UINT j = 0; j < 3; ++j)
+		{
+			const float extent = high[j] - low[j];
+			const float center = low[j] * 0.5f + high[j] * 0.5f;
+			if (!std::isfinite(extent) || extent > kMaxPartExtent)
+				return RejectCapture("implausible_mesh_extent", j, 0, 10000);
+			if (!capture.vertices.empty() &&
+				std::fabs(center - capture.vertices.front().position[j]) > kMaxPartExtent)
+				return RejectCapture("detached_mesh_outlier", j, 0, 10000);
+		}
+	}
 	for (UINT i = 0; i < indexCount; ++i)
 		if (indices[i] >= vertexCount)
 			return RejectCapture("index_out_of_bounds", i, indices[i], vertexCount);

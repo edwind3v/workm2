@@ -159,6 +159,16 @@ void CGrannyModelInstance::TryCaptureDX11ModelPreview(const TPNTVertex* deformed
 			if (!std::isfinite(input.texCoord.x) || !std::isfinite(input.texCoord.y))
 				++repairedUVs;
 		}
+		// A late Granny copy with most normals corrupt is not a safe
+		// attachment snapshot. Skipping it protects the whole preview until
+		// the load-time vertex cache can supply real data for that asset.
+		if (composite && !chooseDeformed && repairedNormals > static_cast<unsigned>(vertexCount / 4))
+		{
+			TraceError("DX11_CHARACTER_MESH_REJECT name=\"%s\" reason=corrupt_rigid_normals source=%s repaired=%u vertices=%d",
+				grannyMesh->Name ? grannyMesh->Name : "",
+				usedRigidCache ? "load_cache" : "granny_copy", repairedNormals, vertexCount);
+			continue;
+		}
 		// Retain the *instance's* material overrides and the engine's Granny
 		// triangle-group ranges. The index buffer below is mesh-local, whereas
 		// TTriGroupNode::idxPos is relative to the complete model index buffer.

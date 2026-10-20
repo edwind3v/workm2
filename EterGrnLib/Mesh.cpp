@@ -107,6 +107,22 @@ void CGrannyMesh::NEW_LoadVertices(void * dstBaseVertices) const
 
 	TPNTVertex * dstVertices = ((TPNTVertex *)dstBaseVertices) + m_vtxBasePos;
 	GrannyCopyMeshVertices(pgrnMesh, m_pgrnMeshType, dstVertices);
+	// Modern model-loading paths use NEW_LoadVertices rather than
+	// LoadPNTVertices. Cache the exact DX9Ex upload bytes here as well,
+	// otherwise later GrannyCopyMeshVertices calls can return corrupt data.
+	if (strcmp(graphics::GetDX11GrannyCaptureMode(), "character") == 0)
+	{
+		const int count = GrannyGetMeshVertexCount(pgrnMesh);
+		if (count >= 12 && count <= 30000 && m_dx11PreviewRigidVertices.empty())
+		{
+			const size_t bytes = static_cast<size_t>(count) * sizeof(TPNTVertex);
+			if (bytes <= kDX11PreviewRigidVertexBudget - s_dx11PreviewRigidVertexBytes)
+			{
+				m_dx11PreviewRigidVertices.assign(dstVertices, dstVertices + count);
+				s_dx11PreviewRigidVertexBytes += bytes;
+			}
+		}
+	}
 }
 
 void CGrannyMesh::DeformPNTVertices(void * dstBaseVertices, D3DXMATRIX * boneMatrices, granny_mesh_binding* pgrnMeshBinding) const
