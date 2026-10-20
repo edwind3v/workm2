@@ -1,5 +1,6 @@
 #include "StdAfx.h"
 #include "GrpDevice.h"
+#include "DX11Probe.h"
 #include "../eterBase/Stl.h"
 #include "../eterBase/Debug.h"
 
@@ -662,6 +663,37 @@ RETRY:
 		GRAPHICS_CAPS_CAN_NOT_DRAW_SHADOW = true;
 		GRAPHICS_CAPS_HALF_SIZE_IMAGE = true;
 		ms_isLowTextureMemory = true;
+	}
+
+	// Temporary migration checkpoint: exercise actual Shader Model 5 graphics
+	// work in this process without presenting over the existing D3D9 scene.
+	// Intentionally opt-in; never change the working renderer by accident.
+	char dx11TestEnabled[2] = {};
+	if (Windowed && GetEnvironmentVariableA("M2_DX11_TEST", dx11TestEnabled,
+		ARRAYSIZE(dx11TestEnabled)) == 1 && dx11TestEnabled[0] == '1')
+	{
+		graphics::DX11ProbeResult result;
+		const HRESULT probeResult = graphics::RunDX11Probe(hWnd, L"dx11_probe.bmp", &result);
+		char adapterName[256] = {};
+		WideCharToMultiByte(CP_UTF8, 0, result.adapter.description, -1,
+			adapterName, ARRAYSIZE(adapterName), nullptr, nullptr);
+		if (SUCCEEDED(probeResult))
+		{
+			TraceError("DX11_DEVICE adapter=%s luid=%08X:%08X vram_mb=%llu render_index=%u render_outputs=%u output_index=%u feature_level=0x%04X",
+				adapterName,
+				static_cast<unsigned>(result.adapter.luid.HighPart), result.adapter.luid.LowPart,
+				static_cast<unsigned long long>(result.adapter.dedicatedVideoMemoryBytes / (1024 * 1024)),
+				result.adapter.adapterIndex, result.adapter.outputCount, result.adapter.outputIndex,
+				static_cast<unsigned>(result.featureLevel));
+			TraceError("DX11_TEST_DRAW mode=offscreen center_rgba=%u,%u,%u,%u image_saved=%u game_renderer=DX9Ex",
+				result.centerPixelRGBA[0], result.centerPixelRGBA[1],
+				result.centerPixelRGBA[2], result.centerPixelRGBA[3], result.bitmapSaved ? 1 : 0);
+		}
+		else
+		{
+			TraceError("DX11_TEST_FAILED stage=%s hr=0x%08X game_renderer=DX9Ex",
+				result.stage, static_cast<unsigned>(probeResult));
+		}
 	}
 
 	return (iRet);

@@ -1,6 +1,8 @@
 #include "StdAfx.h"
 #include "DX11Device.h"
 
+#include <cstring>
+
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 
@@ -11,6 +13,111 @@ DX11Device::~DX11Device()
 	Shutdown();
 }
 
+bool DX11Device::CreateHardwareDevice(HWND window, bool enableDebugLayer)
+{
+	const UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT |
+		(enableDebugLayer ? D3D11_CREATE_DEVICE_DEBUG : 0);
+	const D3D_FEATURE_LEVEL requested[] = {
+		D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0
+	};
+
+	// Prefer the hardware adapter driving the game window. The D3D11 default
+	// adapter can be different on machines with multiple GPUs.
+	Microsoft::WRL::ComPtr<IDXGIFactory1> enumeration;
+	Microsoft::WRL::ComPtr<IDXGIAdapter1> windowAdapter;
+	if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(enumeration.GetAddressOf()))))
+	{
+		const HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+		for (UINT adapterIndex = 0; ; ++adapterIndex)
+		{
+			Microsoft::WRL::ComPtr<IDXGIAdapter1> candidate;
+			if (enumeration->EnumAdapters1(adapterIndex, candidate.GetAddressOf()) != S_OK)
+				break;
+			DXGI_ADAPTER_DESC1 adapterDesc = {};
+			if (FAILED(candidate->GetDesc1(&adapterDesc)) ||
+				(adapterDesc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE))
+				continue;
+			for (UINT outputIndex = 0; ; ++outputIndex)
+			{
+				Microsoft::WRL::ComPtr<IDXGIOutput> output;
+				if (candidate->EnumOutputs(outputIndex, output.GetAddressOf()) != S_OK)
+					break;
+				DXGI_OUTPUT_DESC outputDesc = {};
+				if (SUCCEEDED(output->GetDesc(&outputDesc)) && outputDesc.Monitor == monitor)
+				{
+					windowAdapter = candidate;
+					break;
+				}
+			}
+			if (windowAdapter)
+				break;
+		}
+	}
+
+	IDXGIAdapter* selectedAdapter = windowAdapter.Get();
+	m_lastResult = D3D11CreateDevice(
+		selectedAdapter, selectedAdapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr, flags,
+		requested, ARRAYSIZE(requested), D3D11_SDK_VERSION,
+		m_device.GetAddressOf(), &m_featureLevel, m_context.GetAddressOf());
+
+	// Older D3D11 runtimes reject 11_1 in the feature-level list.
+	if (m_lastResult == E_INVALIDARG)
+	{
+		m_lastResult = D3D11CreateDevice(
+			selectedAdapter, selectedAdapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr, flags,
+			requested + 1, 1, D3D11_SDK_VERSION,
+			m_device.GetAddressOf(), &m_featureLevel, m_context.GetAddressOf());
+	}
+	if (FAILED(m_lastResult))
+		return false;
+
+	Microsoft::WRL::ComPtr<IDXGIDevice> dxgiDevice;
+	Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
+	m_lastResult = m_device.As(&dxgiDevice);
+	if (SUCCEEDED(m_lastResult))
+		m_lastResult = dxgiDevice->GetAdapter(adapter.GetAddressOf());
+	if (FAILED(m_lastResult))
+		return false;
+
+	DXGI_ADAPTER_DESC description = {};
+	m_lastResult = adapter->GetDesc(&description);
+	if (FAILED(m_lastResult))
+		return false;
+	lstrcpynW(m_adapterInfo.description, description.Description, ARRAYSIZE(m_adapterInfo.description));
+	m_adapterInfo.luid = description.AdapterLuid;
+	m_adapterInfo.dedicatedVideoMemoryBytes = static_cast<UINT64>(description.DedicatedVideoMemory);
+
+	Microsoft::WRL::ComPtr<IDXGIFactory1> actualFactory;
+	m_lastResult = adapter->GetParent(IID_PPV_ARGS(actualFactory.GetAddressOf()));
+	if (FAILED(m_lastResult))
+		return false;
+	for (UINT i = 0; ; ++i)
+	{
+		Microsoft::WRL::ComPtr<IDXGIAdapter1> candidate;
+		if (actualFactory->EnumAdapters1(i, candidate.GetAddressOf()) != S_OK)
+			break;
+		DXGI_ADAPTER_DESC1 candidateDesc = {};
+		if (SUCCEEDED(candidate->GetDesc1(&candidateDesc)) &&
+			std::memcmp(&candidateDesc.AdapterLuid, &description.AdapterLuid, sizeof(LUID)) == 0)
+		{
+			m_adapterInfo.adapterIndex = i;
+			for (UINT j = 0; ; ++j)
+			{
+				Microsoft::WRL::ComPtr<IDXGIOutput> output;
+				if (candidate->EnumOutputs(j, output.GetAddressOf()) != S_OK)
+					break;
+				++m_adapterInfo.outputCount;
+				DXGI_OUTPUT_DESC outputDesc = {};
+				if (SUCCEEDED(output->GetDesc(&outputDesc)) &&
+					outputDesc.Monitor == MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST))
+					m_adapterInfo.outputIndex = j;
+			}
+			break;
+		}
+	}
+	return true;
+}
+
 bool DX11Device::Create(HWND window, UINT width, UINT height, bool enableDebugLayer)
 {
 	Shutdown();
@@ -19,26 +126,7 @@ bool DX11Device::Create(HWND window, UINT width, UINT height, bool enableDebugLa
 		return false;
 
 	m_window = window;
-	const UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT |
-		(enableDebugLayer ? D3D11_CREATE_DEVICE_DEBUG : 0);
-	const D3D_FEATURE_LEVEL requested[] = {
-		D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0
-	};
-
-	m_lastResult = D3D11CreateDevice(
-		nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags,
-		requested, ARRAYSIZE(requested), D3D11_SDK_VERSION,
-		m_device.GetAddressOf(), &m_featureLevel, m_context.GetAddressOf());
-
-	// Older D3D11 runtimes reject 11_1 in the feature-level list.
-	if (m_lastResult == E_INVALIDARG)
-	{
-		m_lastResult = D3D11CreateDevice(
-			nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags,
-			requested + 1, 1, D3D11_SDK_VERSION,
-			m_device.GetAddressOf(), &m_featureLevel, m_context.GetAddressOf());
-	}
-	if (FAILED(m_lastResult))
+	if (!CreateHardwareDevice(window, enableDebugLayer))
 	{
 		Shutdown();
 		return false;
@@ -87,15 +175,43 @@ bool DX11Device::Create(HWND window, UINT width, UINT height, bool enableDebugLa
 	return true;
 }
 
+bool DX11Device::CreateOffscreen(HWND window, UINT width, UINT height, bool enableDebugLayer)
+{
+	Shutdown();
+	m_lastResult = E_INVALIDARG;
+	if (!IsWindow(window) || width == 0 || height == 0)
+		return false;
+	m_window = window;
+	if (!CreateHardwareDevice(window, enableDebugLayer) || !CreateTargets(width, height))
+	{
+		Shutdown();
+		return false;
+	}
+	return true;
+}
+
 bool DX11Device::CreateTargets(UINT width, UINT height)
 {
-	Microsoft::WRL::ComPtr<ID3D11Texture2D> color;
-	m_lastResult = m_swapChain->GetBuffer(0, IID_PPV_ARGS(color.GetAddressOf()));
+	if (m_swapChain)
+		m_lastResult = m_swapChain->GetBuffer(0, IID_PPV_ARGS(m_colorTexture.GetAddressOf()));
+	else
+	{
+		D3D11_TEXTURE2D_DESC colorDesc = {};
+		colorDesc.Width = width;
+		colorDesc.Height = height;
+		colorDesc.MipLevels = 1;
+		colorDesc.ArraySize = 1;
+		colorDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		colorDesc.SampleDesc.Count = 1;
+		colorDesc.Usage = D3D11_USAGE_DEFAULT;
+		colorDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+		m_lastResult = m_device->CreateTexture2D(&colorDesc, nullptr, m_colorTexture.GetAddressOf());
+	}
 	if (FAILED(m_lastResult))
 		return false;
 
 	m_lastResult = m_device->CreateRenderTargetView(
-		color.Get(), nullptr, m_colorTarget.GetAddressOf());
+		m_colorTexture.Get(), nullptr, m_colorTarget.GetAddressOf());
 	if (FAILED(m_lastResult))
 		return false;
 
@@ -128,11 +244,12 @@ void DX11Device::ReleaseTargets()
 	m_depthTarget.Reset();
 	m_depthTexture.Reset();
 	m_colorTarget.Reset();
+	m_colorTexture.Reset();
 }
 
 bool DX11Device::Resize(UINT width, UINT height)
 {
-	if (!m_swapChain || !m_context || width == 0 || height == 0)
+	if (!m_device || !m_context || width == 0 || height == 0)
 	{
 		m_lastResult = E_INVALIDARG;
 		return false;
@@ -143,10 +260,13 @@ bool DX11Device::Resize(UINT width, UINT height)
 	m_context->OMSetRenderTargets(0, nullptr, nullptr);
 	ReleaseTargets();
 	m_context->Flush();
-	m_lastResult = m_swapChain->ResizeBuffers(
-		0, width, height, DXGI_FORMAT_UNKNOWN, 0);
-	if (FAILED(m_lastResult))
-		return false;
+	if (m_swapChain)
+	{
+		m_lastResult = m_swapChain->ResizeBuffers(
+			0, width, height, DXGI_FORMAT_UNKNOWN, 0);
+		if (FAILED(m_lastResult))
+			return false;
+	}
 	return CreateTargets(width, height);
 }
 
@@ -172,7 +292,7 @@ bool DX11Device::BeginFrame(const float clearColor[4])
 HRESULT DX11Device::Present(UINT syncInterval)
 {
 	if (!m_swapChain || syncInterval > 4)
-		return m_lastResult = E_INVALIDARG;
+		return m_lastResult = DXGI_ERROR_INVALID_CALL;
 	return m_lastResult = m_swapChain->Present(syncInterval, 0);
 }
 
@@ -191,5 +311,6 @@ void DX11Device::Shutdown()
 	m_window = nullptr;
 	m_width = 0;
 	m_height = 0;
+	m_adapterInfo = DX11AdapterInfo();
 }
 }

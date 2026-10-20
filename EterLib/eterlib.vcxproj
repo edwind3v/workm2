@@ -234,6 +234,7 @@
     <ClCompile Include="GrpBase.cpp" />
     <ClCompile Include="GrpDetector.cpp" />
     <ClCompile Include="DX11Device.cpp" />
+    <ClCompile Include="DX11Probe.cpp" />
     <ClCompile Include="DX11ShaderLibrary.cpp" />
     <ClCompile Include="GrpDevice.cpp" />
     <ClCompile Include="GrpMath.cpp" />
@@ -313,6 +314,7 @@
     <ClInclude Include="GrpBase.h" />
     <ClInclude Include="GrpDetector.h" />
     <ClInclude Include="DX11Device.h" />
+    <ClInclude Include="DX11Probe.h" />
     <ClInclude Include="DX11ShaderLibrary.h" />
     <ClInclude Include="GrpDevice.h" />
     <ClInclude Include="GrpMath.h" />
