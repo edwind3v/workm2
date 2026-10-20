@@ -5,6 +5,7 @@
 #include "../eterLib/DX11GrannyProbe.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 #include <vector>
 
@@ -85,28 +86,78 @@ void CGrannyModelInstance::TryCaptureDX11ModelPreview(const TPNTVertex* deformed
 		++cachedMeshes;
 		std::vector<TPNTVertex> rigidVertices;
 		const TPNTVertex* source = nullptr;
+		bool usedRigidCache = false;
 		if (chooseDeformed)
 			source = deformedVertices + mesh->GetVertexBasePosition();
 		else
 		{
-			rigidVertices.resize(vertexCount);
-			GrannyCopyMeshVertices(grannyMesh, GrannyPNT332VertexType,
-				rigidVertices.data());
-			source = rigidVertices.data();
+			const std::vector<TPNTVertex>& cached = mesh->GetDX11PreviewRigidVertices();
+			if (cached.size() == static_cast<size_t>(vertexCount))
+			{
+				source = cached.data();
+				usedRigidCache = true;
+			}
+			else
+			{
+				rigidVertices.resize(vertexCount);
+				GrannyCopyMeshVertices(grannyMesh, GrannyPNT332VertexType,
+					rigidVertices.data());
+				source = rigidVertices.data();
+			}
 		}
 		std::vector<graphics::DX11GrannyVertex> previewVertices(vertexCount);
+		// The DX9Ex renderer applies m_meshMatrices[meshIndex] separately to
+		// *every* skinned and rigid mesh at draw time. A merged DX11 vertex
+		// buffer has no per-mesh world transforms, so bake the same matrices
+		// into the composite's positions and normals before merging. This is
+		// particularly important for equipment attached to animated bones.
+		const bool composite = graphics::IsDX11PrimaryCharacterCaptureActive();
+		if (composite && !m_meshMatrices)
+			continue;
+		const D3DXMATRIX* meshWorld = composite ? &m_meshMatrices[meshIndex] : nullptr;
+		unsigned repairedNormals = 0;
+		unsigned repairedUVs = 0;
 		for (int vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
 		{
 			const TPNTVertex& input = source[vertexIndex];
 			graphics::DX11GrannyVertex& output = previewVertices[vertexIndex];
-			output.position[0] = input.position.x;
-			output.position[1] = input.position.y;
-			output.position[2] = input.position.z;
-			output.normal[0] = input.normal.x;
-			output.normal[1] = input.normal.y;
-			output.normal[2] = input.normal.z;
-			output.uv[0] = input.texCoord.x;
-			output.uv[1] = input.texCoord.y;
+			D3DXVECTOR3 position(input.position.x, input.position.y, input.position.z);
+			D3DXVECTOR3 normal(input.normal.x, input.normal.y, input.normal.z);
+			// Some Granny rigid meshes contain undefined normal components.
+			// Rejecting an entire costume piece for one such normal leaves holes
+			// in the preview; use a neutral fallback normal instead.
+			if (!std::isfinite(normal.x) || !std::isfinite(normal.y) ||
+				!std::isfinite(normal.z))
+			{
+				normal = D3DXVECTOR3(0.0f, 0.0f, 1.0f);
+				++repairedNormals;
+			}
+			if (meshWorld)
+			{
+				D3DXVECTOR3 transformed;
+				D3DXVec3TransformCoord(&transformed, &position, meshWorld);
+				position = transformed;
+				D3DXVec3TransformNormal(&transformed, &normal, meshWorld);
+				normal = transformed;
+			}
+			const float normalLengthSq = D3DXVec3LengthSq(&normal);
+			if (!std::isfinite(normalLengthSq) || normalLengthSq < 1e-10f)
+			{
+				normal = D3DXVECTOR3(0.0f, 0.0f, 1.0f);
+				++repairedNormals;
+			}
+			else
+				D3DXVec3Normalize(&normal, &normal);
+			output.position[0] = position.x;
+			output.position[1] = position.y;
+			output.position[2] = position.z;
+			output.normal[0] = normal.x;
+			output.normal[1] = normal.y;
+			output.normal[2] = normal.z;
+			output.uv[0] = std::isfinite(input.texCoord.x) ? input.texCoord.x : 0.0f;
+			output.uv[1] = std::isfinite(input.texCoord.y) ? input.texCoord.y : 0.0f;
+			if (!std::isfinite(input.texCoord.x) || !std::isfinite(input.texCoord.y))
+				++repairedUVs;
 		}
 		// Retain the *instance's* material overrides and the engine's Granny
 		// triangle-group ranges. The index buffer below is mesh-local, whereas
@@ -154,6 +205,11 @@ void CGrannyModelInstance::TryCaptureDX11ModelPreview(const TPNTVertex* deformed
 			materials.data(), static_cast<UINT>(materials.size()), grannyMesh->Name))
 		{
 			capturedAny = true;
+			if (composite)
+				TraceError("DX11_CHARACTER_MESH name=\"%s\" type=%s source=%s vertices=%d indices=%d repaired_normals=%u repaired_uvs=%u space=world",
+					grannyMesh->Name ? grannyMesh->Name : "", chooseDeformed ? "skinned" : "rigid",
+					chooseDeformed ? "deformed" : usedRigidCache ? "load_cache" : "granny_copy",
+					vertexCount, indexCount, repairedNormals, repairedUVs);
 			// A single-mesh probe stops here. The explicit main-character
 			// scope collects every eligible mesh across active costume parts.
 			if (!graphics::IsDX11PrimaryCharacterCaptureActive())

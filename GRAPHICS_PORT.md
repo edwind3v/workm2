@@ -366,6 +366,29 @@ private SM5 bytecode, are intentionally not bundled with the public source.
   rebuild topology only when equipment changes. Creating a DX11 device and
   decoding costume textures every animation frame would be unacceptably slow.
 
+## Character composite alignment correction
+
+- The first composite capture (`log(8).txt`) reported three meshes and three
+  loaded textures, but the character looked fragmented. One rigid mesh was
+  rejected for a non-finite normal; the advanced preview material also fell
+  back to the simpler working shader. These are **not** proof of a visually
+  correct character or a complete Baerim renderer.
+- The composite capture now bakes each model instance's **actual DX9Ex mesh
+  world matrix** into its sampled position/normal data before concatenating
+  skinned and rigid meshes. Without this, equipment and attachment geometry
+  were rendered in unrelated coordinate spaces. The legacy single-mesh probe
+  remains unchanged by this world-space adjustment.
+- In character mode, rigid vertex data is cached during the same original
+  Granny-to-DX9Ex upload (64 MiB process-wide budget) instead of assuming
+  those source vertices are valid when copied again much later. Invalid
+  normals/UVs are sanitized rather than rejecting a whole visible mesh.
+- `DX11_CHARACTER_MESH name=... type=... source=... repaired_normals=...
+  repaired_uvs=... space=world` identifies each accepted piece and whether
+  its rigid vertices came from the original load-time cache. Check this and
+  `DX11_CHARACTER_CAPTURE meshes=...` in the next Windows test. If materials
+  still report `DX11_MODEL_MATERIAL_FALLBACK advanced_pixels=0`, advanced
+  shader parity is a **separate unresolved task**, even if geometry improves.
+
 ## Build guidance
 
 Open `Metin2Client.sln` in Visual Studio and compile `eterlib` as `Win32`.

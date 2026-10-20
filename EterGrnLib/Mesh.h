@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Material.h"
+#include "../eterLib/GrpBase.h"
 
 extern granny_data_type_definition GrannyPNT3322VertexType[5];
 
@@ -40,6 +41,9 @@ class CGrannyMesh
 		// Opt-in CPU copy retained when the original index buffer is created.
 		// The later Granny mesh pointer is not guaranteed to retain live topology.
 		const std::vector<WORD>& GetDX11PreviewIndices() const;
+		// Same source vertices uploaded to the DX9Ex rigid vertex buffer at
+		// model load. Avoid copying possibly stale Granny vertices during play.
+		const std::vector<TPNTVertex>& GetDX11PreviewRigidVertices() const;
  		void					LoadPNTVertices(void* dstBaseVertices) const;
 		void					NEW_LoadVertices(void* dstBaseVertices) const;
 		void					Destroy();
@@ -98,6 +102,7 @@ class CGrannyMesh
 		int						m_vtxBasePos;
 		int						m_idxBasePos;
 		mutable std::vector<WORD>	m_dx11PreviewIndices;
+		mutable std::vector<TPNTVertex> m_dx11PreviewRigidVertices;
 
 		bool					m_canDeformPNTVertex;
 		bool					m_isTwoSide;

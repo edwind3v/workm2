@@ -10,6 +10,8 @@ namespace
 // This cap is shared by loaded Granny meshes to avoid doubling large models.
 constexpr size_t kDX11PreviewIndexBudget = 32u * 1024u * 1024u;
 size_t s_dx11PreviewIndexBytes = 0;
+constexpr size_t kDX11PreviewRigidVertexBudget = 64u * 1024u * 1024u;
+size_t s_dx11PreviewRigidVertexBytes = 0;
 }
 
 granny_data_type_definition GrannyPNT3322VertexType[5] =
@@ -64,6 +66,11 @@ const std::vector<WORD>& CGrannyMesh::GetDX11PreviewIndices() const
 	return m_dx11PreviewIndices;
 }
 
+const std::vector<TPNTVertex>& CGrannyMesh::GetDX11PreviewRigidVertices() const
+{
+	return m_dx11PreviewRigidVertices;
+}
+
 void CGrannyMesh::LoadPNTVertices(void * dstBaseVertices) const
 {
 	const granny_mesh * pgrnMesh = GetGrannyMeshPointer();
@@ -73,6 +80,22 @@ void CGrannyMesh::LoadPNTVertices(void * dstBaseVertices) const
 
 	TPNTVertex * dstVertices = ((TPNTVertex *)dstBaseVertices) + m_vtxBasePos;
 	GrannyCopyMeshVertices(pgrnMesh, m_pgrnMeshType, dstVertices);
+	// Mirror the vertices while the model is being loaded and Granny's source
+	// is known to be valid. This is opt-in and globally bounded; it never
+	// reads back the write-only DX9Ex GPU vertex buffer.
+	if (strcmp(graphics::GetDX11GrannyCaptureMode(), "character") == 0)
+	{
+		const int count = GrannyGetMeshVertexCount(pgrnMesh);
+		if (count >= 12 && count <= 30000 && m_dx11PreviewRigidVertices.empty())
+		{
+			const size_t bytes = static_cast<size_t>(count) * sizeof(TPNTVertex);
+			if (bytes <= kDX11PreviewRigidVertexBudget - s_dx11PreviewRigidVertexBytes)
+			{
+				m_dx11PreviewRigidVertices.assign(dstVertices, dstVertices + count);
+				s_dx11PreviewRigidVertexBytes += bytes;
+			}
+		}
+	}
 }
 
 void CGrannyMesh::NEW_LoadVertices(void * dstBaseVertices) const
@@ -298,6 +321,12 @@ void CGrannyMesh::SetPNT2Mesh()
 
 void CGrannyMesh::Destroy()
 {
+	const size_t rigidBytes = m_dx11PreviewRigidVertices.size() * sizeof(TPNTVertex);
+	if (rigidBytes)
+	{
+		s_dx11PreviewRigidVertexBytes -= rigidBytes;
+		std::vector<TPNTVertex>().swap(m_dx11PreviewRigidVertices);
+	}
 	const size_t cachedBytes = m_dx11PreviewIndices.size() * sizeof(WORD);
 	if (cachedBytes)
 	{
