@@ -47,6 +47,7 @@ m_fGlobalElapsedTime(0.0f),
 m_dwLButtonDownTime(0),
 m_dwLastIdleTime(0)
 {
+	m_dx11SharedPreviewTexture = nullptr;
 #ifndef _DEBUG
 	SetEterExceptionHandler();
 #endif
@@ -102,6 +103,11 @@ m_dwLastIdleTime(0)
 
 CPythonApplication::~CPythonApplication()
 {
+	if (m_dx11SharedPreviewTexture)
+	{
+		m_dx11SharedPreviewTexture->Release();
+		m_dx11SharedPreviewTexture = nullptr;
+	}
 }
 
 void CPythonApplication::GetMousePosition(POINT* ppt)
@@ -442,10 +448,17 @@ bool CPythonApplication::Process()
 		}
 		else if (assetPathLength > 0 && m_isWindowed)
 		{
+			char sharedPreviewFlag[8] = {};
+			const DWORD sharedFlagLength = GetEnvironmentVariableA(
+				"M2_DX11_SHARED_PREVIEW", sharedPreviewFlag, ARRAYSIZE(sharedPreviewFlag));
+			const bool requestSharedPreview = sharedFlagLength == 1 && sharedPreviewFlag[0] == '1';
 			graphics::DX11ProbeResult assetResult;
+			graphics::DX11SharedProbeResult sharedResult;
 			const HRESULT assetHr = graphics::RunDX11AssetProbe(
 				GetWindowHandle(), m_grpDevice.GetDevice(), assetPath,
-				L"dx11_asset_probe.bmp", &assetResult);
+				L"dx11_asset_probe.bmp", &assetResult,
+				requestSharedPreview ? m_grpDevice.GetDevice() : nullptr,
+				requestSharedPreview ? &sharedResult : nullptr);
 			if (SUCCEEDED(assetHr))
 			{
 				TraceError("DX11_ASSET_DRAW path=\"%s\" source=%ux%u center_rgba=%u,%u,%u,%u image_saved=%u game_renderer=DX9Ex",
@@ -458,6 +471,22 @@ bool CPythonApplication::Process()
 			{
 				TraceError("DX11_ASSET_FAILED path=\"%s\" stage=%s hr=0x%08X game_renderer=DX9Ex",
 					assetPath, assetResult.stage, static_cast<unsigned>(assetHr));
+			}
+			if (requestSharedPreview)
+			{
+				if (SUCCEEDED(sharedResult.status) && sharedResult.texture)
+				{
+					m_dx11SharedPreviewTexture = sharedResult.texture;
+					TraceError("DX11_SHARED_READY path=\"%s\" format=%s size=256x256 center_rgba=%u,%u,%u,%u game_renderer=DX9Ex",
+						assetPath, sharedResult.format, sharedResult.centerPixelRGBA[0],
+						sharedResult.centerPixelRGBA[1], sharedResult.centerPixelRGBA[2],
+						sharedResult.centerPixelRGBA[3]);
+				}
+				else if (SUCCEEDED(assetHr))
+				{
+					TraceError("DX11_SHARED_FAILED path=\"%s\" stage=%s hr=0x%08X game_renderer=DX9Ex",
+						assetPath, sharedResult.stage, static_cast<unsigned>(sharedResult.status));
+				}
 			}
 		}
 	}
@@ -618,6 +647,14 @@ bool CPythonApplication::Process()
 		{
 			if (m_pyGraphic.IsLostDevice())
 			{
+				// Do not hold an external D3D9Ex render-target texture across
+				// a graphics-device restore. The preview can be re-enabled by
+				// restarting the client after recovery.
+				if (m_dx11SharedPreviewTexture)
+				{
+					m_dx11SharedPreviewTexture->Release();
+					m_dx11SharedPreviewTexture = nullptr;
+				}
 				CPythonBackground& rkBG = CPythonBackground::Instance();
 				rkBG.ReleaseCharacterShadowTexture();
 
@@ -655,6 +692,27 @@ bool CPythonApplication::Process()
 				m_pyGraphic.SetInterfaceRenderState();
 
 				OnUIRender();
+				if (m_dx11SharedPreviewTexture)
+				{
+					const HRESULT sharedDraw = graphics::DrawDX11SharedPreview(
+						m_grpDevice.GetDevice(), m_dx11SharedPreviewTexture);
+					if (sharedDraw == S_OK)
+					{
+						static bool s_sharedPresented = false;
+						if (!s_sharedPresented)
+						{
+							s_sharedPresented = true;
+							TraceError("DX11_SHARED_PRESENT source=DX11 target=DX9Ex position=top_right size=96x96");
+						}
+					}
+					if (FAILED(sharedDraw))
+					{
+						TraceError("DX11_SHARED_FAILED stage=DrawD3D9Overlay hr=0x%08X game_renderer=DX9Ex",
+							static_cast<unsigned>(sharedDraw));
+						m_dx11SharedPreviewTexture->Release();
+						m_dx11SharedPreviewTexture = nullptr;
+					}
+				}
 				OnMouseRender();
 				/////////////////////
 
@@ -1281,6 +1339,11 @@ void CPythonApplication::Clear()
 
 void CPythonApplication::Destroy()
 {
+	if (m_dx11SharedPreviewTexture)
+	{
+		m_dx11SharedPreviewTexture->Release();
+		m_dx11SharedPreviewTexture = nullptr;
+	}
 	WebBrowser_Destroy();
 
 	// SphereMap

@@ -112,6 +112,40 @@ private SM5 bytecode, are intentionally not bundled with the public source.
   decode bridge is only temporary; it is not part of the final DX11 frame
   renderer and does not run during normal play.
 
+## Fifth checkpoint: show one DX11-produced asset in the actual game window
+
+- On **Windows / windowed D3D9Ex**, the optional `M2_DX11_SHARED_PREVIEW=1`
+  setting attempts a Direct3D 9Ex / Direct3D 11 shared GPU texture. The image
+  is still loaded from `M2_DX11_ASSET_PATH` through the existing pack manager.
+- The D3D9Ex device creates a 256x256 shared render-target texture; DX11 opens
+  it and renders the packed icon into it using the same indexed mesh and
+  shader pipeline as the asset probe. After a DX11 flush, the D3D9Ex device
+  reads its center pixel, verifying cross-API access.
+- The original D3D9Ex UI render pass can then display the DX11-produced
+  shared texture as a **96x96 preview in the upper-right corner**. Rendering
+  restores D3D9 state, and the shared texture is released on device loss or
+  shutdown. Failure leaves the existing game renderer usable.
+- To test this checkpoint, set **three** environment variables under
+  `UserInterface > Properties > Debugging > Environment`:
+
+  ```text
+  M2_DX11_TEST=1
+  M2_DX11_ASSET_PATH=icon/item/27995.tga
+  M2_DX11_SHARED_PREVIEW=1
+  ```
+
+- `DX11_SHARED_READY ... format=... center_rgba=...` means the GPU allocation
+  was opened and read by both APIs. `DX11_SHARED_PRESENT ...` means the
+  D3D9Ex overlay draw returned success. The image should be visible while
+  the normal game continues running. On failure, `DX11_SHARED_FAILED
+  stage=... hr=...` identifies the failed interop or overlay operation.
+- D3D9Ex/D3D11 interop has driver, texture-format and same-adapter limits;
+  neither a successful shared preview nor a DX11 shader draw means the game
+  world is now rendered by DX11. The bridge is a temporary validation tool,
+  **not** Baerim's native DX11 presentation path or an FPS optimization.
+- Remove `M2_DX11_SHARED_PREVIEW` (or set it to `0`) to disable the preview.
+  The earlier offscreen probes are independent of this toggle.
+
 ## Pending before switching Metin2 gameplay to DX11
 
 1. Replace the diagnostic asset decode bridge with a persistent DX11-side
