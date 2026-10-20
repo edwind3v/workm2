@@ -1,6 +1,10 @@
 #include "StdAfx.h"
 #include "PythonNetworkStream.h"
 #include "Packet.h"
+#if defined(ENABLE_LOADING_PERFORMANCE)
+#include "PythonLoading.h"
+#include "PythonBackground.h"
+#endif
 
 extern DWORD g_adwEncryptKey[4];
 extern DWORD g_adwDecryptKey[4];
@@ -8,6 +12,9 @@ extern DWORD g_adwDecryptKey[4];
 // Select Character ---------------------------------------------------------------------------
 void CPythonNetworkStream::SetSelectPhase()
 {
+#if defined(ENABLE_LOADING_PERFORMANCE)
+	CPythonLoading::Instance().JoinThreadLoading();
+#endif
 	if ("Select" != m_strPhase)
 		m_phaseLeaveFunc.Run();
 
@@ -27,6 +34,13 @@ void CPythonNetworkStream::SetSelectPhase()
 
 	if (__DirectEnterMode_IsSet())
 	{
+#if defined(ENABLE_LOADING_PERFORMANCE)
+		if (CPythonBackground::Instance().IsMapReady())
+		{
+			PyCallClassMemberFunc(m_poHandler, "SetWarpPhase", Py_BuildValue("()"));
+			return;
+		}
+#endif
 		PyCallClassMemberFunc(m_poHandler, "SetLoadingPhase", Py_BuildValue("()"));
 	}
 	else

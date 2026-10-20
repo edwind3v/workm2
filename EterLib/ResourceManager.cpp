@@ -13,6 +13,9 @@ constexpr long c_DeletingCountPerFrame = 30;
 constexpr long c_Reference_Decrease_Wait_Time = 30000;
 
 CFileLoaderThread CResourceManager::ms_loadingThread;
+#if defined(ENABLE_LOADING_PERFORMANCE)
+std::mutex CResourceManager::ms_mutex;
+#endif
 
 void CResourceManager::LoadStaticCache(const char* c_szFileName)
 {
@@ -265,6 +268,9 @@ CResource * CResourceManager::GetTypeResourcePointer(const char * c_szFileName, 
 
 CResource * CResourceManager::GetResourcePointer(const char * c_szFileName)
 {
+#if defined(ENABLE_LOADING_PERFORMANCE)
+	std::lock_guard<std::mutex> lock(ms_mutex);
+#endif
 	if (!c_szFileName || !*c_szFileName)
 	{
 		TraceError("CResourceManager::GetResourcePointer: filename error!");

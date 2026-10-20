@@ -106,6 +106,16 @@ class CPythonGuild : public CSingleton<CPythonGuild>
 		DWORD GetEnemyGuildID(DWORD dwIndex) const;
 		BOOL IsDoingGuildWar() const;
 
+#if defined(ENABLE_LOADING_PERFORMANCE)
+		void SetGuildBuildingList(PyObject* ppyBuildingList)
+		{
+			Py_XINCREF(ppyBuildingList);
+			Py_XDECREF(m_ppyGuildBuildingList);
+			m_ppyGuildBuildingList = ppyBuildingList;
+		}
+		PyObject* GetGuildBuildingList() const { return m_ppyGuildBuildingList; }
+#endif
+
 	protected:
 		void __CalculateLevelAverage();
 		void __SortMember();
@@ -127,5 +137,8 @@ class CPythonGuild : public CSingleton<CPythonGuild>
 		DWORD m_dwMemberExperienceSummary;
 
 		BOOL m_bGuildEnable;
+#if defined(ENABLE_LOADING_PERFORMANCE)
+		PyObject* m_ppyGuildBuildingList;
+#endif
 };
 

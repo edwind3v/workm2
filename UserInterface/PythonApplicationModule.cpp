@@ -1368,6 +1368,11 @@ void initapp()
 	};
 
 	PyObject * poModule = Py_InitModule("app", s_methods);
+#if defined(ENABLE_LOADING_PERFORMANCE)
+	PyModule_AddIntConstant(poModule, "ENABLE_LOADING_PERFORMANCE", 1);
+#else
+	PyModule_AddIntConstant(poModule, "ENABLE_LOADING_PERFORMANCE", 0);
+#endif
 
 	PyModule_AddIntConstant(poModule, "INFO_ITEM",		CPythonApplication::INFO_ITEM);
 	PyModule_AddIntConstant(poModule, "INFO_ACTOR",		CPythonApplication::INFO_ACTOR);

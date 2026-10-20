@@ -27,13 +27,13 @@
     <ConfigurationType>Application</ConfigurationType>
     <UseOfMfc>false</UseOfMfc>
     <CharacterSet>MultiByte</CharacterSet>
-    <PlatformToolset>v145</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseOfMfc>false</UseOfMfc>
     <CharacterSet>MultiByte</CharacterSet>
-    <PlatformToolset>v145</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
@@ -224,6 +224,7 @@
     <ClCompile Include="PythonPlayerInputKeyboard.cpp" />
     <ClCompile Include="PythonPlayerInputMouse.cpp" />
     <ClCompile Include="PythonPlayerModule.cpp" />
+    <ClCompile Include="PythonLoading.cpp" />
     <ClCompile Include="PythonPlayerSkill.cpp" />
     <ClCompile Include="PythonQuest.cpp" />
     <ClCompile Include="PythonSkill.cpp" />
@@ -313,6 +314,9 @@
     <ClInclude Include="PythonTextTail.h" />
     <ClInclude Include="ProcessScanner.h" />
     <ClInclude Include="PythonApplication.h" />
+    <ClInclude Include="PythonLoading.h" />
+    <ClInclude Include="PythonLoading.hpp" />
+    <ClInclude Include="PythonLoadingUtils.hpp" />
     <ClInclude Include="PythonIME.h" />
     <ClInclude Include="PythonSystem.h" />
     <ClInclude Include="GuildMarkDownloader.h" />

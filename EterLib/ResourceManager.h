@@ -6,6 +6,9 @@
 #include <set>
 #include <map>
 #include <string>
+#if defined(ENABLE_LOADING_PERFORMANCE)
+#include <mutex>
+#endif
 
 class CResourceManager : public CSingleton<CResourceManager>
 {
@@ -67,5 +70,8 @@ class CResourceManager : public CSingleton<CResourceManager>
 		TResourceRefDecreaseWaitingMap			m_pResRefDecreaseWaitingMap;
 
 		static CFileLoaderThread				ms_loadingThread;
+#if defined(ENABLE_LOADING_PERFORMANCE)
+		static std::mutex						ms_mutex;
+#endif
 };
 

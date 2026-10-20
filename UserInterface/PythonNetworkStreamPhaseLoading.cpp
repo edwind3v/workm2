@@ -1,6 +1,9 @@
 #include "StdAfx.h"
 #include "PythonNetworkStream.h"
 #include "Packet.h"
+#if defined(ENABLE_LOADING_PERFORMANCE)
+#include "PythonLoading.h"
+#endif
 #include "PythonApplication.h"
 #include "NetworkActorManager.h"
 
@@ -207,7 +210,11 @@ bool CPythonNetworkStream::RecvMainCharacter()
 	rkPlayer.SetName(MainChrPacket.szName);
 	rkPlayer.SetMainCharacterIndex(GetMainActorVID());
 
+#if defined(ENABLE_LOADING_PERFORMANCE)
+	CPythonLoading::Instance().LoadBackground(MainChrPacket.lX, MainChrPacket.lY);
+#else
 	PyCallClassMemberFunc(m_apoPhaseWnd[PHASE_WINDOW_LOAD], "LoadData", Py_BuildValue("(ii)", MainChrPacket.lX, MainChrPacket.lY));
+#endif
 
 	//Tracef(" >> RecvMainCharacter\n");
 
@@ -233,7 +240,11 @@ bool CPythonNetworkStream::RecvMainCharacter2_EMPIRE()
 	rkPlayer.SetName(mainChrPacket.szName);
 	rkPlayer.SetMainCharacterIndex(GetMainActorVID());
 
+#if defined(ENABLE_LOADING_PERFORMANCE)
+	CPythonLoading::Instance().LoadBackground(mainChrPacket.lX, mainChrPacket.lY);
+#else
 	PyCallClassMemberFunc(m_apoPhaseWnd[PHASE_WINDOW_LOAD], "LoadData", Py_BuildValue("(ii)", mainChrPacket.lX, mainChrPacket.lY));
+#endif
 
 	//Tracef(" >> RecvMainCharacterNew : %d\n", m_dwMainActorEmpire);
 
@@ -260,7 +271,11 @@ bool CPythonNetworkStream::RecvMainCharacter3_BGM()
 
 	__SetFieldMusicFileName(mainChrPacket.szBGMName);
 
+#if defined(ENABLE_LOADING_PERFORMANCE)
+	CPythonLoading::Instance().LoadBackground(mainChrPacket.lX, mainChrPacket.lY);
+#else
 	PyCallClassMemberFunc(m_apoPhaseWnd[PHASE_WINDOW_LOAD], "LoadData", Py_BuildValue("(ii)", mainChrPacket.lX, mainChrPacket.lY));
+#endif
 
 	//Tracef(" >> RecvMainCharacterNew : %d\n", m_dwMainActorEmpire);
 
@@ -287,7 +302,11 @@ bool CPythonNetworkStream::RecvMainCharacter4_BGM_VOL()
 
 	__SetFieldMusicFileInfo(mainChrPacket.szBGMName, mainChrPacket.fBGMVol);
 
+#if defined(ENABLE_LOADING_PERFORMANCE)
+	CPythonLoading::Instance().LoadBackground(mainChrPacket.lX, mainChrPacket.lY);
+#else
 	PyCallClassMemberFunc(m_apoPhaseWnd[PHASE_WINDOW_LOAD], "LoadData", Py_BuildValue("(ii)", mainChrPacket.lX, mainChrPacket.lY));
+#endif
 
 	//Tracef(" >> RecvMainCharacterNew : %d\n", m_dwMainActorEmpire);
 

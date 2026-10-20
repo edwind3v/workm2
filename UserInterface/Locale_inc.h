@@ -60,6 +60,9 @@
 // #define ENABLE_MODEL_LOD_LOAD
 #define ENABLE_ITEM_GROUND_EX
 
+// Preload character, effect, sound, and NPC data through the native C++ loader.
+#define ENABLE_LOADING_PERFORMANCE
+
 #define ENABLE_NEW_EVENT_STRUCT
 #ifdef ENABLE_NEW_EVENT_STRUCT
 #define USE_NEW_EVENT_TEXT_AUTO_Y

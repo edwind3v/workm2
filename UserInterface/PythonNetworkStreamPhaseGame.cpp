@@ -946,6 +946,9 @@ bool CPythonNetworkStream::RecvWarpPacket()
 	if (!Recv(sizeof(kWarpPacket), &kWarpPacket))
 		return false;
 
+#if defined(ENABLE_LOADING_PERFORMANCE) && defined(__WARP_SHOWER__)
+	PyCallClassMemberFunc(m_apoPhaseWnd[PHASE_WINDOW_GAME], "OpenWarpShowerWindow", Py_BuildValue("()"));
+#endif
 	__DirectEnterMode_Set(m_dwSelectedCharacterIndex);
 
 	CNetworkStream::Connect((DWORD)kWarpPacket.lAddr, kWarpPacket.wPort);

@@ -158,6 +158,14 @@ void CPythonApplication::OnKeyDown(int iIndex)
 
 	if (DIK_ESCAPE == iIndex)
 	{
+#if defined(ENABLE_LOADING_PERFORMANCE) && defined(__ALLOW_ESCAPE_LOADING__)
+		CPythonNetworkStream& netStream = CPythonNetworkStream::Instance();
+		if (netStream.DirectEnterMode_IsSet() || netStream.IsLoadingPhase())
+		{
+			netStream.LogOutGame();
+			return;
+		}
+#endif
 		rkWndMgr.RunPressEscapeKey();
 	}
 

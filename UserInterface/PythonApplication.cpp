@@ -10,6 +10,7 @@
 
 #include "resource.h"
 #include "PythonApplication.h"
+#include "PythonLoading.h"
 #include "PythonCharacterManager.h"
 
 #include "ProcessScanner.h"
@@ -1126,6 +1127,13 @@ bool LoadLocaleData(const char* localePath)
 		Tracenf("CPythonApplication - CPythonNetworkStream::LoadInsultList(%s)", szInsultList);
 	}
 
+#if defined(ENABLE_LOADING_PERFORMANCE)
+	char szGuildBuildingList[256] = { 0 };
+	snprintf(szGuildBuildingList, sizeof(szGuildBuildingList), "%s/guildbuildinglist.txt", localePath);
+	if (!CPythonLoading::Instance().LoadGuildBuilding(szGuildBuildingList))
+		Tracenf("LoadLocaleData - LoadGuildBuilding(%s) Error", szGuildBuildingList);
+#endif
+
 #ifdef ENABLE_ACCE_COSTUME_SYSTEM
 	char szItemScale[256]{};
 	#ifdef ENABLE_LOAD_ITEM_SCALE_FROM_ROOT
@@ -1336,6 +1344,9 @@ bool CPythonApplication::Create(PyObject * poSelf, const char * c_szName, int wi
 	// SphereMap
 	CGrannyMaterial::CreateSphereMap(0, "d:/ymir work/special/spheremap.jpg");
 	CGrannyMaterial::CreateSphereMap(1, "d:/ymir work/special/spheremap01.jpg");
+#if defined(ENABLE_LOADING_PERFORMANCE)
+	m_pyLoading.BeginThreadLoading();
+#endif
 	return true;
 }
 
@@ -1436,11 +1447,18 @@ void CPythonApplication::SetForceSightRange(int iRange)
 
 void CPythonApplication::Clear()
 {
+#if defined(ENABLE_LOADING_PERFORMANCE)
+	// Release the native reference while Python is still initialized.
+	m_pyGuild.SetGuildBuildingList(nullptr);
+#endif
 	m_pySystem.Clear();
 }
 
 void CPythonApplication::Destroy()
 {
+#if defined(ENABLE_LOADING_PERFORMANCE)
+	m_pyLoading.EndThreadLoading();
+#endif
 	if (m_dx11ModelPreviewTexture)
 	{
 		m_dx11ModelPreviewTexture->Release();

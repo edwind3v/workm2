@@ -81,6 +81,11 @@ class CPythonNetworkStream : public CNetworkStream, public CSingleton<CPythonNet
 
 		bool SendSpecial(int nLen, void * pvBuf);
 
+#if defined(ENABLE_LOADING_PERFORMANCE)
+		bool IsLoadingPhase() const { return m_strPhase == "Loading"; }
+		bool IsGamePhase() const { return m_strPhase == "Game"; }
+		bool DirectEnterMode_IsSet() const { return __DirectEnterMode_IsSet(); }
+#endif
 		void StartGame();
 		void Warp(LONG lGlobalX, LONG lGlobalY);
 #ifdef ENABLE_AREA_OPTIMIZATION

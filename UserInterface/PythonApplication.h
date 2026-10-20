@@ -31,6 +31,9 @@
 #include "PythonMessenger.h"
 #include "PythonSafeBox.h"
 #include "PythonGuild.h"
+#if defined(ENABLE_LOADING_PERFORMANCE)
+#include "PythonLoading.h"
+#endif
 
 #include "GuildMarkDownloader.h"
 #include "GuildMarkUploader.h"
@@ -361,6 +364,9 @@ class CPythonApplication : public CMSApplication, public CInputKeyboard, public 
 		CNetworkDevice				m_netDevice;
 
 		CPythonSystem				m_pySystem;
+#if defined(ENABLE_LOADING_PERFORMANCE)
+		CPythonLoading				m_pyLoading;
+#endif
 
 		PyObject *					m_poMouseHandler;
 		D3DXVECTOR3					m_v3CenterPosition;

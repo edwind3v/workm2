@@ -364,11 +364,18 @@ void CPythonGuild::Destroy()
 }
 
 CPythonGuild::CPythonGuild()
+#if defined(ENABLE_LOADING_PERFORMANCE)
+	: m_ppyGuildBuildingList(nullptr)
+#endif
 {
 	__Initialize();
 }
 CPythonGuild::~CPythonGuild()
 {
+#if defined(ENABLE_LOADING_PERFORMANCE)
+	Py_XDECREF(m_ppyGuildBuildingList);
+	m_ppyGuildBuildingList = nullptr;
+#endif
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -389,6 +396,18 @@ PyObject * guildHasGuildLand(PyObject * poSelf, PyObject * poArgs)
 {
 	return Py_BuildValue("i", CPythonGuild::Instance().HasGuildLand());
 }
+
+#if defined(ENABLE_LOADING_PERFORMANCE)
+PyObject* guildGetGuildBuildingList(PyObject* poSelf, PyObject* poArgs)
+{
+	PyObject* ppyBuildingList = CPythonGuild::Instance().GetGuildBuildingList();
+	if (!ppyBuildingList)
+		ppyBuildingList = PyList_New(0);
+	else
+		Py_INCREF(ppyBuildingList);
+	return ppyBuildingList;
+}
+#endif
 
 PyObject * guildGetGuildName(PyObject * poSelf, PyObject * poArgs)
 {
@@ -733,6 +752,9 @@ void initguild()
 {
 	static PyMethodDef s_methods[] =
 	{
+#if defined(ENABLE_LOADING_PERFORMANCE)
+		{ "GetGuildBuildingList", guildGetGuildBuildingList, METH_VARARGS },
+#endif
 		// Enable
 		{ "IsGuildEnable",					guildIsGuildEnable,					METH_VARARGS },
 		{ "GuildIDToMarkID",				guildGuildIDToMarkID,				METH_VARARGS },

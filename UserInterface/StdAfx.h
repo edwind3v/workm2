@@ -59,6 +59,7 @@ void initItem();
 void initNonPlayer();
 void initnet();
 void initPlayer();
+void initLoading();
 void initSectionDisplayer();
 void initServerStateChecker();
 void initTrade();
