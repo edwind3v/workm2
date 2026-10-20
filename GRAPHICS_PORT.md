@@ -282,6 +282,22 @@ private SM5 bytecode, are intentionally not bundled with the public source.
 
 ## Pending before switching Metin2 gameplay to DX11
 
+### Material-preview regression guard
+
+- Some meshes produced a blank shared target after the new material-state
+  shader was added (`DX11_MODEL_FAILED stage=VerifyDX11ModelPixels`). The
+  one-shot preview now verifies the advanced draw and, if it has fewer than
+  16 visible pixels, clears color **and depth**, then retries the known-good
+  diffuse/opacity shader with its original texture/sampler bindings.
+- `DX11_MODEL_MATERIAL_FALLBACK advanced_pixels=<N> fallback_pixels=<N>`
+  indicates which path actually recovered the image. A fallback means the
+  material-parity path **still needs debugging**; it is not evidence of a
+  working Baerim-equivalent world renderer. If both counts remain low, the
+  preview still reports `DX11_MODEL_FAILED`.
+- The new reference-style material path is retained so that its rendering
+  behavior can be debugged without sacrificing the previously working
+  skinned-model preview during integration.
+
 1. Replace the diagnostic asset decode bridge with a persistent DX11-side
    resource manager and implement real game texture/model lifetime handling.
 2. Translate the complete D3D9 render/sampler state matrix, blending, culling,

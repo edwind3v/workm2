@@ -166,6 +166,43 @@ float4 PSMain(VSOutput input) : SV_Target
 }
 )";
 
+// Preserve the last GPU-verified Granny preview path. The Baerim-style
+// material bindings are still being ported: if the new material pass
+// produces an empty target, retry with this known-working shader instead
+// of presenting a blank square or declaring the capture unusable.
+constexpr char kModelPreviewFallbackShader[] = R"(
+cbuffer MaterialFlags : register(b1)
+{
+    float4 materialFlags;
+};
+Texture2D Diffuse : register(t0);
+Texture2D Opacity : register(t1);
+SamplerState DiffSamp : register(s0);
+struct VSOutput
+{
+    float4 position : SV_Position;
+    float3 normal   : NORMAL;
+    float2 uv       : TEXCOORD0;
+};
+float4 PSMain(VSOutput input) : SV_Target
+{
+    float light = 0.32 + 0.68 * saturate(dot(normalize(input.normal),
+        normalize(float3(0.4, 0.3, 0.85))));
+    float3 albedo = float3(0.25, 0.74, 0.94);
+    if (materialFlags.x > 0.5)
+    {
+        float4 texel = Diffuse.Sample(DiffSamp, input.uv);
+        clip(texel.a - 0.05);
+        albedo = texel.rgb;
+    }
+    else
+        albedo *= 0.88 + 0.12 * sin(input.uv.x * 30.0) * sin(input.uv.y * 30.0);
+    if (materialFlags.y > 0.5)
+        clip(Opacity.Sample(DiffSamp, input.uv).r - 0.05);
+    return float4(albedo * light, 1.0);
+}
+)";
+
 // Reflected reference model_preview_ps ModelParamsPS layout: 48 bytes, b1.
 // Our shader is independently authored; this enables incremental parity
 // without embedding or depending on the private compiled shader bytecode.
@@ -187,11 +224,13 @@ struct ModelPipeline
 {
 	DX11ShaderProgram vs;
 	DX11ShaderProgram ps;
+	DX11ShaderProgram fallbackPS;
 	DX11Buffer vb;
 	DX11Buffer ib;
 	DX11Buffer cb;
 	DX11Buffer materialParams;
 	DX11Buffer materialFlags;
+	DX11Buffer fallbackFlags;
 	DX11InputLayout layout;
 	Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthState;
 	Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthReadOnlyState;
@@ -278,6 +317,16 @@ HRESULT CreateModelPipeline(ID3D11Device* device,
 	hr = DX11ShaderLibrary::CreateFromMemory(device, DX11ShaderStage::Pixel,
 		pixelCode->GetBufferPointer(), pixelCode->GetBufferSize(), &pipeline->ps);
 	if (FAILED(hr)) return hr;
+	pixelCode.Reset();
+	hr = D3DCompile(kModelPreviewFallbackShader,
+		sizeof(kModelPreviewFallbackShader) - 1,
+		nullptr, nullptr, nullptr, "PSMain", "ps_5_0",
+		D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, pixelCode.GetAddressOf(), nullptr);
+	if (FAILED(hr)) return hr;
+	hr = DX11ShaderLibrary::CreateFromMemory(device, DX11ShaderStage::Pixel,
+		pixelCode->GetBufferPointer(), pixelCode->GetBufferSize(),
+		&pipeline->fallbackPS);
+	if (FAILED(hr)) return hr;
 
 	const D3D11_INPUT_ELEMENT_DESC attributes[] = {
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D11_INPUT_PER_VERTEX_DATA, 0 },
@@ -336,6 +385,8 @@ HRESULT CreateModelPipeline(ID3D11Device* device,
 	if (FAILED(hr)) return hr;
 	const float flags[4] = {};
 	hr = pipeline->materialFlags.CreateConstant(device, flags, sizeof(flags), true);
+	if (FAILED(hr)) return hr;
+	hr = pipeline->fallbackFlags.CreateConstant(device, flags, sizeof(flags), true);
 	if (FAILED(hr)) return hr;
 	D3D11_SAMPLER_DESC sampler = {};
 	sampler.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -430,6 +481,83 @@ HRESULT DrawModel(ID3D11DeviceContext* context, ModelPipeline& pipeline,
 		}
 	}
 	context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
+	return S_OK;
+}
+
+HRESULT DrawModelFallback(ID3D11DeviceContext* context, ModelPipeline& pipeline,
+	const DX11GrannySnapshot& snapshot, const std::vector<ModelMaterial>& materials)
+{
+	context->OMSetDepthStencilState(pipeline.depthState.Get(), 0);
+	context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
+	context->RSSetState(pipeline.rasterizer.Get());
+	pipeline.layout.Bind(context);
+	pipeline.vb.BindVertex(context);
+	pipeline.ib.BindIndex(context);
+	pipeline.cb.BindVSConstant(context);
+	pipeline.fallbackFlags.BindPSConstant(context, 1);
+	ID3D11SamplerState* sampler = pipeline.sampler.Get();
+	context->PSSetSamplers(0, 1, &sampler);
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	pipeline.vs.Bind(context);
+	pipeline.fallbackPS.Bind(context);
+	for (size_t i = 0; i < snapshot.groups.size(); ++i)
+	{
+		const DX11GrannyMaterialGroup& group = snapshot.groups[i];
+		const ModelMaterial& material = materials[i];
+		const float flags[4] = { material.diffuse ? 1.0f : 0.0f,
+			material.opacity ? 1.0f : 0.0f, 0.0f, 0.0f };
+		const HRESULT hr = pipeline.fallbackFlags.Update(context, flags, sizeof(flags));
+		if (FAILED(hr)) return hr;
+		ID3D11ShaderResourceView* empty = nullptr;
+		context->PSSetShaderResources(0, 1, &empty);
+		context->PSSetShaderResources(1, 1, &empty);
+		if (material.diffuse) material.diffuse->BindPS(context, 0);
+		if (material.opacity) material.opacity->BindPS(context, 1);
+		context->DrawIndexed(group.indexCount, group.firstIndex, 0);
+	}
+	return S_OK;
+}
+
+HRESULT ReadSharedModelPixels(IDirect3DDevice9Ex* gameDevice,
+	IDirect3DTexture9* sharedTexture, D3DFORMAT format,
+	unsigned char rgba[4], UINT* coveredPixels)
+{
+	if (!gameDevice || !sharedTexture || !rgba || !coveredPixels)
+		return E_POINTER;
+	*coveredPixels = 0;
+	Microsoft::WRL::ComPtr<IDirect3DSurface9> source;
+	HRESULT hr = sharedTexture->GetSurfaceLevel(0, source.GetAddressOf());
+	if (FAILED(hr)) return hr;
+	Microsoft::WRL::ComPtr<IDirect3DSurface9> readback;
+	hr = gameDevice->CreateOffscreenPlainSurface(kPreviewSize, kPreviewSize,
+		format, D3DPOOL_SYSTEMMEM, readback.GetAddressOf(), nullptr);
+	if (FAILED(hr)) return hr;
+	hr = gameDevice->GetRenderTargetData(source.Get(), readback.Get());
+	if (FAILED(hr)) return hr;
+	D3DLOCKED_RECT locked = {};
+	hr = readback->LockRect(&locked, nullptr, D3DLOCK_READONLY);
+	if (FAILED(hr)) return hr;
+	const unsigned char* middle = static_cast<const unsigned char*>(locked.pBits) +
+		static_cast<size_t>(locked.Pitch) * (kPreviewSize / 2) + kPreviewSize * 2;
+	rgba[0] = middle[format == D3DFMT_A8R8G8B8 ? 2 : 0];
+	rgba[1] = middle[1];
+	rgba[2] = middle[format == D3DFMT_A8R8G8B8 ? 0 : 2];
+	rgba[3] = middle[3];
+	const unsigned char* clearPixel = static_cast<const unsigned char*>(locked.pBits);
+	for (UINT y = 0; y < kPreviewSize; ++y)
+	{
+		const unsigned char* row = static_cast<const unsigned char*>(locked.pBits) +
+			static_cast<size_t>(locked.Pitch) * y;
+		for (UINT x = 0; x < kPreviewSize; ++x)
+		{
+			const unsigned char* pixel = row + 4 * x;
+			if (std::abs(static_cast<int>(pixel[0]) - clearPixel[0]) > 8 ||
+				std::abs(static_cast<int>(pixel[1]) - clearPixel[1]) > 8 ||
+				std::abs(static_cast<int>(pixel[2]) - clearPixel[2]) > 8)
+				++*coveredPixels;
+		}
+	}
+	readback->UnlockRect();
 	return S_OK;
 }
 }
@@ -627,42 +755,29 @@ HRESULT RunDX11GrannyPreview(HWND gameWindow, IDirect3DDevice9Ex* gameDevice,
 	context->Flush();
 
 	*stage = "ReadDX11ModelViaD3D9";
-	Microsoft::WRL::ComPtr<IDirect3DSurface9> source;
-	hr = shared9->GetSurfaceLevel(0, source.GetAddressOf());
+	hr = ReadSharedModelPixels(gameDevice, shared9.Get(), selected, rgba, coveredPixels);
 	if (FAILED(hr)) return hr;
-	Microsoft::WRL::ComPtr<IDirect3DSurface9> readback;
-	hr = gameDevice->CreateOffscreenPlainSurface(kPreviewSize, kPreviewSize,
-		selected, D3DPOOL_SYSTEMMEM, readback.GetAddressOf(), nullptr);
-	if (FAILED(hr)) return hr;
-	hr = gameDevice->GetRenderTargetData(source.Get(), readback.Get());
-	if (FAILED(hr)) return hr;
-	D3DLOCKED_RECT locked = {};
-	hr = readback->LockRect(&locked, nullptr, D3DLOCK_READONLY);
-	if (FAILED(hr)) return hr;
-	const unsigned char* middle = static_cast<const unsigned char*>(locked.pBits) +
-		static_cast<size_t>(locked.Pitch) * (kPreviewSize / 2) + kPreviewSize * 2;
-	rgba[0] = middle[selected == D3DFMT_A8R8G8B8 ? 2 : 0];
-	rgba[1] = middle[1];
-	rgba[2] = middle[selected == D3DFMT_A8R8G8B8 ? 0 : 2];
-	rgba[3] = middle[3];
-	// Do not report a successful mesh draw if we only cleared the target.
-	// Compare the RGB bytes with a background corner, independently of
-	// the two possible D3D9 shared texture channel layouts.
-	const unsigned char* clearPixel = static_cast<const unsigned char*>(locked.pBits);
-	for (UINT y = 0; y < kPreviewSize; ++y)
+	if (*coveredPixels < 16)
 	{
-		const unsigned char* row = static_cast<const unsigned char*>(locked.pBits) +
-			static_cast<size_t>(locked.Pitch) * y;
-		for (UINT x = 0; x < kPreviewSize; ++x)
-		{
-			const unsigned char* pixel = row + 4 * x;
-			if (std::abs(static_cast<int>(pixel[0]) - clearPixel[0]) > 8 ||
-				std::abs(static_cast<int>(pixel[1]) - clearPixel[1]) > 8 ||
-				std::abs(static_cast<int>(pixel[2]) - clearPixel[2]) > 8)
-				++*coveredPixels;
-		}
+		const UINT advancedPixels = *coveredPixels;
+		*stage = "DrawDX11FallbackModel";
+		// Depth must be cleared as well as color: the fallback repeats the
+		// whole mesh with the original, simpler alpha/depth material rules.
+		if (!renderer.BeginFrame(clear)) return E_FAIL;
+		context->OMSetRenderTargets(1, &renderTarget, renderer.GetDepthTarget());
+		context->ClearRenderTargetView(renderTarget, clear);
+		hr = DrawModelFallback(context, pipeline, snapshot, materials);
+		if (FAILED(hr)) return hr;
+		context->OMSetRenderTargets(0, nullptr, nullptr);
+		context->Flush();
+		*stage = "ReadDX11FallbackViaD3D9";
+		hr = ReadSharedModelPixels(gameDevice, shared9.Get(), selected,
+			rgba, coveredPixels);
+		if (FAILED(hr)) return hr;
+		TraceError("DX11_MODEL_MATERIAL_FALLBACK advanced_pixels=%u fallback_pixels=%u",
+			advancedPixels, *coveredPixels);
 	}
-	readback->UnlockRect();
+	// Do not report a successful mesh draw if either pass only cleared the target.
 	if (*coveredPixels < 16)
 	{
 		*stage = "VerifyDX11ModelPixels";
