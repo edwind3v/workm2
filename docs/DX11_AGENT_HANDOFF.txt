@@ -1,0 +1,774 @@
+BAERIM / METIN2 DX11 RECONSTRUCTION - CODING AGENT HANDOFF
+==========================================================
+Document type: technical handoff and evidence ledger (plain text)
+Prepared: 2026-10-20
+Target repository: edwind3v/workm2
+Working branch: feature/m2-newdx
+Primary companion document: GRAPHICS_PORT.md in the same branch
+Status when written: commit d901f1c1fff65ab0c826f393b2e900143fa7ebcd
+IMPORTANT: That latest alpha-handling change has NOT yet been tested on the
+user's Windows game. Last reported game run was based on the preceding commit.
+
+0. MISSION AND RULES FOR THE NEXT CODING AGENT
+-----------------------------------------------
+Goal: implement a working, maintainable Direct3D 11 renderer in the CLEAN Metin2
+source, reproducing Baerim's *observable* rendering features and performance
+where feasible. Baerim is a compiled reference executable, NOT source code.
+Do not mistake a shader inventory, a test host or a DX11 texture preview for a
+complete DX11 game renderer.
+
+Prioritize source-grounded changes and visible parity. Keep the currently
+playable DX9Ex rendering path as a fallback until native DX11 scene rendering
+really works. Build for the actual Metin2 Win32 target; do not confuse the
+separate x64 reconstruction host with the Win32 game.
+
+The user wants fewer speculative probes. When a test already excludes a
+hypothesis, do not spend another cycle testing that hypothesis. Identify and
+repair mismatches in the actual draw path. Keep updates on feature/m2-newdx
+and avoid introducing unnecessary public-facing identifier strings.
+
+Evidence labels used in this file:
+  [LOG]     Direct observation from a log supplied by the user.
+  [SOURCE]  Verified in the CLEAN workm2 branch, not the Baerim source.
+  [SHADER]  Reported recovery/reflection from the supplied Baerim shadercache
+            and reconstruction analysis; verify against original shader bytes.
+  [INFER]   A reasoned hypothesis requiring a capture or code-level proof.
+  [OPEN]    Unknown/not implemented/not yet tested.
+The documentation itself is an aid; go back to original evidence before
+treating an assertion as fact.
+
+1. EXACTLY WHAT WE KNOW ABOUT BAERIM
+------------------------------------
+
+1.1 Baerim uses Direct3D 11 at runtime [LOG]
+A Baerim syserr excerpt from the user contains:
+  DX11_DEVICE adapter=NVIDIA GeForce RTX 4060 Ti
+      luid=00000000:00012570 vram_mb=3072
+      render_index=0 render_outputs=2 display_adapter=0
+      output=\\.\DISPLAY1 requested=1056x748 sync_interval=0
+  DX11 renderer initialized: 1056x748, anti_aliasing=0
+
+This is direct evidence of a DX11 renderer/device initialization code path.
+It does NOT, by itself, enumerate all active draw passes, shaders, resources,
+or prove that absolutely every onscreen object is drawn with D3D11. Do not
+infer an exact swap-chain format, number of back buffers, or device lifetime
+from these two log lines.
+
+The "vram_mb=3072" value is what the application reported. It is not a
+reliable measure of the RTX 4060 Ti's physical VRAM capacity.
+
+1.2 Baerim's guild-mark texture atlas has recoverable addressing [LOG]
+The reference log repeatedly reported:
+  DX11_GUILD_MARK_DRAW file="mark/10_0.tga" index=113
+    atlas=512x512 rect=272,36,288,48 srv=1 alpha=1.000
+  index=62  -> rect=480,12,496,24
+  index=173 -> rect=208,60,224,72
+  index=11  -> rect=176,0,192,12
+
+These examples exactly fit:
+  atlas width 512; atlas height 512
+  cell width 16; cell height 12
+  columns = 512 / 16 = 32
+  x0 = (index % 32) * 16
+  y0 = floor(index / 32) * 12
+  x1 = x0 + 16
+  y1 = y0 + 12
+For index 113: (17*16,3*12)-(18*16,4*12) = (272,36)-(288,48).
+"sr v=1" in the log was written "srv=1"; likely denotes a valid/bound shader
+resource view, but its internal type/value must still be checked [INFER].
+Likewise "alpha=1.000" is a logged draw parameter, not proof of its blend mode.
+
+There was also DX11_GUILD_MARK guild=0 mark=4294967295. The mark value equals
+0xFFFFFFFF; it may be a sentinel, but its meaning is NOT established.
+
+1.3 Baerim's visible graphics configuration [LOG]
+A reference metin2.cfg included, among others:
+  FPS_LIMIT=60, WINDOWED=1, ANTI_ALIASING=0
+  SHADOW_LEVEL=3, SHADOW_QUALITY_LEVEL=0, SHADOW_DETAILS=0
+  GRAPHICS_LEVEL=1, WATER_REFLECTIONS=0, SPECULAR_REFLECTIONS=0
+  ENHANCED_WATER=0, WATER_RIPPLES=0, SUN_RAYS=0
+  SPEEDTREE_DYNAMIC_LIGHT=1, SPEEDTREE_WIND=1
+  SPEEDTREE_ENHANCED_FOLIAGE=0, RAIN_LEVEL=0
+  MAP_OBJECT_CULL_ENABLED=0, MAP_OBJECT_CULL_RANGE=6000
+  HIGH_PERFORMANCE_CROWD_MODE=0, VISIBILITY=3
+  FOV_VALUE=67.82
+Treat these as configuration inputs observed in one test, not evidence of
+the exact code branch behind each setting. In particular, FPS_LIMIT=60 hides
+possible improvements above 60 FPS unless frame times are profiled.
+
+1.4 Baerim shadercache / reconstructed shader inventory [SHADER]
+The earlier reconstruction host window reported:
+  "baerim dx11 reconstruction host - 123/123 recovered shaders created"
+It loaded d3d11.dll, dxgi.dll and D3DCompiler_47.dll and listed candidate
+passes. This verifies that the STANDALONE HOST created 123/123 of its
+recovered shader objects on that machine. It is NOT proof that the Baerim
+game invokes all 123 shader programs, or that the test host reproduces the
+Baerim frame graph.
+
+Reported shader families and their likely roles (verify the actual DXBC
+files, stages, reflection and runtime bindings):
+  model_vs, model_pcf_ps, model_vsm_ps    -> character/prop shading
+  model_preview_vs, model_preview_ps     -> preview model pipeline
+  mesh_deform_cs                         -> possible compute deformation
+  terrain_vs, terrain_pcf_ps,
+    terrain_vsm_ps                       -> world terrain
+  tree_branch_vs, tree_leaf_vs,
+    tree_*_ps                            -> SpeedTree variants
+  effect_particle_*, effect_mesh_*,
+    trace_*                              -> effects and trails
+  water_*, water_sim_*                   -> water / possible simulation
+  model_shadows_*, terrain_shadows_*,
+    vsm_*                                -> shadowing / VSM variants
+  assao_*, ssr_*, smaa_*, fxaa_*,
+    post_processing_*                   -> post effects / antialiasing
+  Other candidate labels seen in host:
+    geometry depth/pre-pass, directional/spot shadow,
+    GPU mesh deformation, depth hierarchy/ambient occlusion,
+    screen-space reflections, depth of field, presentation/UI.
+
+Family names strongly suggest capabilities, NOT whether a particular
+feature is enabled, implemented completely, or executed in the reported run.
+
+Reference-style model preview shader attributes recorded in the clean
+branch's recovery notes:
+  VS input: POSITION, NORMAL, TEXCOORD0
+  PS diffuse resource: register t7 ("Diffuse")
+  PS sampler: register s1 ("DiffSamp")
+  PS constant buffer b1 ("ModelParamsPS"), reflected size 48 bytes
+  Example recorded params: AlphaRef, Reflection, SpecularPower,
+    UseDiffuse, UseSphereMap, AddColor, ModulateColor, PreviewEyePos.
+The independently authored clean-client HLSL mirrors some of these
+interfaces; register compatibility is NOT behavioral equivalence.
+
+1.5 Files and APIs observed [LOG / CONTEXT]
+The original reference had shadercache files, a "miles" folder and an EXE.
+The Miles audio folder is not evidence of graphics-backend capabilities.
+The exact Baerim EXE and all shadercache bytes are NOT accessible to this
+handoff's author at the time of writing. The next agent should request the
+original files again if binary-only details are needed, or locate approved
+copies the user supplies. Do NOT invent function offsets, private class
+layouts, source files or exact decompiled code from the log excerpts.
+
+1.6 RenderDoc status [LOG]
+RenderDoc injection FAILED on the Baerim game and on an independently clean
+Metin2 client. It WORKED on BaerimDX11Host.exe. This does not establish that
+Baerim cannot be captured, and it does not identify the precise reason for
+game injection failure. Possible classes of causes include incompatible
+capture setup, process architecture, a non-D3D11 code path, or protection;
+none is confirmed. Avoid anti-cheat/protection bypass. A permitted,
+instrumentable test build is preferable.
+
+2. WHAT THE CLEAN-SOURCE PROJECT IS (AND IS NOT)
+------------------------------------------------
+Repository: https://github.com/edwind3v/workm2
+Development branch: feature/m2-newdx
+Solution: Metin2Client.sln
+Windows target: Win32/x86 client.
+Visual Studio 2022 typical toolset: v143, if installed.
+The user's separate BaerimDX11Host.exe was launched as x64-Debug; that test
+host is NOT the deployable Metin2 client, and must not be used to conclude
+the game's rendering migration is complete.
+
+Baseline clean-client renderer: DX9Ex. Current branch adds an optional
+D3D11 device, resources, shaders, offscreen tests and an interop preview.
+Even when logs show "DX11_MODEL_READY", the WORLD, UI and normal play still
+use DX9Ex. D3D11 draws the separate test surface; DX9Ex displays that
+surface as a top-right overlay. The ordinary character in the game world
+is NOT being continuously redrawn by D3D11.
+
+Existing docs: GRAPHICS_PORT.md provides incremental checkpoints, settings,
+validation logs and shader-family-to-clean-source mapping. Read it FIRST.
+
+3. WHAT HAS ALREADY BEEN IMPLEMENTED IN workm2
+-----------------------------------------------
+All statements in this section refer to CLEAN BRANCH source [SOURCE]:
+
+3.1 Core device and shaders
+  EterLib/DX11Device.h/.cpp
+    D3D11 device/DXGI adapter selection, frame targets, windowed/offscreen
+    support, shader-capable context and presentation-related utilities.
+  EterLib/DX11ShaderLibrary.h/.cpp
+    Load compiled DXBC or create VS/HS/DS/GS/PS/CS shader objects;
+    retain vertex bytecode to make a matching input layout.
+  EterLib/DX11Resources.h/.cpp
+    Vertex, index, constant buffers, texture/SRV, input-layout helpers.
+  EterLib/DX11Probe.cpp / DX11AssetProbe.cpp
+    Offscreen procedural indexed draw and a real packed texture draw.
+  EterLib/GrpDevice.cpp
+    Opt-in DX11 device/checkpoint calls alongside DX9Ex initialization.
+
+3.2 Original game asset and DX9Ex/DX11 sharing
+  Game's EterPackManager can load a packed virtual asset such as
+    icon/item/27995.tga
+  It is decoded on CPU using a temporary D3DX9 bridge, uploaded to DX11,
+  drawn on an offscreen GPU target and copied/shared for display by DX9Ex.
+  The 96x96 top-right icon preview succeeded in the user's game.
+  No claim of final texture pipeline quality or speed should follow.
+
+3.3 Granny model path
+  EterLib/DX11GrannyProbe.h/.cpp
+    One-shot capture data, DX11 preview HLSL, pack texture loading, depth,
+    blending, material groups, ortho camera, DX9Ex/DX11 shared output.
+  EterGrnLib/Mesh.cpp
+    Bounded cache of Granny mesh indices and load-time rigid PNT vertices.
+  EterGrnLib/ModelInstanceUpdate.cpp
+    Takes CPU-deformed PNT positions during the normal Granny deform path.
+  EterGrnLib/ModelInstanceRender.cpp
+    Captures mesh-local indices, actual instance material palette, per-mesh
+    world transforms, source names and rigid/skinned mesh data.
+  GameLib/ActorInstance.cpp
+    Scopes the character composite capture to the MAIN player's deform.
+  UserInterface/PythonApplication.cpp
+    Consumes the one-time captured snapshot, creates DX11 preview and
+    displays a 320x320 result in the upper-right corner through DX9Ex.
+
+  Vertex layout:
+    position float3, normal float3, uv0 float2
+  Index layout:
+    WORD / R16_UINT, rebased when combining multiple meshes
+  Composite caps:
+    60,000 vertices, 180,000 indices, 192 groups
+  Other limits:
+    approx. 32 MiB indexed CPU cache, 64 MiB rigid vertex CPU cache,
+    64 MiB decoded preview textures; capture retries at 500ms intervals
+    (up to 32 attempts, as logged).
+  Preview only:
+    DX11 resources currently created/read back for a diagnostic snapshot,
+    not persistently updated every animated frame.
+
+3.4 Settings supported by the CLEAN reconstruction
+  M2_DX11_TEST=1                   procedural texture/mesh draw probes
+  M2_DX11_ASSET_PATH=...           e.g. icon/item/27995.tga
+  M2_DX11_SHARED_PREVIEW=1         96x96 shared texture in game
+  M2_DX11_MODEL_PREVIEW=1          one-shot real Granny mesh preview
+  M2_DX11_MODEL_TARGET=skinned     prefer deformed Granny mesh
+  M2_DX11_CHARACTER_COMPOSITE=1   one-shot main character parts together
+
+These are CLEAN BRANCH debug environment flags, NOT demonstrated Baerim
+environment variables and NOT new production metin2.cfg keys.
+Game working directory should point to the assets/pack-containing client
+installation in the Visual Studio project's Debugging settings.
+
+3.5 Major fixes already made, in order
+  - Fixed Win32 project/toolset build integration after VS retargeting.
+  - Added indexed geometry + real pack texture + DX9Ex/DX11 shared display.
+  - Captured Granny real vertex/index data rather than a dummy model box.
+  - Collected skinned character meshes and rigid attached parts.
+  - Addressed severe zoom-distance lag from repeated/rejected captures using
+    throttled one-shot collection, source mesh CPU caches and memory budgets.
+  - Fixed world-space alignment: bake DX9Ex m_meshMatrices into every
+    collected mesh, so body and attachments share a coordinate frame.
+  - Cached rigid vertices during original model loading; late Granny
+    copies had yielded invalid/nonfinite vertices and normals.
+  - Added finite/extent/index checks to avoid invalid GPU draw geometry.
+  - Added orthographic fit-to-bounds and enlarged preview.
+  - Added Granny material texture paths, optional opacity and specular
+    metadata, per-group draw calls, basic shadowing-inspired lighting.
+  - Added alpha/depth pipeline and fallback shader after a regression that
+    could otherwise generate an empty target.
+  - Tested smaller Granny mesh acceptance, found it did NOT increase number
+    of collected pieces in the user's last run.
+  - Latest edit (d901f1c) stopped discarding opaque diffuse pixels purely
+    from the diffuse texture alpha channel. This was a concrete shader
+    behavior discrepancy and is UNTESTED in the user's next Windows run.
+
+Selected recent commits:
+  11256ba  Add D3D11 geometry resources and indexed draw checkpoint
+  dec3925  Reject corrupted Granny attachments before DX11 preview setup
+  7ad4ca5  Capture small Granny costume meshes and audit missing geometry
+  d901f1c  Match opaque Granny material alpha handling in DX11 preview
+Other earlier checkpoints are documented in GRAPHICS_PORT.md and Git history.
+
+4. USER-VERIFIED WINDOWS RESULTS - DO NOT REPEAT EXCLUDED HYPOTHESES
+--------------------------------------------------------------------
+4.1 Successful basic checkpoints [LOG]
+  DX11_TEST_DRAW ... center_rgba=128,127,64,255 image_saved=1
+  DX11_MESH_DRAW ... vertices=4 indices=6
+                      center_rgba=32,160,224,255 image_saved=1
+  DX11_ASSET_DRAW ... path="icon/item/27995.tga" source=32x32
+                     center_rgba=72,90,116,255 image_saved=1
+  DX11_SHARED_READY ... format=A8R8G8B8 size=256x256
+  DX11_SHARED_PRESENT source=DX11 target=DX9Ex
+                      position=top_right size=96x96
+The user visually saw the shared texture, then a model-preview box.
+
+4.2 Failed attempts that have been repaired or bypassed
+  A model capture once logged:
+    DX11_MODEL_CAPTURE_REJECT reason=nonfinite_position ...
+    DX11_MODEL_FAILED stage=CreateDX11ModelPipeline hr=0x80070057
+  Rigid Granny CPU copies after original upload were sometimes invalid;
+  caching at NEW_LoadVertices and bounds checks resolved that logged case.
+  A previous capture could become very laggy at a distant camera zoom;
+  one-shot throttling made the user's tests smooth with preview on/off.
+  A still earlier preview did not show or looked like black splatters.
+  THESE ARE HISTORICAL REGRESSIONS, not current proof of a new failure.
+  Preserve the guards against reintroducing them.
+
+4.3 Last VERIFIED game run, 2026-10-20 19:34 local [LOG]
+The user reported all four detected meshes:
+  Object013    type=skinned source=deformed
+    vertices=2185 indices=9453 groups=1 grouped_indices=9453
+    repaired_normals=1 repaired_uvs=0
+  warrior_face type=rigid   source=load_cache
+    vertices=141 indices=642 groups=1 grouped_indices=642
+    repaired_normals=0 repaired_uvs=0
+  40164        type=rigid   source=load_cache
+    vertices=684 indices=3426 groups=1 grouped_indices=3426
+    repaired_normals=0 repaired_uvs=0
+  hair_84_1    type=rigid   source=load_cache
+    vertices=823 indices=3300 groups=1 grouped_indices=3300
+    repaired_normals=0 repaired_uvs=0
+
+For each of the four model-instance scans:
+    matching=1 eligible=1 cached=1 submitted=1
+    skipped_limits=0 skipped_uncached=0
+Combined:
+    DX11_CHARACTER_CAPTURE meshes=4 vertices=3833
+      indices=16821 groups=4 skinned=1
+    DX11_MODEL_CAMERA mode=ortho_fit bounds=1.851x1.582
+      target_fill=0.80
+    DX11_MODEL_READY source=granny_deformed mesh="main_character"
+      meshes=4 vertices=3833 indices=16821 material_groups=4
+      textures_loaded=4 textures_missing=0
+      format=A8R8G8B8 drawn_pixels=5131
+      center_rgba=85,64,39,255 game_renderer=DX9Ex
+    DX11_MODEL_MATERIAL first_diffuse=
+      "d:\ymir work\pc\warrior\warrior_ramadan_2022_1.dds"
+      first_opacity=""
+    DX11_MODEL_MATERIAL_STATE blend_groups=0
+      two_sided_groups=1 specular_groups=2
+      model_params_bytes=48 sphere_map=unimplemented
+    DX11_MODEL_PRESENT source=Granny/DX11 target=DX9Ex
+      position=top_right size=320x320
+
+The user STILL saw only a partial/incomplete costume. This matters more
+than "MODEL_READY" or successful index/group coverage.
+
+WHAT THIS TEST RULES OUT:
+  - "All eligible meshes were skipped": false.
+  - "The four observed meshes are missing their index cache": false.
+  - "One of those four has material indices unaccounted for": false.
+  - "No diffuse textures loaded": false.
+  - "No DX11 pixels ever rendered": false.
+WHAT IT DOES NOT RULE OUT:
+  - More model instances/attachments outside the captured character path.
+  - Wrong source part/LOD, wrong costume mapping to what the user sees.
+  - Incorrect UVs, world matrices, material alpha/depth state, sampling,
+    view direction, shader behavior, missing effect-driven costume pieces.
+  - Costume elements generated by effects, special equipment or the UI.
+  - A mismatch between the preview and actual DX9Ex draw call submission.
+  - Missing/unsupported sphere-map stage or other visual parameters.
+DO NOT continue relaxing geometry thresholds absent new evidence.
+
+After this last verified game run, the branch's new commit d901f1c changed
+both advanced/fallback DX11 preview shaders' handling of opaque diffuse
+alpha. The hypothesis: all four observed groups are opaque, yet the earlier
+PS discarded pixels according to diffuse texture alpha, potentially hiding
+legitimate costume surfaces. This is NOT yet confirmed to fix the visual gap.
+Next local check should FIRST establish the result of this existing change.
+
+5. WHERE THE IMPORTANT CLEAN-CLIENT BEHAVIOR LIVES
+---------------------------------------------------
+Files in workm2 to inspect before changing anything:
+  GRAPHICS_PORT.md
+    Checkpoint history, environment flags, bounds and current gaps.
+  EterGrnLib/ThingInstance.cpp
+    CGraphicThingInstance::OnDeform iterates all active LOD controllers;
+    RenderWithOneTexture/BlendRenderWithOneTexture traverse render instances.
+  EterGrnLib/LODController.cpp
+    Get current LOD/model instance, attached parts and deform calls.
+  EterGrnLib/Model.cpp
+    CGrannyModel::LoadMeshs reads Granny MeshBindingCount and creates
+    CGrannyMesh objects; original per-material mesh lists are built here.
+  EterGrnLib/Mesh.cpp
+    Original vertices and indices; DX11 caching.
+  EterGrnLib/ModelInstanceUpdate.cpp
+    CGrannyModelInstance::Deform, DeformPNTVertices,
+    UpdateWorldMatrices. Skinned data lives here.
+  EterGrnLib/ModelInstanceRender.cpp
+    CGrannyModelInstance::TryCaptureDX11ModelPreview
+    CGrannyModelInstance::RenderWithOneTexture
+    CGrannyModelInstance::BlendRenderWithOneTexture
+    CGrannyModelInstance::RenderMeshNodeListWithOneTexture
+    This is the important comparison against real DX9Ex draw calls.
+    The original path uses mesh-specific world transforms and draws
+    TRIANGLELIST groups from the game's actual index buffer.
+  EterGrnLib/Material.cpp
+    CGrannyMaterial::CreateFromGrannyMaterialPointer,
+    __ApplyDiffuseRenderState and __ApplySpecularRenderState,
+    GetD3DTexture / GetImagePointer.
+    Check how Diffuse/Opacity maps and blend groups are derived.
+  GameLib/ActorInstance.cpp
+    CActorInstance::INSTANCEBASE_Deform starts/ends the optional
+    main actor capture scope; normal actor transformation/rendering remains.
+  EterLib/DX11GrannyProbe.cpp
+    GetCaptureConfig, CaptureDX11GrannyMesh, CreateModelPipeline,
+    kModelPreviewShader, DrawModel, RunDX11GrannyPreview.
+    READ THIS BEFORE REWORKING SHADERS. The current shader is independently
+    authored and only approximates reference-style materials.
+  UserInterface/PythonApplication.cpp
+    Snapshot consumption/overlay display and diagnostic logs.
+  EterLib/GrpDevice.cpp
+    Main DX9Ex device and D3D11 test startup.
+  PRTerrainLib/, GameLib/ (terrain), SpeedTreeLib/, EffectLib/
+    Later DX11 scene integration modules.
+  UserInterface/
+    Window, camera, scene, UI and final presentation integration.
+
+A source grep starting point when locally checked out:
+  rg -n "DX11_CHARACTER_|DX11_MODEL_|M2_DX11_" EterLib EterGrnLib GameLib UserInterface
+  rg -n "RenderMeshNodeList|DrawIndexedPrimitive|UpdateWorldMatrices|DeformPNTVertices" EterGrnLib
+  rg -n "CGrannyMaterial|TYPE_BLEND_PNT|SetTexture|ALPHATESTENABLE|ALPHABLENDENABLE" EterGrnLib GameLib
+
+Use ordinary IDE cross-references to compare the original DRAW path against
+the DX11 diagnostic; avoid guessing which material groups appear from
+log-only mesh counts.
+
+6. HOW TO FIND MORE INFORMATION IN BAERIM.EXE - REPEATABLE WORKFLOW
+------------------------------------------------------------------
+These steps are for reverse engineering binaries and assets the user owns
+or is authorized to inspect. Operate on a copy, not the running production
+installation. Avoid protection/anti-cheat bypass, credential extraction and
+testing against third-party servers.
+
+STEP A: Capture a reproducible evidence bundle
+  Obtain, from the user with permission:
+    baerim.exe (the EXACT binary matching the logs)
+    complete shadercache folder, preserving original directory names
+    relevant non-secret config files, syserr/log.txt
+    the character/costume's GR2 plus referenced DDS/TGA assets if available
+    screenshot of Baerim character and clean preview at same pose/view
+    the clean branch commit SHA / game build timestamp
+  Include SHA-256 of every input and record whether 32-bit or 64-bit.
+  Keep a MANIFEST with exact filename, hash, size, extraction date, origin.
+  Do not assume old previous-chat attachments remain accessible.
+
+PowerShell examples (read-only, run locally):
+  Get-FileHash -Algorithm SHA256 .\baerim.exe
+  Get-ChildItem .\shadercache -Recurse -File |
+      Get-FileHash -Algorithm SHA256 |
+      Export-Csv .\shader_hashes.csv -NoTypeInformation
+  Get-ChildItem .\shadercache -Recurse -File |
+      Select-Object FullName,Length
+
+STEP B: Inspect PE architecture/imports
+  In a VS Developer Command Prompt:
+    dumpbin /headers baerim.exe
+    dumpbin /imports baerim.exe
+  Check PE machine type, imported D3D9/D3D11/DXGI/D3DCompiler APIs,
+  CLR/native status, resources, version and manifest.
+  A missing d3d11.dll import does NOT disprove DX11; code may load a DLL
+  dynamically. Conversely, one imported function does not prove usage.
+  For runtime corroboration use Microsoft Process Explorer (lower pane
+  DLLs) or ListDLLs, and note when modules appear.
+
+STEP C: Search Baerim's strings and trace callers
+  Import the EXE in Ghidra (or another authorized PE analyzer).
+  Run analysis and find ASCII/UTF16 strings, including:
+    DX11_DEVICE
+    DX11 renderer initialized
+    DX11_GUILD_MARK
+    DX11_GUILD_MARK_DRAW
+    model_preview / model_shadows / terrain / water / smaa
+    shadercache, HLSL, .cso, .dxbc, .dds, .tga
+    anti_aliasing, sync_interval, shadow, graphics settings
+  For each string, inspect ALL references to its address, not just the
+  displayed function. Rename functions by a PROVEN role, e.g.
+    LogDx11DeviceInfo_Candidate
+    DrawGuildMarkAtlas_Candidate
+  Keep an index: original address/RVA, hash of matching EXE, caller/callee
+  graph, referenced globals, API calls, observed log text and confidence.
+  Different Baerim builds shift addresses; NEVER publish unsourced offsets.
+
+Inspect calls/patterns corresponding to:
+    D3D11CreateDevice or D3D11CreateDeviceAndSwapChain
+    DXGI factory/swap chain creation; Present/ResizeBuffers
+    ID3D11Device::CreateBuffer/CreateTexture2D/Create*Shader
+    ID3D11DeviceContext::*Set*, Draw*, Dispatch, Map/Unmap
+    shadow/depth targets, resource sharing, shader creation from bytes
+  Virtual COM calls may not show as named imports; identify interface
+  vtable slots only after proving the interface pointer type.
+
+STEP D: Analyze every original shadercache object
+  First inspect byte signatures and sizes; do not rely on extensions.
+  DXBC indicates a DirectX shader container; inspect its actual chunks.
+  Where applicable, use Windows SDK tools such as:
+    fxc /dumpbin <shaderfile>
+  Or use a small trusted disassembler based on Microsoft
+    D3DDisassemble(...)
+  And reflection based on:
+    D3DReflect(..., IID_ID3D11ShaderReflection, ...)
+  Record for EACH shader in a machine-readable inventory:
+    original filename, SHA256, shader stage/profile
+    input/output semantics
+    all constant buffers: register, byte size, variable name/offset/type
+    all textures/SRVs/UAVs, sampler slots and resource dimensions
+    thread-group sizes for compute shaders
+    feature/variant flags inferred from bytecode
+    names or strings tying this shader to pass initialization [if any]
+  Disassembly/reflection gives an implementation contract; it does not
+  reveal original C++ class names or live pass order.
+  Particularly compare model_preview_vs/ps against our HLSL and verify
+  whether t7/s1/b1 layout from previous notes matches real original bytes.
+  NEVER declare the 123 programs all active based only on shader creation
+  in a standalone test host.
+
+STEP E: Inspect runtime I/O without injecting into the game
+  Process Monitor: filter Process Name = baerim.exe; inspect File Create/Open
+  and Read events for shadercache, config, shaders, effects, DDS/GR2 files,
+  pack archives and logs. Capture game startup, map load, costume change.
+  Process Explorer/ListDLLs: inspect loaded D3D libraries and paths.
+  Pair events with exact timestamps in syserr.txt.
+  Distinguish asset load time from GPU upload/draw time; ProcMon does not
+  show D3D11 draw calls. Do not interpret a cached file read as proof of
+  a corresponding shader draw.
+
+STEP F: GPU frame capture only in permitted/instrumentable conditions
+  RenderDoc works on the standalone DX11 host but failed to inject into
+  both the reference client and a clean Metin2 client. Do not waste time
+  repeating identical failed injection attempts with no new hypothesis.
+  Check architecture, app startup path, API compatibility, logs and tool
+  version. Use RenderDoc on a legitimate development build that permits
+  capture; do not evade protective software to force an injection.
+  PIX may offer D3D11-through-D3D11On12 capture under specific Windows/API
+  conditions, with limitations. Verify compatibility with this 32-bit
+  game and current tool version before promising it will work.
+  If no frame capture is available, prioritize static PE analysis, shader
+  reflection, non-invasive OS monitoring, and comparisons with our own
+  instrumented clean-client build.
+
+If a frame is captured successfully, build a PASS LIST rather than
+scrolling arbitrarily:
+    Pass name/order; render/depth targets/formats/dimensions
+    draw or dispatch count; vertex/index layouts
+    shaders bound; cbuffers/SRVs/samplers/UAVs and slot numbers
+    depth/cull/blend/alpha states; resource transitions/copies
+    camera, object constants and material parameters
+    which actual meshes and textures are being drawn
+  Correlate each draw/dispatch with recovered shader SHA and code-family
+  functions. This is the key bridge between shader inventory and renderer.
+
+STEP G: Prove the guild-mark implementation precisely
+  Begin with the known DX11_GUILD_MARK_DRAW log string and its xrefs.
+  Test the index-to-rectangle formula in section 1.2 against other marks.
+  Determine which object owns the atlas, how "mark/10_0.tga" is decoded,
+  where the SRV is cached, how the atlas is invalidated/updated, how alpha
+  is blended, and whether the DX11 UI uses an independent batch.
+  A useful first small reconstructed feature is a native DX11 guild-mark
+  draw with the same coordinates, not a new hardcoded diagnostic quad.
+
+STEP H: Link reference findings to CLEAN source
+  Maintain a per-feature table:
+    BAERIM observed shader/API/log -> clean source function -> new DX11
+    implementation file -> correctness test -> performance test -> status.
+  Every assertion has [LOG], [SOURCE], [SHADER] or [INFER].
+  Treat unverifiable claims as [OPEN], not as completed milestones.
+
+7. WHAT TO BUILD NEXT - PRIORITIZED ENGINEERING PLAN
+---------------------------------------------------
+The user wants a Baerim-like real renderer, not a demonstration window.
+Stop writing isolated preview-only code once it has answered the initial
+question. Preserve the existing working DX9Ex fallback.
+
+IMMEDIATE, BEFORE NEW CODE:
+  1. User tests commit d901f1c in Win32 game. Obtain only a brief result:
+     does the preview now include the entire character/costume? A screenshot
+     is useful if still partial; the old log already proves four meshes,
+     full recorded group coverage and four textures loaded.
+  2. Inspect the SAME actor and costume in DX9Ex and the captured DX11
+     preview, side by side. Clarify whether the missing element is:
+       actual mesh polygons / wrong pose or orientation / texture UV /
+       alpha-masked costume / attached equipment / effects such as wings.
+     Do not guess from a color readback alone.
+  3. If still partial, use the source call-graph in section 5 and a
+     permitted capture to compare actual DX9Ex draw submissions with the
+     DX11 snapshot. If all geometry matches, FIX MATERIAL/RASTER/DEPTH
+     behavior; do not tweak capture thresholds again.
+
+MILESTONE 1 - Persistent DX11 character pipeline
+  [ ] Construct/reuse ONE D3D11 device/context/swap chain or controlled
+      render target at the intended renderer lifecycle point.
+  [ ] Introduce explicit DX11 mesh topology/material caches per GR2,
+      with stable IDs and release/reset/invalidation rules.
+  [ ] Retain the main actor's real deformed vertex buffer per frame;
+      stream only animated vertex data, avoiding per-frame Granny asset
+      decode, shader compile, device creation and CPU texture conversion.
+  [ ] Preserve per-mesh world matrices or per-mesh constant buffers.
+      Skinning can initially stay CPU-side as long as the rendered pose,
+      normals and attachments match. GPU skinning is OPTIONAL until correct.
+  [ ] Handle rigid/skinned body pieces, hair, weapons, costume accessories,
+      blend materials, opacity, two-sided materials and specular variants.
+  [ ] For comparisons, render the whole main character at the actual
+      screen-space size and pose, not a separately normalized thumbnail.
+  [ ] Test pose changes, running, idling, attack, costume swap, hair swap,
+      mount/horse, respawn and device reset; no repeated large allocations.
+  [ ] Add reliable model/material state restoration and controlled fallback
+      if any DX11 stage fails.
+  Acceptance: complete recognizable character with matching animation and
+  texture coverage; no zoom-distance lag; DX9Ex fallback remains usable.
+
+MILESTONE 2 - Native opaque 3D scene, camera and presentation
+  [ ] Define an explicit per-frame render graph (targets/clears/depth/UI).
+  [ ] Use the game's correct view/projection, fog, lights and transforms.
+  [ ] Render game actors and rigid environment meshes in correct depth order.
+  [ ] Port batching/material state and all relevant Granny draw paths.
+  [ ] Replace the temporary DX11 -> DX9Ex texture overlay bridge in a
+      selectable DX11-native scene/presentation mode.
+  [ ] Keep DX9Ex available behind a clearly documented compatibility
+      setting during rollout.
+  Acceptance: normal game window is genuinely presented through D3D11
+  with world geometry, not merely a D3D11 overlay on a DX9Ex scene.
+
+MILESTONE 3 - Baerim feature parity by dependencies
+  [ ] Terrain geometry and materials (PRTerrainLib/GameLib).
+  [ ] Depth and directional/spot shadow variants (PCF/VSM as evidence proves).
+  [ ] SpeedTree branch/leaf/foliage, wind, alpha and dynamic lighting.
+  [ ] Effects/particles, traces, weapons, transparency and sorting.
+  [ ] Water and reflection/refraction resources.
+  [ ] Screen-space depth hierarchy/SSAO/SSR, post FX, AA and DOF ONLY
+      when confirmed in Baerim's actual frame and relevant settings.
+  [ ] Native DX11 UI, fonts, guild marks, render-target lifetime.
+  [ ] Device lost/resize, alt-tab, fullscreen/windowed, multiple adapters.
+  Do not attempt all recovered shaders at once; bring up one real pass with
+  its resource dependencies and validate before enabling more.
+
+MILESTONE 4 - Performance and correctness
+  [ ] Establish repeatable test scenes and resolution/settings.
+  [ ] Record CPU frame time, render thread time, GPU time, average FPS,
+      p95/p99 frame time, memory, allocations, GPU draw/dispatch counts,
+      shader compilation and resource uploads.
+  [ ] Compare DX9Ex clean, Baerim reference (if permitted/reproducible),
+      and new D3D11 backend on identical maps/crowd/camera/settings.
+  [ ] Remove/adjust the 60 FPS cap ONLY for controlled benchmarking,
+      not as an unreviewed production config change.
+  [ ] Optimize based on measured bottlenecks: state-change reduction,
+      material sorting, batching, instancing, cache reuse, dynamic-buffer
+      ring allocation, culling, thread/GPU sync and scene overdraw.
+  [ ] Verify quality differences, transparency, shadows, animation and UI.
+  WARNING: Switching APIs alone does not guarantee higher FPS; Metin2 can
+  be CPU/draw-call bound. Compare frame times rather than inferring speed
+  from DirectX version.
+
+8. WHAT NOT TO DO AGAIN
+-----------------------
+  - Do not claim the standalone "123/123 shader objects created" host is a
+    reconstructed playable client. It does not execute the game frame graph.
+  - Do not call the one-shot DX11 preview a fully migrated client.
+  - Do not assert exact Baerim C++ implementations from shader filenames.
+  - Do not infer performance gains from DX11 device creation or debug BMPs.
+  - Do not keep enlarging the preview or changing vertex thresholds as a
+    substitute for matching the actual material and scene draw path.
+  - Do not copy all 123 recovered shader blobs into the clean client without
+    proving resource bindings, licenses, render targets and pass order.
+  - Do not repeatedly call GrannyCopyMeshIndices/Vertices after their source
+    lifetime; original game-upload caches were added for a reason.
+  - Do not create/destroy D3D11 devices or decode DDS assets each frame.
+  - Do not retry RenderDoc injection failures without a concrete new cause.
+  - Do not overwrite the user's local .vcxproj or .vcxproj.user settings.
+  - Do not force-push or merge main; continue feature/m2-newdx.
+  - Do not introduce undocumented hardcoded Windows E:\ paths or credentials.
+  - Do not modify Baerim.exe; use it only as an authorized reference.
+
+9. LOCAL BUILD/TEST HANDOFF (WINDOWS)
+--------------------------------------
+The user keeps a checkout under a long E:\ drive folder containing:
+  ...\Sources\metin2_client\Srcs\New Graphic Client
+The game assets/packs are in a separate "Game Client" folder. Keep the
+Visual Studio debugging WORKING DIRECTORY pointed at the real game assets
+so in-pack resources and configuration can be found. Avoid checking in
+the user's absolute machine paths.
+
+Typical source update:
+  git switch feature/m2-newdx
+  git status --short
+  git pull --ff-only origin feature/m2-newdx
+  git log -1 --oneline
+
+IMPORTANT: Some project files were locally retargeted, and the user once
+could not pull because EterLib/eterlib.vcxproj had uncommitted local edits.
+Preserve those settings; inspect git diff, then selectively commit, safely
+stash or reconcile as explicitly approved. Never reset all local changes.
+
+Compile Metin2Client.sln as the configured Win32/x86 Debug or Release
+variant. If Visual Studio complains about nonexistent "v145" toolset,
+retarget only as necessary to an installed supported toolset (VS2022
+commonly v143). If Build reports 16 projects skipped, check solution
+Configuration Manager -> Build checkboxes; "up-to-date" alone is not a
+failure. After changing implementation, Rebuild ensures changed objects
+actually relink. Verify the executable started by F5 is the NEW build,
+with proper game working directory and necessary game command-line args.
+
+For the existing diagnostic path, when needed:
+  M2_DX11_TEST=1
+  M2_DX11_ASSET_PATH=icon/item/27995.tga
+  M2_DX11_SHARED_PREVIEW=1
+  M2_DX11_MODEL_PREVIEW=1
+  M2_DX11_CHARACTER_COMPOSITE=1
+Do not assume all toggles are required for every future native renderer
+test. When a BMP reports image_saved=1 but seems absent, check the actual
+process working directory and debug output configuration before assuming
+the shader failed.
+
+Useful log categories:
+  DEVICE/BASE: DX11_DEVICE, DX11_TEST_DRAW, DX11_MESH_DRAW
+  ASSET:       DX11_ASSET_DRAW, DX11_SHARED_READY/PRESENT
+  CHARACTER:   DX11_MODEL_CAPTURE_CONFIG,
+               DX11_CHARACTER_MESH/SCAN/SKIP/CAPTURE,
+               DX11_MODEL_CAMERA, DX11_MODEL_READY/PRESENT
+  FAILURE:     DX11_MODEL_FAILED stage=... hr=...
+               DX11_MODEL_CAPTURE_REJECT reason=...
+               DX11_MODEL_MATERIAL_FALLBACK ...
+Do not add unlimited logging per actor per frame: this caused/perpetuated
+performance concerns. Logs should be bounded and removable from production.
+
+10. REQUIRED AGENT OUTPUT AFTER EACH SUBSTANTIVE CHANGE
+---------------------------------------------------------
+Always report these five items concisely:
+  1. What was implemented (which exact renderer path, not just a test).
+  2. Which original Baerim observation, shader reflection or DX9Ex clean
+     draw behavior justified it.
+  3. Files changed + branch and commit SHA.
+  4. Verification result with a clear distinction:
+       reviewed source / compiled / ran on Windows / saw visual parity.
+     NEVER write "works" when only source was pushed and local Windows
+     build was unavailable.
+  5. One specific next acceptance test or unresolved blocker.
+Keep GRAPHICS_PORT.md updated and cite the exact log/capture/hash used.
+
+11. AUTHORITATIVE DOCUMENTATION AND RESEARCH TOOLS
+---------------------------------------------------
+Microsoft PE import dump:
+  https://learn.microsoft.com/en-us/cpp/build/reference/imports-dumpbin
+Microsoft D3DDisassemble:
+  https://learn.microsoft.com/en-us/windows/win32/api/d3dcompiler/nf-d3dcompiler-d3ddisassemble
+Microsoft D3DReflect:
+  https://learn.microsoft.com/en-us/windows/win32/api/d3dcompiler/nf-d3dcompiler-d3dreflect
+Microsoft fxc command-line options, including /dumpbin:
+  https://learn.microsoft.com/en-us/windows/win32/direct3dtools/dx-graphics-tools-fxc-syntax
+Microsoft Sysinternals Process Monitor:
+  https://learn.microsoft.com/en-us/sysinternals/downloads/procmon
+Microsoft Sysinternals Process Explorer:
+  https://learn.microsoft.com/en-us/sysinternals/downloads/process-explorer
+NSA's Ghidra:
+  https://github.com/NationalSecurityAgency/ghidra
+RenderDoc official project:
+  https://github.com/baldurk/renderdoc
+RenderDoc capture documentation:
+  https://github.com/baldurk/renderdoc/blob/v1.x/docs/how/how_capture_frame.rst
+Microsoft PIX and D3D11On12 limitations:
+  https://devblogs.microsoft.com/pix/debugging-d3d11-apps-using-d3d11on12/
+
+FINAL REALITY CHECK
+-------------------
+We have convincing evidence that Baerim has a DX11 initialization code path,
+shader inventory and a DX11 guild-mark atlas draw. We have *not* recovered
+its original full C++ render loop, verified all named shader passes at
+runtime, or proved pixel-perfect renderer parity.
+
+The clean workm2 branch successfully drew and shared a real DX11 character
+snapshot of four Granny meshes, but the user still saw a partial costume.
+The latest opaque-alpha fix is the next pending test. Even if that preview
+becomes visually complete, continuous animated full-world Direct3D11
+rendering remains a separate major implementation task.
+
+END OF HANDOFF
