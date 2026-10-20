@@ -772,15 +772,17 @@ bool CPythonApplication::Process()
 				OnUIRender();
 				if (m_dx11ModelPreviewTexture)
 				{
+					// Make the single-mesh diagnostic large enough to inspect.
+					// DX11GrannyProbe fits the model itself to the render texture.
 					const HRESULT modelDraw = graphics::DrawDX11SharedPreview(
-						m_grpDevice.GetDevice(), m_dx11ModelPreviewTexture, 128, 144);
+						m_grpDevice.GetDevice(), m_dx11ModelPreviewTexture, 128, 320);
 					if (modelDraw == S_OK)
 					{
 						static bool s_modelPresented = false;
 						if (!s_modelPresented)
 						{
 							s_modelPresented = true;
-							TraceError("DX11_MODEL_PRESENT source=Granny/DX11 target=DX9Ex position=top_right size=144x144");
+							TraceError("DX11_MODEL_PRESENT source=Granny/DX11 target=DX9Ex position=top_right size=320x320");
 						}
 					}
 					if (FAILED(modelDraw))

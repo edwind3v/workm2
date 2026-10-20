@@ -372,8 +372,36 @@ HRESULT CreateModelPipeline(ID3D11Device* device,
 	const D3DXVECTOR3 target(0, 0, 0);
 	const D3DXVECTOR3 up(0, 0, 1);
 	D3DXMatrixLookAtLH(&view, &eye, &target, &up);
-	D3DXMatrixPerspectiveFovLH(&projection, D3DX_PI / 3.0f, 1.0f, 0.1f, 100.0f);
+	// The previous fixed 60-degree perspective view made certain valid Granny
+	// meshes occupy only a few hundred pixels in the 256x256 image. Project
+	// the *deformed* vertices into view space and fit their XY bounds to 80%
+	// of an orthographic inspection window. This does not affect the game's
+	// real camera; it only makes the one-shot preview legible.
+	float minX = FLT_MAX, minY = FLT_MAX;
+	float maxX = -FLT_MAX, maxY = -FLT_MAX;
+	for (const auto& vertex : normalized)
+	{
+		const D3DXVECTOR3 position(vertex.position[0],
+			vertex.position[1], vertex.position[2]);
+		D3DXVECTOR3 inView;
+		D3DXVec3TransformCoord(&inView, &position, &view);
+		minX = (std::min)(minX, inView.x);
+		maxX = (std::max)(maxX, inView.x);
+		minY = (std::min)(minY, inView.y);
+		maxY = (std::max)(maxY, inView.y);
+	}
+	const float visibleSpan = (std::max)(maxX - minX, maxY - minY);
+	if (!std::isfinite(visibleSpan) || visibleSpan <= 1e-5f)
+		return E_INVALIDARG;
+	const float halfSide = visibleSpan * 0.625f;
+	const float centerX = 0.5f * (minX + maxX);
+	const float centerY = 0.5f * (minY + maxY);
+	D3DXMatrixOrthoOffCenterLH(&projection,
+		centerX - halfSide, centerX + halfSide,
+		centerY - halfSide, centerY + halfSide, 0.1f, 100.0f);
 	D3DXMatrixMultiply(&viewProjection, &view, &projection);
+	TraceError("DX11_MODEL_CAMERA mode=ortho_fit bounds=%.3fx%.3f target_fill=0.80",
+		maxX - minX, maxY - minY);
 	hr = pipeline->cb.CreateConstant(device, &viewProjection, sizeof(viewProjection));
 	if (FAILED(hr)) return hr;
 	ModelParamsPSData params = {};

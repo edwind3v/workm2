@@ -310,6 +310,37 @@ private SM5 bytecode, are intentionally not bundled with the public source.
    can render correctly, with a selectable DX9 compatibility fallback.
 7. Profile actual frame times and GPU workloads before performance claims.
 
+## Ninth checkpoint: readable model inspection and actual renderer mapping
+
+- The 256x256 DX11 Granny inspection camera now projects the live captured
+  vertices into view space, fits their X/Y bounding box into an orthographic
+  projection, and leaves 10% margin on every side. The original hard-coded
+  perspective angle could leave thin or off-center equipment meshes almost
+  invisible. `DX11_MODEL_CAMERA mode=ortho_fit ...` confirms the new framing.
+- The D3D9Ex *display bridge* now shows that 256x256 texture as a 320x320
+  overlay instead of scaling it down to 144x144. This is still a **single
+  captured Granny mesh in a static pose**, not the complete game character.
+- The recovered Baerim shader inventory lets us map candidate render-pass
+  responsibilities to existing client modules. This is a **working inference**
+  based on shader names/stages and clean-client call sites, not a recovered
+  original C++ call graph:
+
+  | Recovered shader family | Clean-client integration point | Current gap |
+  | --- | --- | --- |
+  | `model_vs`, `model_pcf_ps`, `model_vsm_ps` | `EterGrnLib/ModelInstanceRender.cpp`, `ThingInstance.cpp` | Persistent models, complete actor transforms, materials and draw calls |
+  | `mesh_deform_cs` | `EterGrnLib/Model.cpp`, `Mesh.cpp` | GPU skinning / compute dispatch; present deformations remain CPU/DX9 |
+  | `terrain_vs`, `terrain_pcf_ps`, `terrain_vsm_ps` | `PRTerrainLib`, `GameLib` terrain/background | DX11 terrain vertex/index storage and draw scheduling |
+  | `tree_branch_vs`, `tree_leaf_vs`, `tree_*_ps` | `SpeedTreeLib` | Native foliage buffers, alpha and wind states |
+  | `effect_particle_*`, `effect_mesh_*`, `trace_*` | `EffectLib` | Persistent particle/mesh emitters and blend states |
+  | `water_*`, `water_sim_*` | `CPythonBackground::RenderWater`, terrain | Water resources, tessellation and scene-dependent sampling |
+  | `model_shadows_*`, `terrain_shadows_*`, `vsm_*` | Current character/terrain shadow rendering | DX11 depth and shadow maps, PCF/VSM selection |
+  | `assao_*`, `ssr_*`, `smaa_*`, `fxaa_*`, `post_processing_*` | Final scene render/presentation | Scene textures, depth hierarchy and frame graph |
+
+  The order should be: establish the persistent DX11 scene frame and game
+  camera, migrate opaque actor meshes, then terrain, foliage/effects,
+  shadows, water and post-processing. Merely compiling all recovered shader
+  bytecodes does not connect them to the resources or frame graph they need.
+
 ## Build guidance
 
 Open `Metin2Client.sln` in Visual Studio and compile `eterlib` as `Win32`.
