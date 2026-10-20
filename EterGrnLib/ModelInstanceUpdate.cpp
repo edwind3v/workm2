@@ -2,6 +2,7 @@
 #include "../eterbase/Debug.h"
 #include "ModelInstance.h"
 #include "Model.h"
+#include "../eterLib/DX11GrannyProbe.h"
 
 void CGrannyModelInstance::Update(DWORD dwAniFPS)
 {
@@ -85,6 +86,11 @@ void CGrannyModelInstance::Deform(const D3DXMATRIX * c_pWorldMatrix)
 		}
 		// END_OF_WORK
 	}
+	// Rigid equipment and non-skinned body parts are not in the dynamic
+	// deformed buffer above. Collect them from their cached Granny topology
+	// while the main character's one-shot composite scope is active.
+	if (graphics::IsDX11PrimaryCharacterCaptureActive())
+		TryCaptureDX11ModelPreview(nullptr);
 }
 
 //////////////////////////////////////////////////////

@@ -59,6 +59,7 @@ void CGrannyModelInstance::TryCaptureDX11ModelPreview(const TPNTVertex* deformed
 	unsigned eligibleMeshes = 0;
 	unsigned cachedMeshes = 0;
 	unsigned submittedMeshes = 0;
+	bool capturedAny = false;
 	for (int meshIndex = 0; meshIndex < m_pModel->GetMeshCount(); ++meshIndex)
 	{
 		const CGrannyMesh* mesh = m_pModel->GetMeshPointer(meshIndex);
@@ -151,8 +152,18 @@ void CGrannyModelInstance::TryCaptureDX11ModelPreview(const TPNTVertex* deformed
 			static_cast<UINT>(vertexCount), meshIndices.data(),
 			static_cast<UINT>(indexCount), chooseDeformed,
 			materials.data(), static_cast<UINT>(materials.size()), grannyMesh->Name))
-			return;
+		{
+			capturedAny = true;
+			// A single-mesh probe stops here. The explicit main-character
+			// scope collects every eligible mesh across active costume parts.
+			if (!graphics::IsDX11PrimaryCharacterCaptureActive())
+				return;
+		}
 	}
+	if (capturedAny)
+		return;
+	if (graphics::IsDX11PrimaryCharacterCaptureActive() && matchingMeshes == 0)
+		return;
 	// Log only a few bounded diagnostics. The snapshot remains opt-in and
 	// must never perform potentially expensive mesh copies every frame.
 	static unsigned misses = 0;

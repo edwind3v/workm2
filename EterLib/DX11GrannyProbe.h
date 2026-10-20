@@ -37,6 +37,7 @@ struct DX11GrannySnapshot
 	std::vector<WORD> indices;
 	std::vector<DX11GrannyMaterialGroup> groups;
 	std::string meshName;
+	UINT meshCount = 0;
 	bool skinned = false;
 };
 
@@ -45,6 +46,11 @@ struct DX11GrannySnapshot
 // "off", "any", or "skinned"; useful to distinguish a disabled probe
 // from a capture that could not find a suitable mesh.
 const char* GetDX11GrannyCaptureMode();
+// Bound the optional character-composite capture to the *main* actor's
+// deform call. No other actor is scanned/copied when this mode is enabled.
+void BeginDX11PrimaryCharacterCapture();
+void EndDX11PrimaryCharacterCapture();
+bool IsDX11PrimaryCharacterCaptureActive();
 // Reserves a throttled capture attempt. Call once per model instance before
 // doing Granny index/vertex copies; CaptureDX11GrannyMesh does not re-reserve.
 bool WantsDX11GrannyCapture(bool skinned);

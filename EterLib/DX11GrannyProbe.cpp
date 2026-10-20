@@ -27,6 +27,9 @@ constexpr UINT kPreviewSize = 256;
 constexpr UINT kMaxVertices = 30000;
 constexpr UINT kMaxIndices = 90000;
 constexpr UINT kMaxMaterialGroups = 64;
+constexpr UINT kMaxCharacterVertices = 60000; // R16 index buffer
+constexpr UINT kMaxCharacterIndices = 180000;
+constexpr UINT kMaxCharacterGroups = 192;
 constexpr UINT kMaxTextureSize = 4096;
 constexpr size_t kTextureBudgetBytes = 64u * 1024u * 1024u;
 constexpr DWORD kCaptureRetryMs = 500;
@@ -36,6 +39,7 @@ struct CaptureConfig
 {
 	bool enabled = false;
 	bool skinnedOnly = false;
+	bool primaryCharacter = false;
 };
 
 const CaptureConfig& GetCaptureConfig()
@@ -48,6 +52,9 @@ const CaptureConfig& GetCaptureConfig()
 		char target[16] = {};
 		result.skinnedOnly = GetEnvironmentVariableA("M2_DX11_MODEL_TARGET", target,
 			ARRAYSIZE(target)) == 7 && _stricmp(target, "skinned") == 0;
+		char character[8] = {};
+		result.primaryCharacter = GetEnvironmentVariableA("M2_DX11_CHARACTER_COMPOSITE",
+			character, ARRAYSIZE(character)) == 1 && character[0] == '1';
 		return result;
 	}();
 	return config;
@@ -65,9 +72,24 @@ bool& SnapshotTaken()
 	return taken;
 }
 
+bool& PrimaryCaptureActive()
+{
+	static bool active = false;
+	return active;
+}
+
+bool& PrimaryCaptureReady()
+{
+	static bool ready = false;
+	return ready;
+}
+
 bool CaptureEnabled(bool skinned)
 {
 	const CaptureConfig& config = GetCaptureConfig();
+	if (config.primaryCharacter)
+		return config.enabled && PrimaryCaptureActive() &&
+			!PrimaryCaptureReady() && !SnapshotTaken();
 	return config.enabled && (!config.skinnedOnly || skinned) &&
 		!SnapshotTaken() && PendingSnapshot().vertices.empty();
 }
@@ -593,7 +615,57 @@ HRESULT ReadSharedModelPixels(IDirect3DDevice9Ex* gameDevice,
 const char* GetDX11GrannyCaptureMode()
 {
 	const CaptureConfig& config = GetCaptureConfig();
-	return !config.enabled ? "off" : config.skinnedOnly ? "skinned" : "any";
+	return !config.enabled ? "off" : config.primaryCharacter ? "character" :
+		config.skinnedOnly ? "skinned" : "any";
+}
+
+void BeginDX11PrimaryCharacterCapture()
+{
+	const CaptureConfig& config = GetCaptureConfig();
+	if (!config.enabled || !config.primaryCharacter || SnapshotTaken() ||
+		PrimaryCaptureReady() || PrimaryCaptureActive())
+		return;
+	// The player may not have loaded a Granny model yet (character selection,
+	// loading maps, etc.). Retry at most once per 500 ms, not every actor frame.
+	static UINT attempts = 0;
+	static DWORD lastAttempt = 0;
+	static bool stopLogged = false;
+	if (attempts >= kMaxCaptureAttempts)
+	{
+		if (!stopLogged)
+		{
+			TraceError("DX11_CHARACTER_CAPTURE_STOP attempts=%u", attempts);
+			stopLogged = true;
+		}
+		return;
+	}
+	const DWORD now = GetTickCount();
+	if (attempts && static_cast<DWORD>(now - lastAttempt) < kCaptureRetryMs)
+		return;
+	lastAttempt = now;
+	++attempts;
+	PendingSnapshot() = DX11GrannySnapshot();
+	PrimaryCaptureActive() = true;
+}
+
+void EndDX11PrimaryCharacterCapture()
+{
+	if (!PrimaryCaptureActive()) return;
+	PrimaryCaptureActive() = false;
+	DX11GrannySnapshot& pending = PendingSnapshot();
+	if (pending.meshCount > 0)
+	{
+		PrimaryCaptureReady() = true;
+		TraceError("DX11_CHARACTER_CAPTURE meshes=%u vertices=%u indices=%u groups=%u skinned=%u",
+			pending.meshCount, static_cast<UINT>(pending.vertices.size()),
+			static_cast<UINT>(pending.indices.size()),
+			static_cast<UINT>(pending.groups.size()), pending.skinned ? 1u : 0u);
+	}
+}
+
+bool IsDX11PrimaryCharacterCaptureActive()
+{
+	return PrimaryCaptureActive();
 }
 
 bool WantsDX11GrannyCapture(bool skinned)
@@ -603,6 +675,10 @@ bool WantsDX11GrannyCapture(bool skinned)
 	// can turn this *diagnostic* into a serious, unbounded CPU cost.
 	if (!CaptureEnabled(skinned))
 		return false;
+	// The main-actor scope provides the one-shot throttle in composite mode;
+	// individual body/costume/weapon meshes are allowed into that same frame.
+	if (GetCaptureConfig().primaryCharacter)
+		return true;
 	static UINT attempts = 0;
 	static DWORD lastAttemptMs = 0;
 	static bool stopLogged = false;
@@ -637,6 +713,14 @@ bool CaptureDX11GrannyMesh(const DX11GrannyVertex* vertices, UINT vertexCount,
 		return RejectCapture("invalid_geometry", 0, vertexCount, indexCount);
 	if (groupCount > kMaxMaterialGroups || (groupCount && !groups))
 		return RejectCapture("invalid_group_count", 0, groupCount, kMaxMaterialGroups);
+	DX11GrannySnapshot& capture = PendingSnapshot();
+	const bool composite = GetCaptureConfig().primaryCharacter;
+	if (composite &&
+		(capture.vertices.size() + vertexCount > kMaxCharacterVertices ||
+		capture.indices.size() + indexCount > kMaxCharacterIndices ||
+		capture.groups.size() + (groupCount ? groupCount : 1u) > kMaxCharacterGroups))
+		return RejectCapture("character_budget", capture.meshCount,
+			static_cast<UINT>(capture.vertices.size()), kMaxCharacterVertices);
 	for (UINT i = 0; i < vertexCount; ++i)
 		for (UINT j = 0; j < 3; ++j)
 		{
@@ -654,25 +738,48 @@ bool CaptureDX11GrannyMesh(const DX11GrannyVertex* vertices, UINT vertexCount,
 			groups[i].indexCount == 0 || groups[i].indexCount % 3)
 			return RejectCapture("invalid_group_range", i,
 				groups[i].firstIndex, groups[i].indexCount);
-	DX11GrannySnapshot& capture = PendingSnapshot();
-	capture.vertices.assign(vertices, vertices + vertexCount);
-	capture.indices.assign(indices, indices + indexCount);
+	const UINT vertexBase = composite ? static_cast<UINT>(capture.vertices.size()) : 0;
+	const UINT indexBase = composite ? static_cast<UINT>(capture.indices.size()) : 0;
+	if (composite)
+	{
+		capture.vertices.insert(capture.vertices.end(), vertices, vertices + vertexCount);
+		capture.indices.reserve(indexBase + indexCount);
+		for (UINT i = 0; i < indexCount; ++i)
+			capture.indices.push_back(static_cast<WORD>(vertexBase + indices[i]));
+	}
+	else
+	{
+		capture.vertices.assign(vertices, vertices + vertexCount);
+		capture.indices.assign(indices, indices + indexCount);
+		capture.groups.clear();
+	}
 	if (groupCount)
-		capture.groups.assign(groups, groups + groupCount);
+	{
+		for (UINT i = 0; i < groupCount; ++i)
+		{
+			DX11GrannyMaterialGroup group = groups[i];
+			group.firstIndex += indexBase;
+			capture.groups.push_back(std::move(group));
+		}
+	}
 	else
 	{
 		DX11GrannyMaterialGroup untextured;
+		untextured.firstIndex = indexBase;
 		untextured.indexCount = indexCount;
 		capture.groups.push_back(untextured);
 	}
-	capture.meshName = meshName ? meshName : "";
-	capture.skinned = skinned;
+	capture.meshName = composite ? "main_character" : meshName ? meshName : "";
+	++capture.meshCount;
+	capture.skinned = capture.skinned || skinned;
 	return true;
 }
 
 bool TakeDX11GrannySnapshot(DX11GrannySnapshot* out)
 {
 	if (!out || PendingSnapshot().vertices.empty() || SnapshotTaken())
+		return false;
+	if (GetCaptureConfig().primaryCharacter && !PrimaryCaptureReady())
 		return false;
 	*out = std::move(PendingSnapshot());
 	SnapshotTaken() = true;

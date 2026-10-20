@@ -529,9 +529,10 @@ bool CPythonApplication::Process()
 				&modelStage, &sharedFormat);
 			if (SUCCEEDED(modelHr))
 			{
-				TraceError("DX11_MODEL_READY source=%s mesh=\"%.80s\" vertices=%u indices=%u material_groups=%u textures_loaded=%u textures_missing=%u format=%s drawn_pixels=%u center_rgba=%u,%u,%u,%u game_renderer=DX9Ex",
+				TraceError("DX11_MODEL_READY source=%s mesh=\"%.80s\" meshes=%u vertices=%u indices=%u material_groups=%u textures_loaded=%u textures_missing=%u format=%s drawn_pixels=%u center_rgba=%u,%u,%u,%u game_renderer=DX9Ex",
 					snapshot.skinned ? "granny_deformed" : "granny_rigid",
 					snapshot.meshName.c_str(),
+					static_cast<unsigned>(snapshot.meshCount),
 					static_cast<unsigned>(snapshot.vertices.size()),
 					static_cast<unsigned>(snapshot.indices.size()),
 					static_cast<unsigned>(snapshot.groups.size()),

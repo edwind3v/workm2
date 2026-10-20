@@ -341,6 +341,31 @@ private SM5 bytecode, are intentionally not bundled with the public source.
   shadows, water and post-processing. Merely compiling all recovered shader
   bytecodes does not connect them to the resources or frame graph they need.
 
+## Tenth checkpoint: main-character composite snapshot
+
+- Opt in with `M2_DX11_MODEL_PREVIEW=1` and
+  `M2_DX11_CHARACTER_COMPOSITE=1` (the earlier `MODEL_TARGET=skinned`
+  setting is ignored in this mode). Only the actor marked as the **main
+  player** opens the capture scope; surrounding players and NPCs cannot
+  select the preview mesh.
+- During a single deformation call, all eligible CPU-deformed meshes and
+  rigid pieces are collected from the active Granny model instances. Body,
+  costume, hair, weapons and accessories are included when represented by
+  those instances. Their vertex/index ranges are rebased into one R16 index
+  buffer, retaining material group paths and specular/blend flags.
+- This is still deliberately **one shot**. `DX11_CHARACTER_CAPTURE
+  meshes=... vertices=... indices=... groups=...` and the new `meshes=`
+  value on `DX11_MODEL_READY` indicate whether the assembled snapshot
+  contains more than the earlier single `Object013` piece. Capture is bounded
+  to 60,000 vertices, 180,000 indices and 192 material groups; missing
+  equipment or mismatched attachment coordinate systems must be investigated
+  against actual output.
+- **Live animation is not implemented yet.** The next step is to retain the
+  DX11 device, material textures, shared output and index buffers across
+  frames, stream CPU-deformed vertices for this actor at a bounded rate, and
+  rebuild topology only when equipment changes. Creating a DX11 device and
+  decoding costume textures every animation frame would be unacceptably slow.
+
 ## Build guidance
 
 Open `Metin2Client.sln` in Visual Studio and compile `eterlib` as `Win32`.

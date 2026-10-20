@@ -5,6 +5,7 @@
 #include "../SpeedTreeLib/CSpeedTreeDirectX.h"
 #include "../SpeedTreeLib/SpeedTreeWrapper.h"
 #include "GameLibDefines.h"
+#include "../eterLib/DX11GrannyProbe.h"
 #ifdef ENABLE_RACE_HEIGHT
 #include "RaceManager.h"
 #endif
@@ -20,7 +21,13 @@ enum
 
 void CActorInstance::INSTANCEBASE_Deform()
 {
+	// In composite preview mode capture only the main player's active Granny
+	// body/costume/equipment parts, all from the same deformation frame.
+	if (m_isMain)
+		graphics::BeginDX11PrimaryCharacterCapture();
 	Deform();
+	if (m_isMain)
+		graphics::EndDX11PrimaryCharacterCapture();
 	TraceProcess();
 }
 
