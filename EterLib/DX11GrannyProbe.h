@@ -38,6 +38,11 @@ struct DX11GrannySnapshot
 
 // One-shot, opt-in snapshot from actual CGrannyModelInstance data.
 // M2_DX11_MODEL_TARGET=skinned restricts capture to CPU-deformed meshes.
+// "off", "any", or "skinned"; useful to distinguish a disabled probe
+// from a capture that could not find a suitable mesh.
+const char* GetDX11GrannyCaptureMode();
+// Reserves a throttled capture attempt. Call once per model instance before
+// doing Granny index/vertex copies; CaptureDX11GrannyMesh does not re-reserve.
 bool WantsDX11GrannyCapture(bool skinned);
 bool CaptureDX11GrannyMesh(const DX11GrannyVertex* vertices, UINT vertexCount,
 	const WORD* indices, UINT indexCount, bool skinned,

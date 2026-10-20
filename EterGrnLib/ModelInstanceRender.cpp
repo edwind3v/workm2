@@ -55,17 +55,24 @@ void CGrannyModelInstance::TryCaptureDX11ModelPreview(const TPNTVertex* deformed
 		return;
 	static_assert(sizeof(TPNTVertex) == sizeof(graphics::DX11GrannyVertex),
 		"Granny TPNTVertex must be POSITION/NORMAL/TEXCOORD0 float3/float3/float2");
+	unsigned matchingMeshes = 0;
+	unsigned eligibleMeshes = 0;
+	unsigned submittedMeshes = 0;
 	for (int meshIndex = 0; meshIndex < m_pModel->GetMeshCount(); ++meshIndex)
 	{
 		const CGrannyMesh* mesh = m_pModel->GetMeshPointer(meshIndex);
+		if (!mesh)
+			continue;
 		const granny_mesh* grannyMesh = mesh->GetGrannyMeshPointer();
 		if (!grannyMesh || GrannyMeshIsRigid(grannyMesh) == chooseDeformed)
 			continue;
+		++matchingMeshes;
 		const int vertexCount = GrannyGetMeshVertexCount(grannyMesh);
 		const int indexCount = GrannyGetMeshIndexCount(grannyMesh);
 		if (vertexCount < 12 || vertexCount > 30000 ||
 			indexCount < 36 || indexCount > 90000 || indexCount % 3)
 			continue;
+		++eligibleMeshes;
 
 		std::vector<WORD> meshIndices(indexCount);
 		GrannyCopyMeshIndices(grannyMesh, sizeof(WORD), meshIndices.data());
@@ -128,6 +135,7 @@ void CGrannyModelInstance::TryCaptureDX11ModelPreview(const TPNTVertex* deformed
 				const graphics::DX11GrannyMaterialGroup& b) {
 				return a.firstIndex < b.firstIndex;
 			});
+		++submittedMeshes;
 		if (graphics::CaptureDX11GrannyMesh(
 			previewVertices.data(),
 			static_cast<UINT>(vertexCount), meshIndices.data(),
@@ -135,6 +143,14 @@ void CGrannyModelInstance::TryCaptureDX11ModelPreview(const TPNTVertex* deformed
 			materials.data(), static_cast<UINT>(materials.size()), grannyMesh->Name))
 			return;
 	}
+	// Log only a few bounded diagnostics. The snapshot remains opt-in and
+	// must never perform potentially expensive mesh copies every frame.
+	static unsigned misses = 0;
+	++misses;
+	if (misses == 1 || misses == 8 || misses == 16 || misses == 32)
+		TraceError("DX11_MODEL_CAPTURE_MISS mode=%s attempt=%u matching=%u eligible=%u submitted=%u",
+			chooseDeformed ? "skinned" : "rigid", misses,
+			matchingMeshes, eligibleMeshes, submittedMeshes);
 }
 
 // With One Texture

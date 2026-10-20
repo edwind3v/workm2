@@ -503,6 +503,15 @@ bool CPythonApplication::Process()
 	// the next frame, outside the D3D9 BeginScene / EndScene interval.
 	if (m_isWindowed && !m_dx11ModelPreviewAttempted)
 	{
+		static bool modelCaptureConfigReported = false;
+		if (!modelCaptureConfigReported)
+		{
+			modelCaptureConfigReported = true;
+			const char* captureMode = graphics::GetDX11GrannyCaptureMode();
+			if (strcmp(captureMode, "off") != 0)
+				TraceError("DX11_MODEL_CAPTURE_CONFIG mode=%s retry_ms=500 max_attempts=32 game_renderer=DX9Ex",
+					captureMode);
+		}
 		graphics::DX11GrannySnapshot snapshot;
 		if (graphics::TakeDX11GrannySnapshot(&snapshot))
 		{

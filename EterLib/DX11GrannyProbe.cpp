@@ -29,6 +29,29 @@ constexpr UINT kMaxIndices = 90000;
 constexpr UINT kMaxMaterialGroups = 64;
 constexpr UINT kMaxTextureSize = 4096;
 constexpr size_t kTextureBudgetBytes = 64u * 1024u * 1024u;
+constexpr DWORD kCaptureRetryMs = 500;
+constexpr UINT kMaxCaptureAttempts = 32;
+
+struct CaptureConfig
+{
+	bool enabled = false;
+	bool skinnedOnly = false;
+};
+
+const CaptureConfig& GetCaptureConfig()
+{
+	static const CaptureConfig config = []() {
+		CaptureConfig result;
+		char flag[8] = {};
+		result.enabled = GetEnvironmentVariableA("M2_DX11_MODEL_PREVIEW", flag,
+			ARRAYSIZE(flag)) == 1 && flag[0] == '1';
+		char target[16] = {};
+		result.skinnedOnly = GetEnvironmentVariableA("M2_DX11_MODEL_TARGET", target,
+			ARRAYSIZE(target)) == 7 && _stricmp(target, "skinned") == 0;
+		return result;
+	}();
+	return config;
+}
 
 DX11GrannySnapshot& PendingSnapshot()
 {
@@ -40,6 +63,13 @@ bool& SnapshotTaken()
 {
 	static bool taken = false;
 	return taken;
+}
+
+bool CaptureEnabled(bool skinned)
+{
+	const CaptureConfig& config = GetCaptureConfig();
+	return config.enabled && (!config.skinnedOnly || skinned) &&
+		!SnapshotTaken() && PendingSnapshot().vertices.empty();
 }
 
 constexpr char kModelPreviewShader[] = R"(
@@ -296,27 +326,47 @@ HRESULT DrawModel(ID3D11DeviceContext* context, ModelPipeline& pipeline,
 }
 }
 
+const char* GetDX11GrannyCaptureMode()
+{
+	const CaptureConfig& config = GetCaptureConfig();
+	return !config.enabled ? "off" : config.skinnedOnly ? "skinned" : "any";
+}
+
 bool WantsDX11GrannyCapture(bool skinned)
 {
-	static const bool enabled = []() {
-		char flag[8] = {};
-		return GetEnvironmentVariableA("M2_DX11_MODEL_PREVIEW", flag,
-			ARRAYSIZE(flag)) == 1 && flag[0] == '1';
-	}();
-	static const bool skinnedOnly = []() {
-		char target[16] = {};
-		return GetEnvironmentVariableA("M2_DX11_MODEL_TARGET", target,
-			ARRAYSIZE(target)) == 7 && _stricmp(target, "skinned") == 0;
-	}();
-	return enabled && (!skinnedOnly || skinned) &&
-		!SnapshotTaken() && PendingSnapshot().vertices.empty();
+	// A failed capture previously retried Granny index/vertex/material copies
+	// on every visible instance each frame. In a crowded zoomed-out scene that
+	// can turn this *diagnostic* into a serious, unbounded CPU cost.
+	if (!CaptureEnabled(skinned))
+		return false;
+	static UINT attempts = 0;
+	static DWORD lastAttemptMs = 0;
+	static bool stopLogged = false;
+	if (attempts >= kMaxCaptureAttempts)
+	{
+		if (!stopLogged)
+		{
+			TraceError("DX11_MODEL_CAPTURE_STOP reason=no_suitable_mesh attempts=%u",
+				static_cast<unsigned>(attempts));
+			stopLogged = true;
+		}
+		return false;
+	}
+	const DWORD nowMs = GetTickCount();
+	if (attempts != 0 && static_cast<DWORD>(nowMs - lastAttemptMs) < kCaptureRetryMs)
+		return false;
+	lastAttemptMs = nowMs;
+	++attempts;
+	return true;
 }
 
 bool CaptureDX11GrannyMesh(const DX11GrannyVertex* vertices, UINT vertexCount,
 	const WORD* indices, UINT indexCount, bool skinned,
 	const DX11GrannyMaterialGroup* groups, UINT groupCount, const char* meshName)
 {
-	if (!WantsDX11GrannyCapture(skinned) || !vertices || !indices ||
+	// The caller already reserved a throttled attempt before copying the mesh.
+	// Checking WantsDX11GrannyCapture here would consume/reject that attempt.
+	if (!CaptureEnabled(skinned) || !vertices || !indices ||
 		vertexCount < 12 || vertexCount > kMaxVertices ||
 		indexCount < 36 || indexCount > kMaxIndices || indexCount % 3 != 0 ||
 		groupCount > kMaxMaterialGroups || (groupCount && !groups))

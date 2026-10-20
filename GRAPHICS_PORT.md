@@ -225,6 +225,24 @@ private SM5 bytecode, are intentionally not bundled with the public source.
   continuous GPU/CPU skinning, complete characters, and native DX11 scene
   presentation still require substantial further integration and testing.
 
+### Capture overhead and zoom-distance performance
+
+- The model preview is strictly opt-in. `M2_DX11_MODEL_PREVIEW=0` disables
+  snapshot capture entirely; use that setting when comparing normal-game FPS.
+- A failed skinned/rigid capture is now **throttled to one model instance
+  every 500 ms, up to 32 attempts**. Without this guard, unsuccessful probes
+  could repeatedly copy mesh indices, CPU vertices, and material groups for
+  many visible characters every frame (particularly with a zoomed-out camera).
+- `DX11_MODEL_CAPTURE_CONFIG mode=...` confirms the environment setting was
+  read. A few `DX11_MODEL_CAPTURE_MISS` lines report how many matching meshes,
+  size-eligible meshes, and submitted meshes were found. If none succeeds,
+  `DX11_MODEL_CAPTURE_STOP` indicates that further expensive retries have
+  stopped. `DX11_MODEL_READY` is still the definitive success indicator.
+- Performance degradation with the preview **off** is not caused by this DX11
+  model capture path. Investigate the existing DX9Ex renderer, actor count,
+  draw calls, and Debug-vs-Release build separately. No normal gameplay draws
+  have been switched to DX11 by these checkpoints.
+
 ## Pending before switching Metin2 gameplay to DX11
 
 1. Replace the diagnostic asset decode bridge with a persistent DX11-side
