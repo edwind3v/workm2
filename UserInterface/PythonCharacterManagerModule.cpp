@@ -433,7 +433,9 @@ PyObject * chrmgrRegisterMotionData(PyObject* poSelf, PyObject* poArgs)
 		return Py_BuildException("RaceData has not selected!");
 
 	const char * c_szFullFileName = CRaceManager::Instance().GetFullPathFileName(szFileName);
-	pRaceData->RegisterMotionData(iMode, iMotion, c_szFullFileName, iWeight);
+	const CGraphicThing* pkMotionThing = pRaceData->RegisterMotionData(iMode, iMotion, c_szFullFileName, iWeight);
+	if (pkMotionThing)
+		CResourceManager::Instance().LoadStaticCache(pkMotionThing->GetFileName());
 
 	return Py_BuildNone();
 }

@@ -8,9 +8,9 @@
 #include "ResourceManager.h"
 #include "GrpImage.h"
 
-constexpr long c_Deleting_Wait_Time = 30000;
-constexpr long c_DeletingCountPerFrame = 30;
-constexpr long c_Reference_Decrease_Wait_Time = 30000;
+constexpr long c_Deleting_Wait_Time = 3600000L * 4;
+constexpr long c_DeletingCountPerFrame = 1;
+constexpr long c_Reference_Decrease_Wait_Time = 3600000L * 4;
 
 CFileLoaderThread CResourceManager::ms_loadingThread;
 #if defined(ENABLE_LOADING_PERFORMANCE)

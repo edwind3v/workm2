@@ -165,7 +165,7 @@ enum EGuildBuildingMaterialIndex : BYTE
 };
 
 static constexpr int g_iSafeSleep = 1500; //1500
-static constexpr bool g_bCacheMotionData = false;
+static constexpr bool g_bCacheMotionData = true;
 
 static const std::string g_stNPCList_FileName = "npclist.txt";
 static const std::string g_stRaceHeight_FileName = "race_height.txt";
