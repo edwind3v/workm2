@@ -242,6 +242,15 @@ private SM5 bytecode, are intentionally not bundled with the public source.
   `DX11_MODEL_CAPTURE_REJECT reason=...` messages identify the precise
   validation issue (invalid vertex, out-of-range index, material-group range,
   or capture state). Do not bypass validation just to show a preview.
+- A real-world skinned capture revealed index values `0xCDCD` and `0xDDDD`
+  when copying Granny topology during animation. Those are suspicious Debug
+  heap patterns, not legal indices for the reported 2,185-vertex mesh. The
+  model loader now caches the **exact 16-bit indices written into its DX9Ex
+  index buffer** while that source is available. Only opt-in, size-eligible
+  meshes are cached, subject to a 32 MiB global CPU budget and normal mesh
+  destruction cleanup. The runtime preview reads that cache instead of
+  invoking GrannyCopyMeshIndices on possibly stale topology; `cached=...` in
+  capture-miss logs distinguishes absent caches from validation failures.
 - Performance degradation with the preview **off** is not caused by this DX11
   model capture path. Investigate the existing DX9Ex renderer, actor count,
   draw calls, and Debug-vs-Release build separately. No normal gameplay draws

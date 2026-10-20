@@ -37,6 +37,9 @@ class CGrannyMesh
 		bool					IsEmpty() const;
 		bool					CreateFromGrannyMeshPointer(granny_skeleton* pgrnSkeleton, granny_mesh* pgrnMesh, int vtxBasePos, int idxBasePos, CGrannyMaterialPalette& rkMtrlPal);
 		void					LoadIndices(void* dstBaseIndices) const;
+		// Opt-in CPU copy retained when the original index buffer is created.
+		// The later Granny mesh pointer is not guaranteed to retain live topology.
+		const std::vector<WORD>& GetDX11PreviewIndices() const;
  		void					LoadPNTVertices(void* dstBaseVertices) const;
 		void					NEW_LoadVertices(void* dstBaseVertices) const;
 		void					Destroy();
@@ -94,6 +97,7 @@ class CGrannyMesh
 
 		int						m_vtxBasePos;
 		int						m_idxBasePos;
+		mutable std::vector<WORD>	m_dx11PreviewIndices;
 
 		bool					m_canDeformPNTVertex;
 		bool					m_isTwoSide;

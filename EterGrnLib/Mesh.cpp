@@ -2,6 +2,15 @@
 #include "Mesh.h"
 #include "Model.h"
 #include "Material.h"
+#include "../eterLib/DX11GrannyProbe.h"
+
+namespace
+{
+// Only enabled for an explicitly requested, temporary DX11 preview.
+// This cap is shared by loaded Granny meshes to avoid doubling large models.
+constexpr size_t kDX11PreviewIndexBudget = 32u * 1024u * 1024u;
+size_t s_dx11PreviewIndexBytes = 0;
+}
 
 granny_data_type_definition GrannyPNT3322VertexType[5] =
 {
@@ -17,7 +26,42 @@ void CGrannyMesh::LoadIndices(void * dstBaseIndices) const
 	const granny_mesh * pgrnMesh = GetGrannyMeshPointer();
 
 	TIndex * dstIndices = ((TIndex *)dstBaseIndices) + m_idxBasePos;
+	// Preserve the same indices used for the working DX9Ex model while they
+	// are available at asset-load time. Calling GrannyCopyMeshIndices again
+	// during character animation can yield invalid debug-heap values such as
+	// 0xCDCD / 0xDDDD after the source topology's lifetime has ended.
+	const char* mode = graphics::GetDX11GrannyCaptureMode();
+	const int vertexCount = GrannyGetMeshVertexCount(pgrnMesh);
+	const int indexCount = GrannyGetMeshIndexCount(pgrnMesh);
+	if (indexCount > 0 && m_dx11PreviewIndices.size() == static_cast<size_t>(indexCount))
+	{
+		memcpy(dstIndices, m_dx11PreviewIndices.data(),
+			static_cast<size_t>(indexCount) * sizeof(TIndex));
+		return;
+	}
+	if (strcmp(mode, "off") != 0 &&
+		(strcmp(mode, "skinned") != 0 || !GrannyMeshIsRigid(pgrnMesh)) &&
+		vertexCount >= 12 && vertexCount <= 30000 &&
+		indexCount >= 36 && indexCount <= 90000 && indexCount % 3 == 0)
+	{
+		const size_t bytes = static_cast<size_t>(indexCount) * sizeof(TIndex);
+		if (bytes <= kDX11PreviewIndexBudget - s_dx11PreviewIndexBytes)
+		{
+			m_dx11PreviewIndices.resize(indexCount);
+			GrannyCopyMeshIndices(pgrnMesh, sizeof(TIndex), m_dx11PreviewIndices.data());
+			// Populate the D3D9 write-only buffer from the very same CPU array;
+			// no attempt to read back a D3DUSAGE_WRITEONLY resource is needed.
+			memcpy(dstIndices, m_dx11PreviewIndices.data(), bytes);
+			s_dx11PreviewIndexBytes += bytes;
+			return;
+		}
+	}
 	GrannyCopyMeshIndices(pgrnMesh, sizeof(TIndex), dstIndices);
+}
+
+const std::vector<WORD>& CGrannyMesh::GetDX11PreviewIndices() const
+{
+	return m_dx11PreviewIndices;
 }
 
 void CGrannyMesh::LoadPNTVertices(void * dstBaseVertices) const
@@ -254,6 +298,12 @@ void CGrannyMesh::SetPNT2Mesh()
 
 void CGrannyMesh::Destroy()
 {
+	const size_t cachedBytes = m_dx11PreviewIndices.size() * sizeof(WORD);
+	if (cachedBytes)
+	{
+		s_dx11PreviewIndexBytes -= cachedBytes;
+		std::vector<WORD>().swap(m_dx11PreviewIndices);
+	}
 	if (m_triGroupNodes)
 		delete [] m_triGroupNodes;
 

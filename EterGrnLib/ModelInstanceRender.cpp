@@ -57,6 +57,7 @@ void CGrannyModelInstance::TryCaptureDX11ModelPreview(const TPNTVertex* deformed
 		"Granny TPNTVertex must be POSITION/NORMAL/TEXCOORD0 float3/float3/float2");
 	unsigned matchingMeshes = 0;
 	unsigned eligibleMeshes = 0;
+	unsigned cachedMeshes = 0;
 	unsigned submittedMeshes = 0;
 	for (int meshIndex = 0; meshIndex < m_pModel->GetMeshCount(); ++meshIndex)
 	{
@@ -74,8 +75,13 @@ void CGrannyModelInstance::TryCaptureDX11ModelPreview(const TPNTVertex* deformed
 			continue;
 		++eligibleMeshes;
 
-		std::vector<WORD> meshIndices(indexCount);
-		GrannyCopyMeshIndices(grannyMesh, sizeof(WORD), meshIndices.data());
+		// Use the CPU index copy made when the model's working DX9Ex index
+		// buffer was created. Granny's original topology can be unavailable
+		// by the time the live actor is deformed/rendered.
+		const std::vector<WORD>& meshIndices = mesh->GetDX11PreviewIndices();
+		if (meshIndices.size() != static_cast<size_t>(indexCount))
+			continue;
+		++cachedMeshes;
 		std::vector<TPNTVertex> rigidVertices;
 		const TPNTVertex* source = nullptr;
 		if (chooseDeformed)
@@ -148,9 +154,9 @@ void CGrannyModelInstance::TryCaptureDX11ModelPreview(const TPNTVertex* deformed
 	static unsigned misses = 0;
 	++misses;
 	if (misses == 1 || misses == 8 || misses == 16 || misses == 32)
-		TraceError("DX11_MODEL_CAPTURE_MISS mode=%s attempt=%u matching=%u eligible=%u submitted=%u",
+		TraceError("DX11_MODEL_CAPTURE_MISS mode=%s attempt=%u matching=%u eligible=%u cached=%u submitted=%u",
 			chooseDeformed ? "skinned" : "rigid", misses,
-			matchingMeshes, eligibleMeshes, submittedMeshes);
+			matchingMeshes, eligibleMeshes, cachedMeshes, submittedMeshes);
 }
 
 // With One Texture
