@@ -76,6 +76,7 @@ void CGrannyModelInstance::Deform(const D3DXMATRIX * c_pWorldMatrix)
 		if (rkDeformableVertexBuffer.LockRange(m_pModel->GetDeformVertexCount(), (void **)&pntVertices))
 		{
 			DeformPNTVertices(pntVertices);
+			TryCaptureDX11ModelPreview(pntVertices);
 			rkDeformableVertexBuffer.Unlock();
 		}
 		else

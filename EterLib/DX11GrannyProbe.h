@@ -1,0 +1,41 @@
+#pragma once
+
+#include <Windows.h>
+#include <vector>
+
+struct IDirect3DDevice9Ex;
+struct IDirect3DTexture9;
+
+namespace graphics
+{
+// Same memory layout as the engine's TPNTVertex: position, normal, UV0.
+// Copies are made while Granny's CPU vertices are still valid; no D3D9
+// GPU buffer is locked/read back by this diagnostic path.
+struct DX11GrannyVertex
+{
+	float position[3];
+	float normal[3];
+	float uv[2];
+};
+
+struct DX11GrannySnapshot
+{
+	std::vector<DX11GrannyVertex> vertices;
+	std::vector<WORD> indices;
+	bool skinned = false;
+};
+
+// One-shot, opt-in snapshot from actual CGrannyModelInstance data.
+bool WantsDX11GrannyCapture();
+bool CaptureDX11GrannyMesh(const DX11GrannyVertex* vertices, UINT vertexCount,
+	const WORD* indices, UINT indexCount, bool skinned);
+bool TakeDX11GrannySnapshot(DX11GrannySnapshot* out);
+
+// Draw the *captured game mesh* using D3D11 VS/PS, indexed geometry, depth
+// testing and a simple preview material. The D3D9Ex shared texture is only
+// used to show that frame within the existing game UI.
+HRESULT RunDX11GrannyPreview(HWND gameWindow, IDirect3DDevice9Ex* gameDevice,
+	const DX11GrannySnapshot& snapshot, IDirect3DTexture9** texture,
+	unsigned char rgba[4], UINT* coveredPixels,
+	const char** stage, const char** format);
+}

@@ -60,6 +60,8 @@ class CGrannyModelInstance : public CGraphicCollisionObject
 		void	BlendRenderWithOneTexture();
 		void	BlendRenderWithTwoTexture();
 		void	RenderWithoutTexture();
+		// One-shot debug handoff of real Granny mesh vertices to D3D11.
+		void	TryCaptureDX11ModelPreview(const TPNTVertex* deformedVertices) const;
 
 		// Model
 		CGrannyModel* GetModel() const;

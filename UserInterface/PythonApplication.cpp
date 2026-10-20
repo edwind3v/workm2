@@ -3,6 +3,7 @@
 #include "../eterlib/Camera.h"
 #include "../eterlib/AttributeInstance.h"
 #include "../eterLib/DX11Probe.h"
+#include "../eterLib/DX11GrannyProbe.h"
 #include "../gamelib/AreaTerrain.h"
 #include "../EterGrnLib/Material.h"
 #include "../CWebBrowser/CWebBrowser.h"
@@ -48,6 +49,8 @@ m_dwLButtonDownTime(0),
 m_dwLastIdleTime(0)
 {
 	m_dx11SharedPreviewTexture = nullptr;
+	m_dx11ModelPreviewTexture = nullptr;
+	m_dx11ModelPreviewAttempted = false;
 #ifndef _DEBUG
 	SetEterExceptionHandler();
 #endif
@@ -103,6 +106,11 @@ m_dwLastIdleTime(0)
 
 CPythonApplication::~CPythonApplication()
 {
+	if (m_dx11ModelPreviewTexture)
+	{
+		m_dx11ModelPreviewTexture->Release();
+		m_dx11ModelPreviewTexture = nullptr;
+	}
 	if (m_dx11SharedPreviewTexture)
 	{
 		m_dx11SharedPreviewTexture->Release();
@@ -490,6 +498,39 @@ bool CPythonApplication::Process()
 			}
 		}
 	}
+	// A real animated/rigid Granny mesh may only become available after the
+	// character scene starts rendering. Consume its one-shot CPU snapshot on
+	// the next frame, outside the D3D9 BeginScene / EndScene interval.
+	if (m_isWindowed && !m_dx11ModelPreviewAttempted)
+	{
+		graphics::DX11GrannySnapshot snapshot;
+		if (graphics::TakeDX11GrannySnapshot(&snapshot))
+		{
+			m_dx11ModelPreviewAttempted = true;
+			unsigned char modelPixel[4] = {};
+			UINT modelCoveredPixels = 0;
+			const char* modelStage = "NotAttempted";
+			const char* sharedFormat = "none";
+			const HRESULT modelHr = graphics::RunDX11GrannyPreview(
+				GetWindowHandle(), m_grpDevice.GetDevice(), snapshot,
+				&m_dx11ModelPreviewTexture, modelPixel, &modelCoveredPixels,
+				&modelStage, &sharedFormat);
+			if (SUCCEEDED(modelHr))
+			{
+				TraceError("DX11_MODEL_READY source=%s vertices=%u indices=%u format=%s drawn_pixels=%u center_rgba=%u,%u,%u,%u game_renderer=DX9Ex",
+					snapshot.skinned ? "granny_deformed" : "granny_rigid",
+					static_cast<unsigned>(snapshot.vertices.size()),
+					static_cast<unsigned>(snapshot.indices.size()), sharedFormat,
+					modelCoveredPixels,
+					modelPixel[0], modelPixel[1], modelPixel[2], modelPixel[3]);
+			}
+			else
+			{
+				TraceError("DX11_MODEL_FAILED stage=%s hr=0x%08X game_renderer=DX9Ex",
+					modelStage, static_cast<unsigned>(modelHr));
+			}
+		}
+	}
 	ELTimer_SetFrameMSec();
 
 	// 	m_Profiler.Clear();
@@ -655,6 +696,11 @@ bool CPythonApplication::Process()
 					m_dx11SharedPreviewTexture->Release();
 					m_dx11SharedPreviewTexture = nullptr;
 				}
+				if (m_dx11ModelPreviewTexture)
+				{
+					m_dx11ModelPreviewTexture->Release();
+					m_dx11ModelPreviewTexture = nullptr;
+				}
 				CPythonBackground& rkBG = CPythonBackground::Instance();
 				rkBG.ReleaseCharacterShadowTexture();
 
@@ -692,6 +738,27 @@ bool CPythonApplication::Process()
 				m_pyGraphic.SetInterfaceRenderState();
 
 				OnUIRender();
+				if (m_dx11ModelPreviewTexture)
+				{
+					const HRESULT modelDraw = graphics::DrawDX11SharedPreview(
+						m_grpDevice.GetDevice(), m_dx11ModelPreviewTexture, 128, 144);
+					if (modelDraw == S_OK)
+					{
+						static bool s_modelPresented = false;
+						if (!s_modelPresented)
+						{
+							s_modelPresented = true;
+							TraceError("DX11_MODEL_PRESENT source=Granny/DX11 target=DX9Ex position=top_right size=144x144");
+						}
+					}
+					if (FAILED(modelDraw))
+					{
+						TraceError("DX11_MODEL_FAILED stage=DrawModelOverlay hr=0x%08X game_renderer=DX9Ex",
+							static_cast<unsigned>(modelDraw));
+						m_dx11ModelPreviewTexture->Release();
+						m_dx11ModelPreviewTexture = nullptr;
+					}
+				}
 				if (m_dx11SharedPreviewTexture)
 				{
 					const HRESULT sharedDraw = graphics::DrawDX11SharedPreview(
@@ -1339,6 +1406,11 @@ void CPythonApplication::Clear()
 
 void CPythonApplication::Destroy()
 {
+	if (m_dx11ModelPreviewTexture)
+	{
+		m_dx11ModelPreviewTexture->Release();
+		m_dx11ModelPreviewTexture = nullptr;
+	}
 	if (m_dx11SharedPreviewTexture)
 	{
 		m_dx11SharedPreviewTexture->Release();

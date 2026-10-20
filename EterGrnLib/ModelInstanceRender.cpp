@@ -2,6 +2,9 @@
 #include "../eterlib/StateManager.h"
 #include "ModelInstance.h"
 #include "Model.h"
+#include "../eterLib/DX11GrannyProbe.h"
+
+#include <vector>
 
 #ifdef _TEST
 
@@ -43,11 +46,66 @@ void CGrannyModelInstance::DeformNoSkin(const D3DXMATRIX * c_pWorldMatrix)
 //// Render
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+void CGrannyModelInstance::TryCaptureDX11ModelPreview(const TPNTVertex* deformedVertices) const
+{
+	if (!m_pModel || !graphics::WantsDX11GrannyCapture())
+		return;
+	static_assert(sizeof(TPNTVertex) == sizeof(graphics::DX11GrannyVertex),
+		"Granny TPNTVertex must be POSITION/NORMAL/TEXCOORD0 float3/float3/float2");
+	const bool chooseDeformed = deformedVertices != nullptr;
+	for (int meshIndex = 0; meshIndex < m_pModel->GetMeshCount(); ++meshIndex)
+	{
+		const CGrannyMesh* mesh = m_pModel->GetMeshPointer(meshIndex);
+		const granny_mesh* grannyMesh = mesh->GetGrannyMeshPointer();
+		if (!grannyMesh || GrannyMeshIsRigid(grannyMesh) == chooseDeformed)
+			continue;
+		const int vertexCount = GrannyGetMeshVertexCount(grannyMesh);
+		const int indexCount = GrannyGetMeshIndexCount(grannyMesh);
+		if (vertexCount < 12 || vertexCount > 30000 ||
+			indexCount < 36 || indexCount > 90000 || indexCount % 3)
+			continue;
+
+		std::vector<WORD> meshIndices(indexCount);
+		GrannyCopyMeshIndices(grannyMesh, sizeof(WORD), meshIndices.data());
+		std::vector<TPNTVertex> rigidVertices;
+		const TPNTVertex* source = nullptr;
+		if (chooseDeformed)
+			source = deformedVertices + mesh->GetVertexBasePosition();
+		else
+		{
+			rigidVertices.resize(vertexCount);
+			GrannyCopyMeshVertices(grannyMesh, GrannyPNT332VertexType,
+				rigidVertices.data());
+			source = rigidVertices.data();
+		}
+		std::vector<graphics::DX11GrannyVertex> previewVertices(vertexCount);
+		for (int vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
+		{
+			const TPNTVertex& input = source[vertexIndex];
+			graphics::DX11GrannyVertex& output = previewVertices[vertexIndex];
+			output.position[0] = input.position.x;
+			output.position[1] = input.position.y;
+			output.position[2] = input.position.z;
+			output.normal[0] = input.normal.x;
+			output.normal[1] = input.normal.y;
+			output.normal[2] = input.normal.z;
+			output.uv[0] = input.texCoord.x;
+			output.uv[1] = input.texCoord.y;
+		}
+		if (graphics::CaptureDX11GrannyMesh(
+			previewVertices.data(),
+			static_cast<UINT>(vertexCount), meshIndices.data(),
+			static_cast<UINT>(indexCount), chooseDeformed))
+			return;
+	}
+}
+
 // With One Texture
 void CGrannyModelInstance::RenderWithOneTexture()
 {
 	if (IsEmpty())
 		return;
+	TryCaptureDX11ModelPreview(nullptr);
 
 #ifdef _TEST
 	Granny_RenderBoxBones(GrannyGetSourceSkeleton(m_pgrnModelInstance), m_pgrnWorldPose, TEST_matWorld);
@@ -106,6 +164,7 @@ void CGrannyModelInstance::RenderWithTwoTexture()
 {
 	if (IsEmpty())
 		return;
+	TryCaptureDX11ModelPreview(nullptr);
 
 	STATEMANAGER.SetFVF(ms_pntVS);
 

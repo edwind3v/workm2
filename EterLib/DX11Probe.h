@@ -49,5 +49,5 @@ HRESULT RunDX11AssetProbe(HWND gameWindow, IDirect3DDevice9* imageDecodeDevice,
 // Display a texture that DX11 rendered, through the existing D3D9Ex UI pass.
 // This is a temporary visual bridge, not a DX11 game backbuffer/present path.
 HRESULT DrawDX11SharedPreview(IDirect3DDevice9Ex* gameDevice,
-	IDirect3DTexture9* sharedTexture);
+	IDirect3DTexture9* sharedTexture, int top = 16, int size = 96);
 }

@@ -146,6 +146,48 @@ private SM5 bytecode, are intentionally not bundled with the public source.
 - Remove `M2_DX11_SHARED_PREVIEW` (or set it to `0`) to disable the preview.
   The earlier offscreen probes are independent of this toggle.
 
+## Sixth checkpoint: first real Granny model geometry in DX11
+
+- `M2_DX11_MODEL_PREVIEW=1` enables a one-shot capture of an actual Granny
+  mesh encountered during gameplay or character preview. The client copies
+  **CPU-side** `TPNTVertex` position/normal/UV data and the mesh's real 16-bit
+  Granny triangle indices; it does not try to lock the in-use D3D9 GPU buffers.
+- For an animated mesh, the capture runs immediately after the existing
+  `CGrannyModelInstance::DeformPNTVertices()` operation, while the CPU output
+  is available. Rigid meshes can be captured directly from the Granny source
+  on the normal model render path. This test captures just one mesh and one
+  animation pose, not a full character or continuous skeletal animation.
+- The first suitable mesh (12-30,000 vertices, 36-90,000 indices) is stored
+  once, then rendered **on DX11** using real vertex/index buffers, a
+  POSITION/NORMAL/TEXCOORD input layout, an explicit view/projection matrix,
+  backface-independent rasterization, and a depth-enabled render target.
+  The geometry is normalized into an inspection camera, so it won't inherit
+  the actor's current world position. A deliberately simple blue debug
+  material distinguishes the new pass from Baerim's complete shaded models.
+- DX11 outputs into a D3D9Ex/DX11 shared 256x256 texture. If the driver accepts
+  this allocation, the game displays a **144x144 model preview** on the right,
+  beneath the optional icon test. This preview uses the existing DX9Ex UI to
+  display genuine DX11 geometry, not to issue the geometry draw itself.
+- Test in Visual Studio by adding one line to the prior environment values:
+
+  ```text
+  M2_DX11_MODEL_PREVIEW=1
+  ```
+
+  Enter a map with visible characters/NPCs or load the character-selection
+  scene; no model screenshot should appear until the engine actually supplies
+  a suitable mesh. `DX11_MODEL_READY source=granny_deformed|granny_rigid
+  vertices=... indices=...` confirms the DX11 model draw and D3D9 readback.
+  `DX11_MODEL_PRESENT ...` confirms the overlay's first successful draw.
+  `drawn_pixels` must be nonzero (the readback is compared against the clear
+  background); `DX11_MODEL_FAILED stage=... hr=...` identifies setup/draw
+  failures, including a model that did not produce visible pixels.
+- The actual material textures, D3D9 alpha/sphere-map state, world camera
+  matrices, render batching, continuously updated animation, shadows, and the
+  final DX11 scene swap chain have **not** been migrated. Those are later
+  stages on the path toward the Baerim model/shadow shaders. Setting the
+  variable to `0` disables all model capture code on normal clients.
+
 ## Pending before switching Metin2 gameplay to DX11
 
 1. Replace the diagnostic asset decode bridge with a persistent DX11-side

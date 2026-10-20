@@ -366,14 +366,15 @@ HRESULT RunDX11AssetProbe(HWND gameWindow, IDirect3DDevice9* imageDecodeDevice,
 }
 
 HRESULT DrawDX11SharedPreview(IDirect3DDevice9Ex* gameDevice,
-	IDirect3DTexture9* sharedTexture)
+	IDirect3DTexture9* sharedTexture, int top, int size)
 {
-	if (!gameDevice || !sharedTexture)
+	if (!gameDevice || !sharedTexture || top < 0 || size <= 0)
 		return E_INVALIDARG;
 	D3DVIEWPORT9 viewport = {};
 	HRESULT hr = gameDevice->GetViewport(&viewport);
 	if (FAILED(hr)) return hr;
-	if (viewport.Width < 128 || viewport.Height < 128)
+	if (viewport.Width < static_cast<DWORD>(size + 32) ||
+		viewport.Height < static_cast<DWORD>(top + size + 16))
 		return S_FALSE;
 
 	Microsoft::WRL::ComPtr<IDirect3DStateBlock9> saved;
@@ -383,13 +384,13 @@ HRESULT DrawDX11SharedPreview(IDirect3DDevice9Ex* gameDevice,
 	if (FAILED(hr)) return hr;
 
 	struct ScreenVertex { float x, y, z, rhw; DWORD color; float u, v; };
-	const float left = static_cast<float>(viewport.X + viewport.Width - 112) - 0.5f;
-	const float top = static_cast<float>(viewport.Y + 16) - 0.5f;
+	const float left = static_cast<float>(viewport.X + viewport.Width - size - 16) - 0.5f;
+	const float upper = static_cast<float>(viewport.Y + top) - 0.5f;
 	const ScreenVertex vertices[4] = {
-		{ left,      top,      0, 1, 0xffffffff, 0, 0 },
-		{ left + 96, top,      0, 1, 0xffffffff, 1, 0 },
-		{ left,      top + 96, 0, 1, 0xffffffff, 0, 1 },
-		{ left + 96, top + 96, 0, 1, 0xffffffff, 1, 1 }
+		{ left,        upper,        0, 1, 0xffffffff, 0, 0 },
+		{ left + size, upper,        0, 1, 0xffffffff, 1, 0 },
+		{ left,        upper + size, 0, 1, 0xffffffff, 0, 1 },
+		{ left + size, upper + size, 0, 1, 0xffffffff, 1, 1 }
 	};
 	gameDevice->SetVertexShader(nullptr);
 	gameDevice->SetPixelShader(nullptr);

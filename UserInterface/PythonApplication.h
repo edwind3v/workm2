@@ -356,6 +356,8 @@ class CPythonApplication : public CMSApplication, public CInputKeyboard, public 
 		// Optional diagnostic: DX11-produced texture presented by DX9Ex UI.
 		// Released before D3D9 device reset or application destruction.
 		IDirect3DTexture9*			m_dx11SharedPreviewTexture;
+		IDirect3DTexture9*			m_dx11ModelPreviewTexture;
+		bool						m_dx11ModelPreviewAttempted;
 		CNetworkDevice				m_netDevice;
 
 		CPythonSystem				m_pySystem;
