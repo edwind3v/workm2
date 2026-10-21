@@ -339,7 +339,7 @@ Frame::Frame()
     const unsigned now = GetTickCount();
     if (!state.announced)
     {
-        TraceError("[MAP_PROFILE] START version=4 movement_streaming=1 crowd_rendering=1 enabled=1 disable=M2_MAP_PROFILE=0 hitch_ms=16.7 event_ms=1 report=worst_per_second summary_seconds=5 inclusive_events=1 work_excludes_frame_sleep=1 stage_capacity=128 stage_all_calls=1 frame_stage_limit=12 summary_stage_limit=32 pack_breakdown=1");
+        TraceError("[MAP_PROFILE] START version=5 movement_streaming=1 crowd_rendering=1 asset_preparation=1 enabled=1 disable=M2_MAP_PROFILE=0 hitch_ms=16.7 event_ms=1 report=worst_per_second summary_seconds=5 inclusive_events=1 work_excludes_frame_sleep=1 stage_capacity=128 stage_all_calls=1 frame_stage_limit=12 summary_stage_limit=32 pack_breakdown=1");
         state.announced = true;
         state.lastReport = state.lastSummary = now;
     }

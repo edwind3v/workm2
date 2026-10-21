@@ -1,0 +1,4 @@
+# The runtime dependency reader expects an exact LF-only header and records.
+client_pack/root/asset_dependencies.txt text eol=lf
+tools/GenerateAssetDependencies.cmd text eol=crlf
+tools/asset_dependencies_portable.zip binary

@@ -38,6 +38,7 @@ struct CReadAheadFileCache::Impl
     bool failed = false;
     unsigned generation = 0;
     size_t bytes = 0, budget = 16u * 1024u * 1024u;
+    std::map<std::string, std::vector<std::string>> manifest;
 
     explicit Impl(CEterPackManager& manager) : owner(manager)
     {
@@ -47,9 +48,36 @@ struct CReadAheadFileCache::Impl
             budget = 48u * 1024u * 1024u;
     }
 
+    void LoadManifest()
+    {
+        // Optional data shipped in root. Parse only on the low-priority byte worker.
+        CMappedFile file; LPCVOID data = nullptr;
+        if (!owner.isExist("asset_dependencies.txt") || !owner.Get(file, "asset_dependencies.txt", &data) ||
+            file.Size() > 16u * 1024u * 1024u) return;
+        std::istringstream input(std::string(static_cast<const char*>(data), file.Size()));
+        std::string line;
+        if (!std::getline(input, line) || line != "ASSET_DEPS_V1") return;
+        std::map<std::string, std::vector<std::string>> parsed;
+        unsigned records = 0;
+        while (std::getline(input, line) && records++ < 65536)
+        {
+            const auto split = line.find('\t');
+            if (split == std::string::npos || line.size() > 2048) continue;
+            const auto model = Key(line.substr(0, split).c_str());
+            const auto texture = Key(line.substr(split + 1).c_str());
+            if (model.empty() || texture.empty() || model.find("..") != std::string::npos || texture.find("..") != std::string::npos) continue;
+            auto& dependencies = parsed[model];
+            if (dependencies.size() < 128) dependencies.push_back(texture);
+        }
+        std::lock_guard<std::mutex> lock(mutex);
+        manifest.swap(parsed);
+    }
+
     std::vector<std::string> Discover(const Request& request, const std::vector<BYTE>& contents)
     {
         std::vector<std::string> files;
+        const auto found = manifest.find(request.key);
+        if (found != manifest.end()) return found->second;
         const auto dot = request.key.rfind('.');
         if (dot == std::string::npos || contents.size() > 512u * 1024u) return files;
         const auto extension = request.key.substr(dot);
@@ -103,6 +131,7 @@ struct CReadAheadFileCache::Impl
         readAheadWorker = true;
         if (!SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN))
             SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        LoadManifest();
         for (;;)
         {
             Request request;
@@ -211,7 +240,20 @@ bool CReadAheadFileCache::TryGet(CMappedFile& file, const char* name, LPCVOID* d
 bool CReadAheadFileCache::Ready(const char* name)
 {
     std::lock_guard<std::mutex> lock(m_impl->mutex);
-    return m_impl->ready.find(Key(name)) != m_impl->ready.end();
+    const auto key = Key(name);
+    if (m_impl->ready.find(key) == m_impl->ready.end()) return false;
+    const auto manifest = m_impl->manifest.find(key);
+    bool complete = true;
+    if (manifest != m_impl->manifest.end())
+        for (const auto& dependency : manifest->second)
+            if (m_impl->ready.find(dependency) == m_impl->ready.end())
+            {
+                complete = false;
+                if (m_impl->pending.size() < 256 && m_impl->pending.insert(dependency).second)
+                    m_impl->requests.push_back({dependency, dependency, m_impl->generation});
+            }
+    if (!complete) m_impl->wake.notify_one();
+    return complete;
 }
 
 void CReadAheadFileCache::Clear()

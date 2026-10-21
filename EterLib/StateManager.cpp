@@ -94,6 +94,7 @@ void CStateManager::SetBestFiltering(DWORD dwStage)
 
 void CStateManager::Restore()
 {
+    InvalidateShaderConstants();
 	int i, j;
 
 	m_bForce = true;
@@ -115,11 +116,19 @@ void CStateManager::Restore()
 	m_bForce = false;
 }
 
+void CStateManager::InvalidateShaderConstants()
+{
+    memset(m_vertexConstantsValid, 0, sizeof(m_vertexConstantsValid));
+    memset(m_pixelConstantsValid, 0, sizeof(m_pixelConstantsValid));
+}
+
 void CStateManager::SetDefaultState()
 {
+    InvalidateShaderConstants();
 	// @fixme039 BEGIN (moved from SetDevice)
 	D3DCAPS9 d3dCaps;
 	m_lpD3DDev->GetDeviceCaps(&d3dCaps);
+    m_mipFilterCaps = d3dCaps.TextureFilterCaps;
 
 	if (d3dCaps.TextureFilterCaps & D3DPTFILTERCAPS_MAGFANISOTROPIC)
 		m_dwBestMagFilter = D3DTEXF_ANISOTROPIC;
@@ -297,7 +306,7 @@ void CStateManager::SetDefaultState()
 	{
 		SetSamplerState(i, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
 		SetSamplerState(i, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
-		SetSamplerState(i, D3DSAMP_MIPFILTER, D3DTEXF_ANISOTROPIC);
+		SetSamplerState(i, D3DSAMP_MIPFILTER, D3DTEXF_LINEAR);
 		SetSamplerState(i, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
 		SetSamplerState(i, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
 		SetTextureStageState(i, D3DTSS_TEXTURETRANSFORMFLAGS, 0);
@@ -507,6 +516,13 @@ void CStateManager::RestoreSamplerState(DWORD dwStage, D3DSAMPLERSTATETYPE Type)
 
 void CStateManager::SetSamplerState(DWORD dwStage, D3DSAMPLERSTATETYPE Type, DWORD dwValue)
 {
+    if (Type == D3DSAMP_MIPFILTER)
+    {
+        if (dwValue == D3DTEXF_ANISOTROPIC) dwValue = D3DTEXF_LINEAR;
+        const DWORD caps = m_mipFilterCaps;
+        if (dwValue == D3DTEXF_LINEAR && !(caps & D3DPTFILTERCAPS_MIPFLINEAR)) dwValue = D3DTEXF_POINT;
+        if (dwValue == D3DTEXF_POINT && !(caps & D3DPTFILTERCAPS_MIPFPOINT)) dwValue = D3DTEXF_NONE;
+    }
 	if (m_CurrentState.m_SamplerStates[dwStage][Type] == dwValue)
 		return;
 
@@ -678,6 +694,7 @@ void CStateManager::GetTransform(D3DTRANSFORMSTATETYPE Type, D3DMATRIX * pMatrix
 // SetVertexShaderConstant
 void CStateManager::SaveVertexShaderConstant(DWORD dwRegister,CONST void* pConstantData,DWORD dwConstantCount)
 {
+    if (!pConstantData || dwRegister > STATEMANAGER_MAX_VCONSTANTS || dwConstantCount > STATEMANAGER_MAX_VCONSTANTS - dwRegister) return;
 	DWORD i;
 
 	for (i = 0; i < dwConstantCount; i++)
@@ -694,26 +711,32 @@ void CStateManager::RestoreVertexShaderConstant(DWORD dwRegister, DWORD dwConsta
 	SetVertexShaderConstant(dwRegister, &m_CopyState.m_VertexShaderConstants[dwRegister], dwConstantCount);
 }
 
-void CStateManager::SetVertexShaderConstant(DWORD dwRegister,CONST void* pConstantData,DWORD dwConstantCount)
+void CStateManager::SetVertexShaderConstant(DWORD first, CONST void* data, DWORD count)
 {
-	m_lpD3DDev->SetVertexShaderConstantF(dwRegister, (const float*)pConstantData, dwConstantCount);  // Converting2DirectX9
-
-	// Set the renderstate and remember it.
-	for (DWORD i = 0; i < dwConstantCount; i++)
-	{
-		StateManager_Assert((dwRegister + i) < STATEMANAGER_MAX_VCONSTANTS);
-		m_CurrentState.m_VertexShaderConstants[dwRegister + i] = *(((D3DXVECTOR4*)pConstantData) + i);
-	}
+    if (!data || first > STATEMANAGER_MAX_VCONSTANTS || count > STATEMANAGER_MAX_VCONSTANTS - first) return;
+    const auto* values = static_cast<const D3DXVECTOR4*>(data);
+    bool changed = m_bForce;
+    for (DWORD i = 0; i < count && !changed; ++i)
+        changed = !m_vertexConstantsValid[first + i] ||
+            memcmp(&m_CurrentState.m_VertexShaderConstants[first + i], values + i, sizeof(D3DXVECTOR4)) != 0;
+    if (!changed) return;
+    const HRESULT result = m_lpD3DDev->SetVertexShaderConstantF(first, static_cast<const float*>(data), count);
+    for (DWORD i = 0; i < count; ++i)
+    {
+        m_vertexConstantsValid[first + i] = SUCCEEDED(result);
+        if (SUCCEEDED(result)) m_CurrentState.m_VertexShaderConstants[first + i] = values[i];
+    }
 }
 
 // SetPixelShaderConstant
 void CStateManager::SavePixelShaderConstant(DWORD dwRegister,CONST void* pConstantData,DWORD dwConstantCount)
 {
+    if (!pConstantData || dwRegister > STATEMANAGER_MAX_PCONSTANTS || dwConstantCount > STATEMANAGER_MAX_PCONSTANTS - dwRegister) return;
 	DWORD i;
 
 	for (i = 0; i < dwConstantCount; i++)
 	{
-		StateManager_Assert((dwRegister + i) < STATEMANAGER_MAX_VCONSTANTS);
+		StateManager_Assert((dwRegister + i) < STATEMANAGER_MAX_PCONSTANTS);
 		m_CopyState.m_PixelShaderConstants[dwRegister + i] = *(((D3DXVECTOR4*)pConstantData) + i);
 	}
 
@@ -725,16 +748,21 @@ void CStateManager::RestorePixelShaderConstant(DWORD dwRegister, DWORD dwConstan
 	SetPixelShaderConstant(dwRegister, &m_CopyState.m_PixelShaderConstants[dwRegister], dwConstantCount);
 }
 
-void CStateManager::SetPixelShaderConstant(DWORD dwRegister,CONST void* pConstantData,DWORD dwConstantCount)
+void CStateManager::SetPixelShaderConstant(DWORD first, CONST void* data, DWORD count)
 {
-	m_lpD3DDev->SetPixelShaderConstantF(dwRegister, (const float*)pConstantData, dwConstantCount);  // Converting2DirectX9
-
-	// Set the renderstate and remember it.
-	for (DWORD i = 0; i < dwConstantCount; i++)
-	{
-		StateManager_Assert((dwRegister + i) < STATEMANAGER_MAX_VCONSTANTS);
-		m_CurrentState.m_PixelShaderConstants[dwRegister + i] = *(((D3DXVECTOR4*)pConstantData) + i);
-	}
+    if (!data || first > STATEMANAGER_MAX_PCONSTANTS || count > STATEMANAGER_MAX_PCONSTANTS - first) return;
+    const auto* values = static_cast<const D3DXVECTOR4*>(data);
+    bool changed = m_bForce;
+    for (DWORD i = 0; i < count && !changed; ++i)
+        changed = !m_pixelConstantsValid[first + i] ||
+            memcmp(&m_CurrentState.m_PixelShaderConstants[first + i], values + i, sizeof(D3DXVECTOR4)) != 0;
+    if (!changed) return;
+    const HRESULT result = m_lpD3DDev->SetPixelShaderConstantF(first, static_cast<const float*>(data), count);
+    for (DWORD i = 0; i < count; ++i)
+    {
+        m_pixelConstantsValid[first + i] = SUCCEEDED(result);
+        if (SUCCEEDED(result)) m_CurrentState.m_PixelShaderConstants[first + i] = values[i];
+    }
 }
 
 void CStateManager::SaveStreamSource(UINT StreamNumber, LPDIRECT3DVERTEXBUFFER9 pStreamData,UINT Stride)

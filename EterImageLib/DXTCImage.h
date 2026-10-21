@@ -18,7 +18,7 @@ enum EPixFormat
 	PF_UNKNOWN
 };
 
-#define MAX_MIPLEVELS 12
+#define MAX_MIPLEVELS 16
 
 #ifndef DUMMYUNIONNAMEN
 #if defined(__cplusplus) || !defined(NONAMELESSUNION)
@@ -95,6 +95,9 @@ class CDXTCImage
 
 	public:
 		const BYTE *		m_pbCompBufferByLevels[MAX_MIPLEVELS];
+        DWORD m_compRowBytes[MAX_MIPLEVELS]{};
+        DWORD m_compRows[MAX_MIPLEVELS]{};
+        DWORD m_compBytes[MAX_MIPLEVELS]{};
 		std::vector<BYTE>	m_bCompVector[MAX_MIPLEVELS];
 
 		int					m_nCompSize;

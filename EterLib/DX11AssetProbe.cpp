@@ -1,5 +1,6 @@
 #include "StdAfx.h"
 #include "DX11Probe.h"
+#include "StateManager.h"
 #include "DX11Resources.h"
 #include "DX11ShaderLibrary.h"
 
@@ -421,6 +422,8 @@ HRESULT DrawDX11SharedPreview(IDirect3DDevice9Ex* gameDevice,
 	hr = gameDevice->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2,
 		vertices, sizeof(ScreenVertex));
 	const HRESULT restore = saved->Apply();
+    // A failed restore leaves native shader constants unknown to our cache.
+    if (FAILED(restore)) STATEMANAGER.InvalidateShaderConstants();
 	return FAILED(hr) ? hr : restore;
 }
 }

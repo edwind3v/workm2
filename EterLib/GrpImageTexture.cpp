@@ -2,6 +2,7 @@
 #include "../eterBase/MappedFile.h"
 #include "../eterPack/EterPackManager.h"
 #include "GrpImageTexture.h"
+#include "../EterBase/MapPerformance.h"
 
 bool CGraphicImageTexture::Lock(int* pRetPitch, void** ppRetPixels, int level) const
 {
@@ -100,113 +101,51 @@ void CGraphicImageTexture::CreateFromTexturePointer(const CGraphicTexture * c_pS
 	m_bEmpty = false;
 }
 
-bool CGraphicImageTexture::CreateDDSTexture(CDXTCImage & image, const BYTE * /*c_pbBuf*/)
+bool CGraphicImageTexture::CreateDDSTexture(CDXTCImage& image, const BYTE*)
 {
-	int mipmapCount = image.m_dwMipMapCount == 0 ? 1 : image.m_dwMipMapCount;
-
-	D3DFORMAT format;
-	LPDIRECT3DTEXTURE9 lpd3dTexture;
-
-	if(image.m_CompFormat == PF_DXT5)
-		format = D3DFMT_DXT5;
-	else if(image.m_CompFormat == PF_DXT3)
-		format = D3DFMT_DXT3;
-	else
-		format = D3DFMT_DXT1;
-
-	UINT uTexBias=0;
-	if (IsLowTextureMemory())
-		uTexBias=1;
-
-	UINT uMinMipMapIndex=0;
-	if (uTexBias>0)
-	{
-		if (mipmapCount>uTexBias)
-		{
-			uMinMipMapIndex=uTexBias;
-			image.m_nWidth>>=uTexBias;
-			image.m_nHeight>>=uTexBias;
-			mipmapCount-=uTexBias;
-		}
-	}
-
-	if (FAILED(D3DXCreateTexture(	ms_lpd3dDevice, image.m_nWidth, image.m_nHeight,
-									mipmapCount, D3DUSAGE_DYNAMIC, format, D3DPOOL_DEFAULT, &lpd3dTexture)))
-	{
-		TraceError("CreateDDSTexture: Cannot creatre texture");
-		return false;
-	}
-
-	for (DWORD i = 0; i < mipmapCount; ++i)
-	{
-		D3DLOCKED_RECT lockedRect;
-
-		if (FAILED(lpd3dTexture->LockRect(i, &lockedRect, nullptr, 0)))
-		{
-			TraceError("CreateDDSTexture: Cannot lock texture");
-		}
-		else
-		{
-			image.Copy(i+uMinMipMapIndex, (BYTE*)lockedRect.pBits, lockedRect.Pitch);
-			lpd3dTexture->UnlockRect(i);
-		}
-	}
-
-	if(ms_bSupportDXT)
-	{
-		m_lpd3dTexture = lpd3dTexture;
-	}
-	else
-	{
-		if(image.m_CompFormat == PF_DXT3 || image.m_CompFormat == PF_DXT5)
-			format = D3DFMT_A4R4G4B4;
-		else
-			format = D3DFMT_A1R5G5B5;
-
-		UINT imgWidth=image.m_nWidth;
-		UINT imgHeight=image.m_nHeight;
-
-		extern bool GRAPHICS_CAPS_HALF_SIZE_IMAGE;
-
-		if (GRAPHICS_CAPS_HALF_SIZE_IMAGE && uTexBias>0 && mipmapCount==0)
-		{
-			imgWidth>>=uTexBias;
-			imgHeight>>=uTexBias;
-		}
-
-		if (FAILED(D3DXCreateTexture(ms_lpd3dDevice, imgWidth, imgHeight,
-			mipmapCount, 0, format, D3DPOOL_DEFAULT, &m_lpd3dTexture)))
-		{
-				TraceError("CreateDDSTexture: Cannot creatre texture");
-				return false;
-		}
-
-		IDirect3DTexture9* pkTexSrc=lpd3dTexture;
-		IDirect3DTexture9* pkTexDst=m_lpd3dTexture;
-
-		for(int i=0; i<mipmapCount; ++i) {
-			IDirect3DSurface9* ppsSrc = nullptr;
-			IDirect3DSurface9* ppsDst = nullptr;
-
-			if (SUCCEEDED(pkTexSrc->GetSurfaceLevel(i, &ppsSrc)))
-			{
-				if (SUCCEEDED(pkTexDst->GetSurfaceLevel(i, &ppsDst)))
-				{
-					D3DXLoadSurfaceFromSurface(ppsDst, nullptr, nullptr, ppsSrc, nullptr, nullptr, D3DX_FILTER_NONE, 0);
-					ppsDst->Release();
-				}
-				ppsSrc->Release();
-			}
-		}
-
-		lpd3dTexture->Release();
-	}
-
-	m_width = image.m_nWidth;
-	m_height = image.m_nHeight;
-	m_bEmpty = false;
-
-	return true;
+    MapPerformance::Scope profile("texture.dds_upload", m_stFileName.c_str());
+    // Keep driver-format conversion in the existing D3DX fallback.
+    if (!ms_bSupportDXT) return false;
+    const D3DFORMAT format = image.m_CompFormat == PF_DXT5 ? D3DFMT_DXT5 :
+        image.m_CompFormat == PF_DXT3 ? D3DFMT_DXT3 : D3DFMT_DXT1;
+    const UINT bias = IsLowTextureMemory() && image.m_dwMipMapCount > 1 ? 1 : 0;
+    const UINT levels = image.m_dwMipMapCount - bias;
+    const UINT width = max(1U, static_cast<UINT>(image.m_nWidth) >> bias);
+    const UINT height = max(1U, static_cast<UINT>(image.m_nHeight) >> bias);
+    IDirect3DTexture9* staging = nullptr;
+    IDirect3DTexture9* texture = nullptr;
+    HRESULT hr = MapPerformance::Measure("texture.dds_allocate", m_stFileName.c_str(), [&] {
+        return ms_lpd3dDevice->CreateTexture(width, height, levels, 0, format,
+            D3DPOOL_DEFAULT, &texture, nullptr);
+    });
+    if (SUCCEEDED(hr)) hr = ms_lpd3dDevice->CreateTexture(width, height, levels, 0, format,
+        D3DPOOL_SYSTEMMEM, &staging, nullptr);
+    if (SUCCEEDED(hr))
+    {
+        MapPerformance::Scope copy("texture.dds_copy", m_stFileName.c_str());
+        for (UINT level = 0; level < levels; ++level)
+        {
+            D3DLOCKED_RECT locked{};
+            hr = staging->LockRect(level, &locked, nullptr, 0);
+            if (FAILED(hr)) break;
+            const bool copied = image.Copy(level + bias, static_cast<BYTE*>(locked.pBits), locked.Pitch);
+            hr = staging->UnlockRect(level);
+            if (!copied) hr = D3DERR_INVALIDCALL;
+            if (FAILED(hr)) break;
+        }
+    }
+    if (SUCCEEDED(hr)) hr = MapPerformance::Measure("texture.dds_transfer", m_stFileName.c_str(), [&] {
+        return ms_lpd3dDevice->UpdateTexture(staging, texture);
+    });
+    if (staging) staging->Release();
+    if (FAILED(hr))
+    {
+        if (texture) texture->Release();
+        return false;
+    }
+    m_lpd3dTexture = texture;
+    m_width = width; m_height = height; m_bEmpty = false;
+    return true;
 }
 
 bool CGraphicImageTexture::CreateFromMemoryFile(UINT bufSize, const void * c_pvBuf, D3DFORMAT d3dFmt, DWORD dwFilter)
@@ -214,27 +153,37 @@ bool CGraphicImageTexture::CreateFromMemoryFile(UINT bufSize, const void * c_pvB
 	assert(ms_lpd3dDevice != nullptr);
 	assert(m_lpd3dTexture == nullptr);
 
-	static CDXTCImage image;
+	CDXTCImage image;
+    MapPerformance::Scope profile("texture.load", m_stFileName.c_str());
 
-	if (image.LoadHeaderFromMemory((const BYTE *) c_pvBuf, bufSize)) // @fixme042
+	const bool parsedDDS = image.LoadHeaderFromMemory((const BYTE*)c_pvBuf, bufSize);
+    const UINT fallbackBias = parsedDDS && IsLowTextureMemory() && image.m_dwMipMapCount > 1 ? 1 : 0;
+    if (parsedDDS && CreateDDSTexture(image, (const BYTE*)c_pvBuf))
 	{
-		return (CreateDDSTexture(image, (const BYTE *) c_pvBuf));
+		return true;
 	}
 	else
 	{
+        MapPerformance::Scope fallback("texture.legacy_upload", m_stFileName.c_str());
 		D3DXIMAGE_INFO imageInfo;
 		if (FAILED(D3DXGetImageInfoFromFileInMemory(c_pvBuf, bufSize, &imageInfo)))
 		{
 			TraceError("CreateFromMemoryFile: Cannot GetImageInfo from texture");
 			return false;
 		}
+        if (parsedDDS)
+        {
+            imageInfo.Width = max(1U, imageInfo.Width >> fallbackBias);
+            imageInfo.Height = max(1U, imageInfo.Height >> fallbackBias);
+            if (!ms_bSupportDXT) d3dFmt = image.m_CompFormat == PF_DXT1 ? D3DFMT_A1R5G5B5 : D3DFMT_A4R4G4B4;
+        }
 		if (FAILED(D3DXCreateTextureFromFileInMemoryEx(
 					ms_lpd3dDevice,
 					c_pvBuf,
 					bufSize,
 					imageInfo.Width,
 					imageInfo.Height,
-					D3DX_DEFAULT,
+                    parsedDDS ? image.m_dwMipMapCount - fallbackBias : D3DX_DEFAULT,
 					0,
 					d3dFmt,
 					D3DPOOL_DEFAULT,
@@ -251,6 +200,7 @@ bool CGraphicImageTexture::CreateFromMemoryFile(UINT bufSize, const void * c_pvB
 
 		m_width = imageInfo.Width;
 		m_height = imageInfo.Height;
+        if (parsedDDS) { m_bEmpty = false; return true; }
 
 		D3DFORMAT format=imageInfo.Format;
 		switch(imageInfo.Format) {

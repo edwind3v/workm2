@@ -243,6 +243,7 @@ class CStateManager : public CSingleton<CStateManager>
 		virtual ~CStateManager();
 
 		void	SetDefaultState();
+        void InvalidateShaderConstants();
 		void	Restore();
 
 		bool	BeginScene();
@@ -344,13 +345,16 @@ class CStateManager : public CSingleton<CStateManager>
 		void SetDevice(LPDIRECT3DDEVICE9 lpDevice);
 
 	private:
-		CStateManagerState	m_ChipState;
+		bool m_vertexConstantsValid[STATEMANAGER_MAX_VCONSTANTS]{};
+        bool m_pixelConstantsValid[STATEMANAGER_MAX_PCONSTANTS]{};
+        CStateManagerState	m_ChipState;
 		CStateManagerState	m_CurrentState;
 		CStateManagerState	m_CopyState;
 		TStateID			m_DirtyStates;
 		bool				m_bForce;
 		bool				m_bScene;
 		DWORD				m_dwBestMinFilter;
+        DWORD m_mipFilterCaps = 0;
 		DWORD				m_dwBestMagFilter;
 		LPDIRECT3DDEVICE9	m_lpD3DDev;
 

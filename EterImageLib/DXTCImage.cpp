@@ -127,142 +127,73 @@ bool CDXTCImage::LoadFromFile(const char * filename)
 	return LoadFromMemory((const BYTE*)pvMap, mappedFile.Size());
 }
 
-bool CDXTCImage::LoadHeaderFromMemory(const BYTE* c_pbMap, int iSize)
+bool CDXTCImage::LoadHeaderFromMemory(const BYTE* data, int size)
 {
-	if (iSize < sizeof(DWORD)) // @fixme042 size check
-		return false;
-
-	// Read magic number
-	c_pbMap += sizeof(DWORD);
-	iSize -= sizeof(DWORD); // @fixme042
-
-	// Read the surface description
-	if (iSize < sizeof(DDSURFACEDESC2)) // @fixme042 size check
-		return false;
-
-	DDSURFACEDESC2 ddsd{}; // read from dds file
-	memcpy(&ddsd, c_pbMap, sizeof(DDSURFACEDESC2));
-	c_pbMap += sizeof(DDSURFACEDESC2);
-	iSize -= sizeof(DDSURFACEDESC2); // @fixme042
-
-	// Does texture have mipmaps?
-	m_bMipTexture = (ddsd.dwMipMapCount > 0) ? TRUE : FALSE;
-
-	// Clear unwanted flags
-	// Can't do this!!!  surface not re-created here
-	//    ddsd.dwFlags &= (~DDSD_PITCH);
-	//    ddsd.dwFlags &= (~DDSD_LINEARSIZE);
-
-	// Is it DXTC ?
-	// I sure hope pixelformat is valid!
-	m_xddPixelFormat.dwFlags = ddsd.ddpfPixelFormat.dwFlags;
-	m_xddPixelFormat.dwFourCC = ddsd.ddpfPixelFormat.dwFourCC;
-	m_xddPixelFormat.dwSize = ddsd.ddpfPixelFormat.dwSize;
-	m_xddPixelFormat.dwRGBBitCount = ddsd.ddpfPixelFormat.dwRGBBitCount;
-	m_xddPixelFormat.dwRGBAlphaBitMask = ddsd.ddpfPixelFormat.dwRGBAlphaBitMask;
-	m_xddPixelFormat.dwRBitMask = ddsd.ddpfPixelFormat.dwRBitMask;
-	m_xddPixelFormat.dwGBitMask = ddsd.ddpfPixelFormat.dwGBitMask;
-	m_xddPixelFormat.dwBBitMask = ddsd.ddpfPixelFormat.dwBBitMask;
-
-	DecodePixelFormat(m_strFormat, &m_xddPixelFormat);
-
-	if (m_CompFormat != PF_DXT1 &&
-		m_CompFormat != PF_DXT3 &&
-		m_CompFormat != PF_DXT5)
-	{
-		return false;
-	}
-
-	if (ddsd.dwMipMapCount > MAX_MIPLEVELS)
-		ddsd.dwMipMapCount = MAX_MIPLEVELS;
-
-	m_nWidth		= ddsd.dwWidth;
-	m_nHeight		= ddsd.dwHeight;
-	//!@#
-	m_dwMipMapCount = max(1, ddsd.dwMipMapCount);
-	m_dwFlags		= ddsd.dwFlags;
-
-	if (ddsd.dwFlags & DDSD_PITCH)
-	{
-		m_lPitch = ddsd.lPitch;
-		m_pbCompBufferByLevels[0] = c_pbMap;
-	}
-	else
-	{
-		m_lPitch = ddsd.dwLinearSize;
-
-		if (ddsd.dwFlags & DDSD_MIPMAPCOUNT)
-		{
-			for (DWORD dwLinearSize = ddsd.dwLinearSize, i = 0; i < m_dwMipMapCount; ++i, dwLinearSize >>= 2)
-			{
-				m_pbCompBufferByLevels[i] = c_pbMap;
-				c_pbMap += dwLinearSize;
-			}
-		}
-		else
-		{
-			m_pbCompBufferByLevels[0] = c_pbMap;
-		}
-	}
-
-	return true;
+    Initialize();
+    if (!data || size < 128 || memcmp(data, "DDS ", 4) != 0) return false;
+    DDSURFACEDESC2 header{};
+    memcpy(&header, data + 4, sizeof(header));
+    if (header.dwSize != 124 || header.ddpfPixelFormat.dwSize != 32 ||
+        !(header.ddpfPixelFormat.dwFlags & DDPF_FOURCC) ||
+        !header.dwWidth || !header.dwHeight || header.dwWidth > 32768 || header.dwHeight > 32768 ||
+        (header.ddsCaps.dwCaps2 & DDSCAPS2_CUBEMAP) ||
+        ((header.ddsCaps.dwCaps2 & DDSCAPS2_VOLUME) && header.dwDepth > 1)) return false;
+    m_xddPixelFormat = {};
+    memcpy(&m_xddPixelFormat, &header.ddpfPixelFormat, sizeof(m_xddPixelFormat));
+    DecodePixelFormat(m_strFormat, &m_xddPixelFormat);
+    if (m_CompFormat != PF_DXT1 && m_CompFormat != PF_DXT3 && m_CompFormat != PF_DXT5) return false;
+    const DWORD levels = header.dwMipMapCount ? header.dwMipMapCount : 1;
+    DWORD maxLevels = 1;
+    for (DWORD extent = max(header.dwWidth, header.dwHeight); extent > 1; extent >>= 1) ++maxLevels;
+    if (levels > MAX_MIPLEVELS || levels > maxLevels) return false;
+    const DWORD blockBytes = m_CompFormat == PF_DXT1 ? 8 : 16;
+    size_t remaining = static_cast<size_t>(size) - 128;
+    const BYTE* cursor = data + 128;
+    DWORD width = header.dwWidth, height = header.dwHeight;
+    for (DWORD level = 0; level < levels; ++level)
+    {
+        const DWORD rowBytes = max(1UL, (width + 3) / 4) * blockBytes;
+        const DWORD rows = max(1UL, (height + 3) / 4);
+        const size_t bytes = static_cast<size_t>(rowBytes) * rows;
+        if (bytes > remaining || bytes > 0x7fffffff) return false;
+        m_pbCompBufferByLevels[level] = cursor;
+        m_compRowBytes[level] = rowBytes; m_compRows[level] = rows;
+        m_compBytes[level] = static_cast<DWORD>(bytes);
+        cursor += bytes; remaining -= bytes;
+        width = max(1UL, width >> 1); height = max(1UL, height >> 1);
+    }
+    m_nWidth = header.dwWidth; m_nHeight = header.dwHeight;
+    m_dwMipMapCount = levels; m_bMipTexture = levels > 1;
+    m_dwFlags = header.dwFlags & ~DDSD_PITCH;
+    if (levels > 1) m_dwFlags |= DDSD_MIPMAPCOUNT;
+    m_lPitch = m_compBytes[0];
+    m_nCompSize = m_compBytes[0]; m_nCompLineSz = m_compRowBytes[0];
+    return true;
 }
 
-//////////////////////////////////////////////////////////////////////
-bool CDXTCImage::LoadFromMemory(const BYTE* c_pbMap, int iSize)
+bool CDXTCImage::LoadFromMemory(const BYTE* data, int size)
 {
-	if (!LoadHeaderFromMemory(c_pbMap, iSize)) // @fixme042
-		return false;
-
-	if (m_dwFlags & DDSD_PITCH)
-	{
-		const DWORD dwBytesPerRow = m_nWidth * m_xddPixelFormat.dwRGBBitCount / 8;
-
-		m_nCompSize = m_lPitch * m_nHeight;
-		m_nCompLineSz = dwBytesPerRow;
-
-		m_bCompVector[0].resize(m_nCompSize);
-		BYTE * pDest = &m_bCompVector[0][0];
-
-		c_pbMap = m_pbCompBufferByLevels[0];
-
-		for (int yp = 0; yp < m_nHeight; ++yp)
-		{
-			memcpy(pDest, c_pbMap, dwBytesPerRow);
-			pDest += m_lPitch;
-			c_pbMap += m_lPitch;
-		}
-	}
-	else
-	{
-		if (m_dwFlags & DDSD_MIPMAPCOUNT)
-		{
-			for (DWORD dwLinearSize = m_lPitch, i = 0; i < m_dwMipMapCount; ++i, dwLinearSize >>= 2)
-			{
-				m_bCompVector[i].resize(dwLinearSize);
-				Copy(i, &m_bCompVector[i][0], dwLinearSize);
-			}
-		}
-		else
-		{
-			m_bCompVector[0].resize(m_lPitch);
-			Copy(0, &m_bCompVector[0][0], m_lPitch);
-		}
-	}
-
-	// done reading file
-	return true;
+    if (!LoadHeaderFromMemory(data, size)) return false;
+    for (DWORD level = 0; level < m_dwMipMapCount; ++level)
+    {
+        m_bCompVector[level].assign(m_pbCompBufferByLevels[level],
+            m_pbCompBufferByLevels[level] + m_compBytes[level]);
+        m_pbCompBufferByLevels[level] = m_bCompVector[level].data();
+    }
+    return true;
 }
 
-bool CDXTCImage::Copy(int miplevel, BYTE * pbDest, long lDestPitch) const
+bool CDXTCImage::Copy(int level, BYTE* destination, long pitch) const
 {
-	if (!(m_dwFlags & DDSD_MIPMAPCOUNT))
-		if (miplevel)
-			return false;
-
-	memcpy(pbDest, m_pbCompBufferByLevels[miplevel], m_lPitch >> (miplevel * 2));
-	pbDest += lDestPitch;
-	return true;
+    if (level < 0 || static_cast<DWORD>(level) >= m_dwMipMapCount || !destination ||
+        !m_pbCompBufferByLevels[level] || pitch < 0 || static_cast<DWORD>(pitch) < m_compRowBytes[level]) return false;
+    const BYTE* source = m_pbCompBufferByLevels[level];
+    for (DWORD row = 0; row < m_compRows[level]; ++row)
+    {
+        memcpy(destination, source, m_compRowBytes[level]);
+        source += m_compRowBytes[level]; destination += pitch;
+    }
+    return true;
 }
 
 void CDXTCImage::Unextract(BYTE * pbDest, int /*iWidth*/, int /*iHeight*/, int iPitch) const

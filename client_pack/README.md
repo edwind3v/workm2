@@ -4,6 +4,14 @@ These are the game-pack files changed by the Owsap loading integration. They are
 tracked here because the live `Game Client/pack` directory is outside this Git
 repository. This is an overlay, not a complete client pack.
 
+`root/asset_dependencies.txt` is also tracked here for the asset read-ahead
+optimization. Regenerate it from all unpacked client assets when GR2 texture
+references or pack priority change. See `docs/asset-dependencies-generator.md`
+and the ready-to-use `tools/asset_dependencies_portable.zip`. Repack root after
+updating the manifest. The optimized GR2/texture archive payloads themselves are
+outside this source repository; retain the local asset pipeline backups and
+deployment records described in `docs/asset-preparation-optimization.md`.
+
 Copy the contents of each directory into the corresponding unpacked pack:
 
 - `root/` into the root pack's input directory.
