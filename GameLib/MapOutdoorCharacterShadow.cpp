@@ -1,10 +1,57 @@
 #include "StdAfx.h"
-#include "../eterLib/StateManager.h"
+#include "../eterLib/ShaderManager.h"
 #include "../eterlib/Camera.h"
+#include "../eterLib/ShaderInit.h"
+#include "../EterBase/StepTimer.h"
+#include "../UserInterface/Locale_inc.h"
 
 #include "MapOutdoor.h"
 
 static int recreate = false;
+
+bool CMapOutdoor::CreateShadowMap(WORD size, ID3D11Texture2D** ppTexture, ID3D11ShaderResourceView** ppSRV,
+								  ID3D11RenderTargetView** ppRTV, ID3D11DepthStencilView** ppDSV)
+{
+	if (!ms_pDevice)
+		return false;
+
+	D3D11_TEXTURE2D_DESC texDesc = {};
+	texDesc.Width = size;
+	texDesc.Height = size;
+	texDesc.MipLevels = 1;
+	texDesc.ArraySize = 1;
+	texDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+	texDesc.SampleDesc.Count = 1;
+	texDesc.Usage = D3D11_USAGE_DEFAULT;
+	texDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+
+	if (FAILED(ms_pDevice->CreateTexture2D(&texDesc, nullptr, ppTexture)))
+		return false;
+
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Texture2D.MipLevels = 1;
+	if (FAILED(ms_pDevice->CreateShaderResourceView(*ppTexture, &srvDesc, ppSRV)))
+	{
+		SAFE_RELEASE(*ppTexture);
+		return false;
+	}
+
+	D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+	dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+	dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+	if (FAILED(ms_pDevice->CreateDepthStencilView(*ppTexture, &dsvDesc, ppDSV)))
+	{
+		SAFE_RELEASE(*ppSRV);
+		SAFE_RELEASE(*ppTexture);
+		return false;
+	}
+
+	if (ppRTV)
+		*ppRTV = nullptr;
+	return true;
+}
 
 void CMapOutdoor::SetShadowTextureSize(WORD size)
 {
@@ -13,51 +60,104 @@ void CMapOutdoor::SetShadowTextureSize(WORD size)
 		recreate = true;
 		Tracenf("ShadowTextureSize changed %d -> %d", m_wShadowMapSize, size);
 	}
-
 	m_wShadowMapSize = size;
+	if (size > 0)
+		SHADERMANAGER.SetShadowTexelSize(1.0f / (float)size);   // real texel size for the PCF kernel
 }
 
 void CMapOutdoor::CreateCharacterShadowTexture()
 {
 	extern bool GRAPHICS_CAPS_CAN_NOT_DRAW_SHADOW;
-
 	if (GRAPHICS_CAPS_CAN_NOT_DRAW_SHADOW)
+		return;
+	if (!ms_pDevice)
 		return;
 
 	ReleaseCharacterShadowTexture();
 
+	for (int i = 0; i < CSM_NUM_CASCADES; ++i)
+		m_bShadowCascadeValid[i] = false;
+
 	if (IsLowTextureMemory())
 		SetShadowTextureSize(128);
 
-	m_ShadowMapViewport.X = 1;
-	m_ShadowMapViewport.Y = 1;
-	m_ShadowMapViewport.Width = m_wShadowMapSize - 2;
-	m_ShadowMapViewport.Height = m_wShadowMapSize - 2;
-	m_ShadowMapViewport.MinZ = 0.0f;
-	m_ShadowMapViewport.MaxZ = 1.0f;
+	m_fShadowOpacity = SHADOW_OPACITY_DEFAULT;
 
-	if (FAILED(ms_lpd3dDevice->CreateTexture(m_wShadowMapSize, m_wShadowMapSize, 1, D3DUSAGE_RENDERTARGET, D3DFMT_R5G6B5, D3DPOOL_DEFAULT, &m_lpCharacterShadowMapTexture, nullptr)))
+	m_ShadowMapViewport.TopLeftX = 1.0f;
+	m_ShadowMapViewport.TopLeftY = 1.0f;
+	m_ShadowMapViewport.Width = static_cast<float>(m_wShadowMapSize - 2);
+	m_ShadowMapViewport.Height = static_cast<float>(m_wShadowMapSize - 2);
+	m_ShadowMapViewport.MinDepth = 0.0f;
+	m_ShadowMapViewport.MaxDepth = 1.0f;
+
+	// Create 4 cascade shadow maps (R32F) — same proven CreateShadowMap pattern
+	for (int i = 0; i < CSM_NUM_CASCADES; ++i)
 	{
-		TraceError("CMapOutdoor Unable to create Character Shadow render target texture\n");
-		return;
+		if (!CreateShadowMap(m_wShadowMapSize, &m_lpShadowMapTexture[i], &m_lpShadowMapSRV[i],
+			&m_lpShadowMapRTV[i], &m_lpShadowMapDSV[i]))
+		{
+			TraceError("CMapOutdoor: Failed to create cascade %d shadow map\n", i);
+		}
 	}
 
-	if (FAILED(m_lpCharacterShadowMapTexture->GetSurfaceLevel(0, &m_lpCharacterShadowMapRenderTargetSurface)))
+	// Legacy shadow map (for backwards compatibility)
+	ID3D11Texture2D* pShadowTexture = nullptr;
+	D3D11_TEXTURE2D_DESC texDesc = {};
+	texDesc.Width = m_wShadowMapSize;
+	texDesc.Height = m_wShadowMapSize;
+	texDesc.MipLevels = 1;
+	texDesc.ArraySize = 1;
+	texDesc.Format = DXGI_FORMAT_B5G6R5_UNORM;
+	texDesc.SampleDesc.Count = 1;
+	texDesc.Usage = D3D11_USAGE_DEFAULT;
+	texDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+
+	HRESULT hr = ms_pDevice->CreateTexture2D(&texDesc, nullptr, &pShadowTexture);
+	if (FAILED(hr))
 	{
-		TraceError("CMapOutdoor Unable to GetSurfaceLevel Character Shadow render target texture\n");
-		return;
+		texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		hr = ms_pDevice->CreateTexture2D(&texDesc, nullptr, &pShadowTexture);
+		if (FAILED(hr))
+		{
+			TraceError("CMapOutdoor Unable to create Character Shadow render target texture\n");
+			return;
+		}
 	}
 
-	IDirect3DSurface9* pBackBufferSurface;
-	ms_lpd3dDevice->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &pBackBufferSurface);
-	D3DSURFACE_DESC kDesc;
-	pBackBufferSurface->GetDesc(&kDesc);
-	pBackBufferSurface->Release();
-	if (FAILED(ms_lpd3dDevice->CreateDepthStencilSurface(m_wShadowMapSize, m_wShadowMapSize, D3DFMT_D16, kDesc.MultiSampleType, kDesc.MultiSampleQuality, FALSE, &m_lpCharacterShadowMapDepthSurface, nullptr)))
+	if (FAILED(ms_pDevice->CreateShaderResourceView(pShadowTexture, nullptr, &m_lpCharacterShadowMapTexture)))
 	{
-		TraceError("CMapOutdoor Unable to create Character Shadow depth Surface\n");
+		pShadowTexture->Release();
 		return;
 	}
+	if (FAILED(ms_pDevice->CreateRenderTargetView(pShadowTexture, nullptr, &m_lpCharacterShadowMapRenderTargetSurface)))
+	{
+		SAFE_RELEASE(m_lpCharacterShadowMapTexture);
+		pShadowTexture->Release();
+		return;
+	}
+	pShadowTexture->Release();
+
+	ID3D11Texture2D* pDepthTexture = nullptr;
+	D3D11_TEXTURE2D_DESC depthDesc = {};
+	depthDesc.Width = m_wShadowMapSize;
+	depthDesc.Height = m_wShadowMapSize;
+	depthDesc.MipLevels = 1;
+	depthDesc.ArraySize = 1;
+	depthDesc.Format = DXGI_FORMAT_D16_UNORM;
+	depthDesc.SampleDesc.Count = 1;
+	depthDesc.Usage = D3D11_USAGE_DEFAULT;
+	depthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+
+	if (FAILED(ms_pDevice->CreateTexture2D(&depthDesc, nullptr, &pDepthTexture)))
+		return;
+	if (FAILED(ms_pDevice->CreateDepthStencilView(pDepthTexture, nullptr, &m_lpCharacterShadowMapDepthSurface)))
+	{
+		pDepthTexture->Release();
+		return;
+	}
+	pDepthTexture->Release();
+
+	Tracenf("CMapOutdoor: CSM shadow maps created (%dx%d, 4 cascades)", m_wShadowMapSize, m_wShadowMapSize);
 }
 
 void CMapOutdoor::ReleaseCharacterShadowTexture()
@@ -65,18 +165,38 @@ void CMapOutdoor::ReleaseCharacterShadowTexture()
 	SAFE_RELEASE(m_lpCharacterShadowMapRenderTargetSurface);
 	SAFE_RELEASE(m_lpCharacterShadowMapDepthSurface);
 	SAFE_RELEASE(m_lpCharacterShadowMapTexture);
+
+	for (int i = 0; i < CSM_NUM_CASCADES; ++i)
+	{
+		SAFE_RELEASE(m_lpShadowMapRTV[i]);
+		SAFE_RELEASE(m_lpShadowMapDSV[i]);
+		SAFE_RELEASE(m_lpShadowMapSRV[i]);
+		SAFE_RELEASE(m_lpShadowMapTexture[i]);
+	}
 }
 
 DWORD dwLightEnable = FALSE;
-
-bool CMapOutdoor::BeginRenderCharacterShadowToTexture()
+DWORD dwSavedParticleColor = 0xFFFFFFFF;
+bool CMapOutdoor::BeginRenderCharacterShadowToTexture(int cascadeIndex)
 {
-	D3DXMATRIX matLightView, matLightProj;
-
-	const CCamera* pCurrentCamera = CCameraManager::Instance().GetCurrentCamera();
-
-	if (!pCurrentCamera)
+	if (!ms_pContext)
+	{
+		m_bShadowRenderActive = false;
 		return false;
+	}
+
+	if (cascadeIndex < 0 || cascadeIndex >= CSM_NUM_CASCADES)
+	{
+		m_bShadowRenderActive = false;
+		return false;
+	}
+
+	CCamera* pCurrentCamera = CCameraManager::Instance().GetCurrentCamera();
+	if (!pCurrentCamera)
+	{
+		m_bShadowRenderActive = false;
+		return false;
+	}
 
 	if (recreate)
 	{
@@ -84,95 +204,226 @@ bool CMapOutdoor::BeginRenderCharacterShadowToTexture()
 		recreate = false;
 	}
 
-	const D3DXVECTOR3 v3Target = pCurrentCamera->GetTarget();
+	ID3D11RenderTargetView* pRTV = m_lpShadowMapRTV[cascadeIndex];
+	ID3D11DepthStencilView* pDSV = m_lpShadowMapDSV[cascadeIndex];
 
-	const D3DXVECTOR3 v3Eye(v3Target.x - 1.732f * 1250.0f,
-	                        v3Target.y - 1250.0f,
-	                        v3Target.z + 2.0f * 1.732f * 1250.0f);
+	if (!pDSV)
+	{
+		m_bShadowRenderActive = false;
+		return false;
+	}
 
-	const auto val = D3DXVECTOR3(0.0f, 0.0f, 1.0f);
-	D3DXMatrixLookAtRH(&matLightView,
-					   &v3Eye,
-					   &v3Target,
-					   &val);
+	if (!m_bShadowSunLatched)
+	{
+		const float SHADOW_SUN_ELEV_Z = 0.625f;
+		const float fHoriz = sqrtf(1.0f - SHADOW_SUN_ELEV_Z * SHADOW_SUN_ELEV_Z);
 
-	D3DXMatrixOrthoRH(&matLightProj, 2550.0f, 2550.0f, 1.0f, 15000.0f);
+		float fAzimuth = 3.9269908f;
+		if (mc_pEnvironmentData)
+		{
+			const Vector3& vLightDir = mc_pEnvironmentData->DirLights[ENV_DIRLIGHT_BACKGROUND].Direction;
+			if (fabsf(vLightDir.x) > 0.0001f || fabsf(vLightDir.y) > 0.0001f)
+				fAzimuth = atan2f(-vLightDir.y, -vLightDir.x);
+		}
 
-	STATEMANAGER.SaveTransform(D3DTS_VIEW, &matLightView);
-	STATEMANAGER.SaveTransform(D3DTS_PROJECTION, &matLightProj);
+		m_v3ShadowSunDir.x = cosf(fAzimuth) * fHoriz;
+		m_v3ShadowSunDir.y = sinf(fAzimuth) * fHoriz;
+		m_v3ShadowSunDir.z = SHADOW_SUN_ELEV_Z;
+		m_bShadowSunLatched = true;
+	}
 
-	dwLightEnable = STATEMANAGER.GetRenderState(D3DRS_LIGHTING);
-	STATEMANAGER.SetRenderState(D3DRS_LIGHTING, FALSE);
+	const float SHADOW_SUN_DIR_X = m_v3ShadowSunDir.x;
+	const float SHADOW_SUN_DIR_Y = m_v3ShadowSunDir.y;
+	const float SHADOW_SUN_DIR_Z = m_v3ShadowSunDir.z;
 
-	STATEMANAGER.SaveRenderState(D3DRS_TEXTUREFACTOR, 0xFF808080);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TFACTOR);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
+	Vector3 v3Target = pCurrentCamera->GetTarget();
+	float mapSize = m_fCascadeSize[cascadeIndex];
+
+	if (m_wShadowMapSize > 0)
+	{
+		Vector3 vZ(SHADOW_SUN_DIR_X, SHADOW_SUN_DIR_Y, SHADOW_SUN_DIR_Z);
+		Vector3 vX(-vZ.y, vZ.x, 0.0f);
+
+		float fLen = sqrtf(vX.x * vX.x + vX.y * vX.y);
+		if (fLen > 0.001f)
+		{
+			vX.x /= fLen;
+			vX.y /= fLen;
+		}
+
+		Vector3 vY(
+			vZ.y * vX.z - vZ.z * vX.y,
+			vZ.z * vX.x - vZ.x * vX.z,
+			vZ.x * vX.y - vZ.y * vX.x);
+
+		const float fTexel = mapSize / (float)m_wShadowMapSize;
+
+		float fU = v3Target.x * vX.x + v3Target.y * vX.y + v3Target.z * vX.z;
+		float fV = v3Target.x * vY.x + v3Target.y * vY.y + v3Target.z * vY.z;
+		const float fW = v3Target.x * vZ.x + v3Target.y * vZ.y + v3Target.z * vZ.z;
+
+		fU = floorf(fU / fTexel) * fTexel;
+		fV = floorf(fV / fTexel) * fTexel;
+
+		v3Target.x = vX.x * fU + vY.x * fV + vZ.x * fW;
+		v3Target.y = vX.y * fU + vY.y * fV + vZ.y * fW;
+		v3Target.z = vX.z * fU + vY.z * fV + vZ.z * fW;
+	}
+
+	if (cascadeIndex == 0)
+		++m_dwShadowFrameIndex;
+
+	{
+		static const DWORD s_adwInterval[CSM_NUM_CASCADES] = { 1, 1, 2, 4 };
+		static const DWORD s_adwPhase[CSM_NUM_CASCADES] = { 0, 0, 0, 1 };
+
+		const Vector3& v3Prev = m_v3ShadowCascadeCenter[cascadeIndex];
+		const bool bMoved = (v3Target.x != v3Prev.x) || (v3Target.y != v3Prev.y) || (v3Target.z != v3Prev.z);
+		const bool bDue = ((m_dwShadowFrameIndex % s_adwInterval[cascadeIndex]) == s_adwPhase[cascadeIndex]);
+
+		if (m_bShadowCascadeValid[cascadeIndex] && !bMoved && !bDue)
+		{
+			SHADERMANAGER.SetShadowCullPlanes(nullptr);
+			m_bShadowRenderActive = false;
+			return false;
+		}
+
+		m_v3ShadowCascadeCenter[cascadeIndex] = v3Target;
+		m_bShadowCascadeValid[cascadeIndex] = true;
+	}
+
+	Vector3 v3LightEye;
+	const float fLightDist = SHADOW_LIGHT_OFFSET * 2.0f;
+
+	v3LightEye.x = v3Target.x + SHADOW_SUN_DIR_X * fLightDist;
+	v3LightEye.y = v3Target.y + SHADOW_SUN_DIR_Y * fLightDist;
+	v3LightEye.z = v3Target.z + SHADOW_SUN_DIR_Z * fLightDist;
+
+	Vector3 up(0.0f, 0.0f, 1.0f);
+	MatrixLookAtRH(&m_matLightView, &v3LightEye, &v3Target, &up);
+
+	Matrix matLightProj;
+	MatrixOrthoRH(&matLightProj, mapSize, mapSize, SHADOW_NEAR_PLANE, SHADOW_FAR_PLANE);
+
+	MatrixMultiply(&m_matShadowCascade[cascadeIndex], &m_matLightView, &matLightProj);
+
+	{
+		const Matrix& M = m_matShadowCascade[cascadeIndex];
+
+		float afPlane[4][4] =
+		{
+			{  M._11,  M._21,  M._31,  M._41 + 1.0f },
+			{ -M._11, -M._21, -M._31, -M._41 + 1.0f },
+			{  M._12,  M._22,  M._32,  M._42 + 1.0f },
+			{ -M._12, -M._22, -M._32, -M._42 + 1.0f },
+		};
+
+		for (int i = 0; i < 4; ++i)
+		{
+			float fLen = sqrtf(
+				afPlane[i][0] * afPlane[i][0] +
+				afPlane[i][1] * afPlane[i][1] +
+				afPlane[i][2] * afPlane[i][2]);
+
+			if (fLen > 0.000001f)
+			{
+				afPlane[i][0] /= fLen;
+				afPlane[i][1] /= fLen;
+				afPlane[i][2] /= fLen;
+				afPlane[i][3] /= fLen;
+			}
+		}
+
+		SHADERMANAGER.SetShadowCullPlanes(&afPlane[0][0]);
+	}
+
+	SHADERMANAGER.PushState();
+
+	SHADERMANAGER.SetMatrix(MATRIX_VIEW, &m_matLightView);
+	SHADERMANAGER.SetMatrix(MATRIX_PROJECTION, &matLightProj);
+	SHADERMANAGER.SetLightingEnabled(false);
+	SHADERMANAGER.SetParticleColor(0xFF808080);
+	SHADERMANAGER.SetCharacterShadowPass(true);
+
+	BeginShaderShadowRender();
+
+	SHADERMANAGER.SetShadowTextures(nullptr, nullptr);
+	SHADERMANAGER.SetShadowMidFarTextures(nullptr, nullptr);
 
 	bool bSuccess = true;
 
-	// Backup Device Context
-	if (FAILED(ms_lpd3dDevice->GetRenderTarget(0, &m_lpBackupRenderTargetSurface)))
+	ms_pContext->OMGetRenderTargets(1, &m_lpBackupRenderTargetSurface, &m_lpBackupDepthSurface);
+
+	if (!m_lpBackupRenderTargetSurface)
 	{
 		TraceError("CMapOutdoor::BeginRenderCharacterShadowToTexture : Unable to Save Window Render Target\n");
 		bSuccess = false;
 	}
 
-	if (FAILED(ms_lpd3dDevice->GetDepthStencilSurface(&m_lpBackupDepthSurface)))
-	{
-		TraceError("CMapOutdoor::BeginRenderCharacterShadowToTexture : Unable to Save Window Depth Surface\n");
-		bSuccess = false;
-	}
+	ms_pContext->OMSetRenderTargets(0, nullptr, pDSV);
+	ms_pContext->ClearDepthStencilView(pDSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
 
-	if (FAILED(ms_lpd3dDevice->SetRenderTarget(0, m_lpCharacterShadowMapRenderTargetSurface)))
-	{
-		TraceError("CMapOutdoor::BeginRenderCharacterShadowToTexture : Unable to Set Shadow Map Render Target\n");
-		bSuccess = false;
-	}
+	SHADERMANAGER.SetPipelineState(PSTATE_DEPTHENABLE, TRUE);
+	SHADERMANAGER.SetPipelineState(PSTATE_DEPTHWRITEMASK, TRUE);
+	SHADERMANAGER.SetPipelineState(PSTATE_DEPTHFUNC, COMPARISON_LESSEQUAL);
 
-	if (FAILED(ms_lpd3dDevice->SetDepthStencilSurface(m_lpCharacterShadowMapDepthSurface)))
-	{
-		TraceError("CMapOutdoor::BeginRenderCharacterShadowToTexture : Unable to Set Shadow Map Render Target\n");
-		bSuccess = false;
-	}
+	const float fSlopeScaledBias = 2.0f;
+	DWORD dwSlopeScaledBias;
+	memcpy(&dwSlopeScaledBias, &fSlopeScaledBias, sizeof(DWORD));
+	SHADERMANAGER.SetPipelineState(PSTATE_SLOPESCALEDDEPTHBIAS, dwSlopeScaledBias);
 
-	if (FAILED(ms_lpd3dDevice->Clear(0L, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(0xFF, 0xFF, 0xFF), 1.0f, 0)))
-	{
-		TraceError("CMapOutdoor::BeginRenderCharacterShadowToTexture : Unable to Clear Render Target");
-		bSuccess = false;
-	}
+	UINT numViewports = 1;
+	ms_pContext->RSGetViewports(&numViewports, &m_BackupViewport);
+	ms_pContext->RSSetViewports(1, &m_ShadowMapViewport);
 
-	if (FAILED(ms_lpd3dDevice->GetViewport(&m_BackupViewport)))
-	{
-		TraceError("CMapOutdoor::BeginRenderCharacterShadowToTexture : Unable to Save Window Viewport\n");
-		bSuccess = false;
-	}
-
-	if (FAILED(ms_lpd3dDevice->SetViewport(&m_ShadowMapViewport)))
-	{
-		TraceError("CMapOutdoor::BeginRenderCharacterShadowToTexture : Unable to Set Shadow Map viewport\n");
-		bSuccess = false;
-	}
-
+	m_bShadowRenderActive = true;
 	return bSuccess;
 }
 
 void CMapOutdoor::EndRenderCharacterShadowToTexture()
 {
-	ms_lpd3dDevice->SetViewport(&m_BackupViewport);
+	if (!m_bShadowRenderActive)
+		return;
 
-	ms_lpd3dDevice->SetRenderTarget(0, m_lpBackupRenderTargetSurface);
-	ms_lpd3dDevice->SetDepthStencilSurface(m_lpBackupDepthSurface);
+	if (!ms_pContext)
+	{
+		m_bShadowRenderActive = false;
+		return;
+	}
+
+	m_bShadowRenderActive = false;
+
+	SHADERMANAGER.SetShadowCullPlanes(nullptr);
+
+	EndShaderShadowRender();
+
+	ms_pContext->RSSetViewports(1, &m_BackupViewport);
+	ms_pContext->OMSetRenderTargets(1, &m_lpBackupRenderTargetSurface, m_lpBackupDepthSurface);
 
 	SAFE_RELEASE(m_lpBackupRenderTargetSurface);
 	SAFE_RELEASE(m_lpBackupDepthSurface);
 
-	STATEMANAGER.RestoreTransform(D3DTS_VIEW);
-	STATEMANAGER.RestoreTransform(D3DTS_PROJECTION);
-
-	// Restore Device Context
-	STATEMANAGER.SetRenderState(D3DRS_LIGHTING, dwLightEnable);
-	STATEMANAGER.RestoreRenderState(D3DRS_TEXTUREFACTOR);
+	SHADERMANAGER.PopState();
 }
 
+void CMapOutdoor::RenderObjectShadowsToTexture()
+{
+	SHADERMANAGER.BeginShadow();
+
+	for (int i = 0; i < AROUND_AREA_NUM; ++i)
+	{
+		CArea* pArea = m_pArea[i];
+		if (pArea)
+		{
+			pArea->RenderToShadowMapVTF();
+			pArea->RenderDungeonShadowVTFBatched();
+		}
+	}
+}
+
+void CMapOutdoor::RenderTreeShadowsToTexture()
+{
+	CSpeedTreeForestDX11& rkForest = CSpeedTreeForestDX11::Instance();
+	rkForest.RenderToShadowMap();
+}
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

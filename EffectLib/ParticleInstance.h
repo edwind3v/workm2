@@ -25,18 +25,18 @@ class CParticleInstance
 		BOOL Update(float fElapsedTime, float fAngle);
 
 	protected:
-		D3DXVECTOR3			m_v3StartPosition;
+		Vector3			m_v3StartPosition;
 
-		D3DXVECTOR3			m_v3Position;
-		D3DXVECTOR3			m_v3LastPosition;
-		D3DXVECTOR3			m_v3Velocity;
+		Vector3			m_v3Position;
+		Vector3			m_v3LastPosition;
+		Vector3			m_v3Velocity;
 
-		D3DXVECTOR2			m_v2HalfSize;
-		D3DXVECTOR2			m_v2Scale;
+		Vector2			m_v2HalfSize;
+		Vector2			m_v2Scale;
 
 		float				m_fRotation;
 #ifdef WORLD_EDITOR
-		D3DXCOLOR			m_Color;
+		Color			m_Color;
 #else
 		DWORDCOLOR			m_dcColor;
 #endif
@@ -60,11 +60,11 @@ class CParticleInstance
 		static CParticleInstance* New();
 		static void DestroySystem();
 
-		void Transform(const D3DXMATRIX * c_matLocal= nullptr, bool setColorState = true);
-		void Transform(const D3DXMATRIX * c_matLocal, const float c_fZRotation, bool setColorState = true);
-		DWORD GetColor() const;
+		void Transform(const Matrix * c_matLocal=NULL);
+		void Transform(const Matrix * c_matLocal, const float c_fZRotation);
 
 		TPTVertex * GetParticleMeshPointer();
+		DWORD GetColor() const;
 
 		void DeleteThis();
 
@@ -72,8 +72,8 @@ class CParticleInstance
 
 	protected:
 		void __Initialize();
-		TPTVertex			m_ParticleMesh[4];
+		TPTVertex		m_ParticleMesh[4];
 	public:
 		static CDynamicPool<CParticleInstance> ms_kPool;
 };
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

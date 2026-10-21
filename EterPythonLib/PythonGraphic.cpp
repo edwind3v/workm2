@@ -1,159 +1,181 @@
 #include "StdAfx.h"
-#include "../eterLib/StateManager.h"
+#include "../eterLib/ShaderManager.h"
 #include "../eterLib/JpegFile.h"
+#include "../eterLib/ShaderInit.h"
+#include "../eterLib/GrpDevice.h"
 #include "PythonGraphic.h"
 
 bool g_isScreenShotKey = false;
 
-void CPythonGraphic::Destroy() const
+void CPythonGraphic::Destroy()
 {
 }
 
-LPDIRECT3D9EX CPythonGraphic::GetD3D() const
+IDXGIFactory* CPythonGraphic::GetDXGIFactory()
 {
-	return ms_lpd3d;
+	return CGraphicDevice::Instance().GetDXGIFactory();
 }
 
-float CPythonGraphic::GetOrthoDepth() const
+float CPythonGraphic::GetOrthoDepth()
 {
 	return m_fOrthoDepth;
 }
 
-void CPythonGraphic::SetInterfaceRenderState() const
+void CPythonGraphic::SetInterfaceRenderState()
 {
-	STATEMANAGER.SetTransform(D3DTS_PROJECTION, &ms_matIdentity);
- 	STATEMANAGER.SetTransform(D3DTS_VIEW, &ms_matIdentity);
-	STATEMANAGER.SetTransform(D3DTS_WORLD, &ms_matIdentity);
+	SHADERMANAGER.SetMatrix(MATRIX_PROJECTION, &ms_matIdentity);
+ 	SHADERMANAGER.SetMatrix(MATRIX_VIEW, &ms_matIdentity);
+	SHADERMANAGER.SetMatrix(MATRIX_WORLD, &ms_matIdentity);
 
-	STATEMANAGER.SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_NONE);
-	STATEMANAGER.SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_NONE);
-	STATEMANAGER.SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+	SHADERMANAGER.SetSamplerState(0, SAMPLER_MINFILTER, FILTER_POINT);
+	SHADERMANAGER.SetSamplerState(0, SAMPLER_MAGFILTER, FILTER_POINT);
+	SHADERMANAGER.SetSamplerState(0, SAMPLER_MIPFILTER, FILTER_NONE);
 
-	STATEMANAGER.SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-	STATEMANAGER.SetRenderState(D3DRS_SRCBLEND,	D3DBLEND_SRCALPHA);
-	STATEMANAGER.SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+	SHADERMANAGER.SetPipelineState(PSTATE_DEPTHENABLE, FALSE);
+	SHADERMANAGER.SetPipelineState(PSTATE_DEPTHWRITEMASK, FALSE);
+
+	SHADERMANAGER.SetPipelineState(PSTATE_CULLMODE, CULL_NONE);
+
+	SHADERMANAGER.SetPipelineState(PSTATE_FILLMODE, FILL_SOLID);
+
+	SHADERMANAGER.SetPipelineState(PSTATE_BLENDENABLE, TRUE);
+	SHADERMANAGER.SetPipelineState(PSTATE_SRCBLEND,	BLEND_SRCALPHA);
+	SHADERMANAGER.SetPipelineState(PSTATE_DESTBLEND, BLEND_INVSRCALPHA);
 
 	CPythonGraphic::Instance().SetBlendOperation();
 	CPythonGraphic::Instance().SetOrtho2D(ms_iWidth, ms_iHeight, GetOrthoDepth());
 
-	STATEMANAGER.SetRenderState(D3DRS_LIGHTING, FALSE);
-	STATEMANAGER.SetRenderState(D3DRS_MULTISAMPLEANTIALIAS, FALSE);
+	SHADERMANAGER.SetLightingEnabled(false);
+
+	if (SHADERMANAGER.IsInitialized())
+	{
+		SHADERMANAGER.SetDiffuseColor(1.0f, 1.0f, 1.0f, 1.0f);
+		SHADERMANAGER.SetParticleColor(0xFFFFFFFF);
+		SHADERMANAGER.SetAlphaTest(false, 0.0f);  // Disable alpha test for UI
+	}
 }
 
-void CPythonGraphic::SetGameRenderState() const
+void CPythonGraphic::SetGameRenderState()
 {
-	STATEMANAGER.SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
-	STATEMANAGER.SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
-	STATEMANAGER.SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_LINEAR);
+	SHADERMANAGER.SetSamplerState(0, SAMPLER_MINFILTER, FILTER_LINEAR);
+	SHADERMANAGER.SetSamplerState(0, SAMPLER_MAGFILTER, FILTER_LINEAR);
+	SHADERMANAGER.SetSamplerState(0, SAMPLER_MIPFILTER, FILTER_LINEAR);
 
-	STATEMANAGER.SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
-	STATEMANAGER.SetRenderState(D3DRS_LIGHTING, TRUE);
-	STATEMANAGER.SetRenderState(D3DRS_MULTISAMPLEANTIALIAS, TRUE);
+	SHADERMANAGER.SetPipelineState(PSTATE_DEPTHENABLE, TRUE);
+	SHADERMANAGER.SetPipelineState(PSTATE_DEPTHWRITEMASK, TRUE);
+
+	SHADERMANAGER.SetPipelineState(PSTATE_CULLMODE, CULL_FRONT);
+
+	SHADERMANAGER.SetPipelineState(PSTATE_BLENDENABLE, FALSE);
+	SHADERMANAGER.SetLightingEnabled(true);
+
+	if (SHADERMANAGER.IsInitialized())
+	{
+		SHADERMANAGER.SetDiffuseColor(1.0f, 1.0f, 1.0f, 1.0f);
+		SHADERMANAGER.SetParticleColor(0xFFFFFFFF);
+	}
 }
 
-void CPythonGraphic::SetCursorPosition(int x, int y) const
+void CPythonGraphic::SetCursorPosition(int x, int y)
 {
 	CScreen::SetCursorPosition(x, y, ms_iWidth, ms_iHeight);
 }
 
-void CPythonGraphic::SetOmniLight() const
+void CPythonGraphic::SetOmniLight()
 {
     // Set up a material
-    D3DMATERIAL9 Material;
-	Material.Ambient = D3DXCOLOR(0.3f, 0.3f, 0.3f, 1.0f);
-	Material.Diffuse = D3DXCOLOR(1.0f, 1.0f, 1.0f, 1.0f);
-	Material.Emissive = D3DXCOLOR(0.1f, 0.1f, 0.1f, 1.0f);
-    STATEMANAGER.SetMaterial(&Material);
+    TGraphicMaterial Material;
+	Material.Ambient = Color(0.3f, 0.3f, 0.3f, 1.0f);
+	Material.Diffuse = Color(1.0f, 1.0f, 1.0f, 1.0f);
+	Material.Emissive = Color(0.1f, 0.1f, 0.1f, 1.0f);
+	Material.Specular = Color(1.0f, 1.0f, 1.0f, 1.0f);
+	Material.Power = 20.0f;
+    SHADERMANAGER.SetMaterial(&Material);
 
-	D3DLIGHT9 Light;
-	Light.Type = D3DLIGHT_SPOT;
-    Light.Position = D3DXVECTOR3(50.0f, 150.0f, 350.0f);
-    Light.Direction = D3DXVECTOR3(-0.15f, -0.3f, -0.9f);
-    Light.Theta = D3DXToRadian(30.0f);
-    Light.Phi = D3DXToRadian(45.0f);
+	float fDirX = -0.10f, fDirY = -0.40f, fDirZ = -0.85f;
+	float fLR = 1.00f, fLG = 0.89f, fLB = 0.75f, fAmb = 1.22f, fInt = 3.35f;
+
+	TLight Light;
+	Light.Type = LIGHT_DIRECTIONAL;
+    Light.Position = Vector3(50.0f, 150.0f, 350.0f);
+    Light.Direction = Vector3(fDirX, fDirY, fDirZ);
+    Light.Theta = ToRadian(30.0f);
+    Light.Phi = ToRadian(45.0f);
     Light.Falloff = 1.0f;
     Light.Attenuation0 = 0.0f;
     Light.Attenuation1 = 0.005f;
     Light.Attenuation2 = 0.0f;
-    Light.Diffuse.r = 1.0f;
-    Light.Diffuse.g = 1.0f;
-    Light.Diffuse.b = 1.0f;
+    Light.Diffuse.r = fLR * fInt;
+    Light.Diffuse.g = fLG * fInt;
+    Light.Diffuse.b = fLB * fInt;
 	Light.Diffuse.a = 1.0f;
 	Light.Ambient.r = 1.0f;
 	Light.Ambient.g = 1.0f;
 	Light.Ambient.b = 1.0f;
 	Light.Ambient.a = 1.0f;
     Light.Range = 500.0f;
-	ms_lpd3dDevice->SetLight(0, &Light);
-	ms_lpd3dDevice->LightEnable(0, TRUE);
+	SHADERMANAGER.SetGlobalAmbient(fAmb, fAmb, fAmb, 1.0f);
+	SHADERMANAGER.SetLight(0, &Light);
+	SHADERMANAGER.LightEnable(0, TRUE);
 
-	Light.Type = D3DLIGHT_POINT;
-	Light.Position = D3DXVECTOR3(0.0f, 200.0f, 200.0f);
+	Light.Type = LIGHT_POINT;
+	Light.Position = Vector3(0.0f, 200.0f, 200.0f);
 	Light.Attenuation0 = 0.1f;
 	Light.Attenuation1 = 0.01f;
 	Light.Attenuation2 = 0.0f;
-	ms_lpd3dDevice->SetLight(1, &Light);
-	ms_lpd3dDevice->LightEnable(1, TRUE);
+	SHADERMANAGER.SetLight(1, &Light);
+	SHADERMANAGER.LightEnable(1, TRUE);
 }
 
 void CPythonGraphic::SetViewport(float fx, float fy, float fWidth, float fHeight)
 {
-	ms_lpd3dDevice->GetViewport(&m_backupViewport);
+	UINT numViewports = 1;
+	ms_pContext->RSGetViewports(&numViewports, &m_backupViewport);
 
-	D3DVIEWPORT9 ViewPort;
-	ViewPort.X = fx;
-	ViewPort.Y = fy;
+	D3D11_VIEWPORT ViewPort;
+	ViewPort.TopLeftX = fx;
+	ViewPort.TopLeftY = fy;
 	ViewPort.Width = fWidth;
 	ViewPort.Height = fHeight;
-	ViewPort.MinZ = 0.0f;
-	ViewPort.MaxZ = 1.0f;
-	if (FAILED(
-		ms_lpd3dDevice->SetViewport(&ViewPort)
-	))
-	{
-		Tracef("CPythonGraphic::SetViewport(%d, %d, %d, %d) - Error",
-			ViewPort.X, ViewPort.Y,
-			ViewPort.Width, ViewPort.Height
-		);
-	}
+	ViewPort.MinDepth = 0.0f;
+	ViewPort.MaxDepth = 1.0f;
+	ms_pContext->RSSetViewports(1, &ViewPort);
 }
 
-void CPythonGraphic::RestoreViewport() const
+void CPythonGraphic::RestoreViewport()
 {
-	ms_lpd3dDevice->SetViewport(&m_backupViewport);
+	ms_pContext->RSSetViewports(1, &m_backupViewport);
 }
 
-void CPythonGraphic::SetGamma(float fGammaFactor) const
+void CPythonGraphic::SetGamma(float fGammaFactor)
 {
-	D3DCAPS9		d3dCaps;
-	D3DGAMMARAMP	NewRamp;
-	int				ui, val;
-
-	ms_lpd3dDevice->GetDeviceCaps(&d3dCaps);
-
-	if (D3DCAPS2_FULLSCREENGAMMA != (d3dCaps.Caps2 & D3DCAPS2_FULLSCREENGAMMA))
+	IDXGIOutput* pOutput = nullptr;
+	IDXGISwapChain* pSwapChain = CGraphicDevice::Instance().GetSwapChain();
+	if (!pSwapChain)
 		return;
 
-	for (int i = 0; i < 256; ++i)
+	if (FAILED(pSwapChain->GetContainingOutput(&pOutput)) || !pOutput)
+		return;
+
+	DXGI_GAMMA_CONTROL gammaControl;
+	gammaControl.Scale.Red = fGammaFactor;
+	gammaControl.Scale.Green = fGammaFactor;
+	gammaControl.Scale.Blue = fGammaFactor;
+	gammaControl.Offset.Red = 0.0f;
+	gammaControl.Offset.Green = 0.0f;
+	gammaControl.Offset.Blue = 0.0f;
+
+	// Build gamma curve
+	for (int i = 0; i < 1025; ++i)
 	{
-		val	= (int) (i * fGammaFactor * 255.0f);
-		ui = 0;
-
-		if (val > 32767)
-		{
-			val = val - 32767;
-			ui = 1;
-		}
-
-		if (val > 32767)
-			val = 32767;
-
-		NewRamp.red[i] = (WORD) (val | (32768 * ui));
-		NewRamp.green[i] = (WORD) (val | (32768 * ui));
-		NewRamp.blue[i] = (WORD) (val | (32768 * ui));
+		float value = static_cast<float>(i) / 1024.0f;
+		gammaControl.GammaCurve[i].Red = value;
+		gammaControl.GammaCurve[i].Green = value;
+		gammaControl.GammaCurve[i].Blue = value;
 	}
 
-	ms_lpd3dDevice->SetGammaRamp(0, D3DSGR_NO_CALIBRATION, &NewRamp);
+	pOutput->SetGammaControl(&gammaControl);
+	pOutput->Release();
 }
 
 void GenScreenShotTag(const char* src, DWORD crc32, char* leaf, size_t leafLen)
@@ -166,157 +188,126 @@ void GenScreenShotTag(const char* src, DWORD crc32, char* leaf, size_t leafLen)
 	_snprintf(leaf, leafLen, "YMIR_METIN2:%s:0x%.8x", p, crc32);
 }
 
-bool CPythonGraphic::SaveJPEG(const char * pszFileName, LPBYTE pbyBuffer, UINT uWidth, UINT uHeight) const
+bool CPythonGraphic::SaveJPEG(const char * pszFileName, LPBYTE pbyBuffer, UINT uWidth, UINT uHeight)
 {
 	return jpeg_save(pbyBuffer, uWidth, uHeight, 85, pszFileName) != 0;
 }
 
-bool CPythonGraphic::SaveScreenShot(const char * c_pszFileName) const
+bool CPythonGraphic::SaveScreenShot(const char * c_pszFileName)
 {
 	HRESULT hr;
-	LPDIRECT3DSURFACE9 lpSurface = nullptr;
-	LPDIRECT3DSURFACE9 lpSystemSurface = nullptr;
-	D3DSURFACE_DESC stSurfaceDesc;
 
-	if (FAILED(hr = ms_lpd3dDevice->GetRenderTarget(0, &lpSurface)))
+	IDXGISwapChain* pSwapChain = CGraphicDevice::Instance().GetSwapChain();
+	if (!pSwapChain)
 	{
-		TraceError("Failed to get render target (0x%08x)", hr);
+		TraceError("Failed to get swap chain");
 		return false;
 	}
 
-	if (FAILED(hr = lpSurface->GetDesc(&stSurfaceDesc)))
+	ID3D11Texture2D* pBackBuffer = nullptr;
+	if (FAILED(hr = pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&pBackBuffer)))
 	{
-		TraceError("Failed to get surface desc (0x%08x)", hr);
-		SAFE_RELEASE(lpSurface);
+		TraceError("Failed to get back buffer (0x%08x)", hr);
 		return false;
 	}
 
-	const UINT uWidth = stSurfaceDesc.Width;
-	const UINT uHeight = stSurfaceDesc.Height;
+	D3D11_TEXTURE2D_DESC backBufferDesc;
+	pBackBuffer->GetDesc(&backBufferDesc);
 
-	switch( stSurfaceDesc.Format ) {
-	case D3DFMT_R8G8B8 :
-	case D3DFMT_A8R8G8B8 :
-	case D3DFMT_X8R8G8B8 :
-	case D3DFMT_R5G6B5 :
-	case D3DFMT_X1R5G5B5 :
-	case D3DFMT_A1R5G5B5 :
-		break;
-	case D3DFMT_A4R4G4B4 :
-	case D3DFMT_R3G3B2 :
-	case D3DFMT_A8R3G3B2 :
-	case D3DFMT_X4R4G4B4 :
-	case D3DFMT_A2B10G10R10 :
-		TraceError("Unsupported BackBuffer Format(%d). Please contact Metin 2 Administrator.", stSurfaceDesc.Format);
-		SAFE_RELEASE(lpSurface);
+	UINT uWidth = backBufferDesc.Width;
+	UINT uHeight = backBufferDesc.Height;
+
+	// Create staging texture for CPU read
+	D3D11_TEXTURE2D_DESC stagingDesc = backBufferDesc;
+	stagingDesc.Usage = D3D11_USAGE_STAGING;
+	stagingDesc.BindFlags = 0;
+	stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+	stagingDesc.MiscFlags = 0;
+
+	ID3D11Texture2D* pStagingTexture = nullptr;
+	if (FAILED(hr = ms_pDevice->CreateTexture2D(&stagingDesc, nullptr, &pStagingTexture)))
+	{
+		TraceError("Failed to create staging texture (0x%08x)", hr);
+		pBackBuffer->Release();
 		return false;
 	}
 
-	if (FAILED(hr = ms_lpd3dDevice->CreateOffscreenPlainSurface(uWidth, uHeight, stSurfaceDesc.Format, D3DPOOL_SYSTEMMEM, &lpSystemSurface, NULL)))
-	{
-		TraceError("Failed to create system memory surface (0x%08x)", hr);
-		SAFE_RELEASE(lpSurface);
-		return false;
-	}
+	// Copy back buffer to staging texture
+	ms_pContext->CopyResource(pStagingTexture, pBackBuffer);
+	pBackBuffer->Release();
 
-	hr = D3DXLoadSurfaceFromSurface(lpSystemSurface, NULL, NULL, lpSurface, NULL, NULL, D3DX_FILTER_NONE, 0);
-	if (FAILED(hr))
+	// Map staging texture
+	D3D11_MAPPED_SUBRESOURCE mappedResource;
+	if (FAILED(hr = ms_pContext->Map(pStagingTexture, 0, D3D11_MAP_READ, 0, &mappedResource)))
 	{
-		TraceError("Failed to copy render target data with D3DXLoadSurfaceFromSurface (0x%08x)", hr);
-		SAFE_RELEASE(lpSurface);
-		SAFE_RELEASE(lpSystemSurface);
-		return false;
-	}
-
-	SAFE_RELEASE(lpSurface);
-
-	D3DLOCKED_RECT lockRect;
-	if (FAILED(hr = lpSystemSurface->LockRect(&lockRect, nullptr, D3DLOCK_NO_DIRTY_UPDATE | D3DLOCK_READONLY | D3DLOCK_NOSYSLOCK)))
-	{
-		TraceError("Failed to lock the surface (0x%08x)", hr);
-		SAFE_RELEASE(lpSystemSurface);
+		TraceError("Failed to map staging texture (0x%08x)", hr);
+		pStagingTexture->Release();
 		return false;
 	}
 
 	BYTE* pbyBuffer = new BYTE[uWidth * uHeight * 3];
-	if (pbyBuffer == nullptr) {
-		lpSystemSurface->UnlockRect();
-		lpSystemSurface->Release();
-		lpSystemSurface = nullptr;
+	if (pbyBuffer == NULL)
+	{
+		ms_pContext->Unmap(pStagingTexture, 0);
+		pStagingTexture->Release();
 		TraceError("Failed to allocate screenshot buffer");
 		return false;
 	}
-	BYTE* pbySource = (BYTE*) lockRect.pBits;
-	BYTE* pbyDestination = (BYTE*) pbyBuffer;
-	for(UINT y = 0; y < uHeight; ++y) {
-		BYTE *pRow = pbySource;
 
-		switch( stSurfaceDesc.Format ) {
-		case D3DFMT_R8G8B8 :
-			for(UINT x = 0; x < uWidth; ++x) {
-				*pbyDestination++ = pRow[2];	// Blue
+	BYTE* pbySource = (BYTE*)mappedResource.pData;
+	BYTE* pbyDestination = pbyBuffer;
+
+	// Convert based on format (most common DX11 formats)
+	for (UINT y = 0; y < uHeight; ++y)
+	{
+		BYTE* pRow = pbySource;
+
+		switch (backBufferDesc.Format)
+		{
+		case DXGI_FORMAT_R8G8B8A8_UNORM:
+		case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+			for (UINT x = 0; x < uWidth; ++x)
+			{
+				*pbyDestination++ = pRow[0];	// Red -> Blue
 				*pbyDestination++ = pRow[1];	// Green
-				*pbyDestination++ = pRow[0];	// Red
-				pRow += 3;
+				*pbyDestination++ = pRow[2];	// Blue -> Red
+				pRow += 4;
 			}
 			break;
-		case D3DFMT_A8R8G8B8 :
-		case D3DFMT_X8R8G8B8 :
-			for(UINT x = 0; x < uWidth; ++x) {
+		case DXGI_FORMAT_B8G8R8A8_UNORM:
+		case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+		case DXGI_FORMAT_B8G8R8X8_UNORM:
+		case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+			for (UINT x = 0; x < uWidth; ++x)
+			{
 				*pbyDestination++ = pRow[2];	// Blue
 				*pbyDestination++ = pRow[1];	// Green
 				*pbyDestination++ = pRow[0];	// Red
 				pRow += 4;
 			}
 			break;
-		case D3DFMT_R5G6B5 :
+		default:
+			// Unsupported format - fill with black
+			for (UINT x = 0; x < uWidth; ++x)
 			{
-				for(UINT x = 0; x < uWidth; ++x) {
-					const UINT uColor		= *((UINT *) pRow);
-					BYTE byBlue		= (uColor >> 11) & 0x1F;
-					BYTE byGreen	= (uColor >> 5) & 0x3F;
-					BYTE byRed		= uColor & 0x1F;
-
-					*pbyDestination++ = (byBlue << 3)	| (byBlue >> 2);		// Blue
-					*pbyDestination++ = (byGreen << 2)	| (byGreen >> 2);		// Green
-					*pbyDestination++ = (byRed << 3)	| (byRed >> 2);			// Red
-					pRow += 2;
-				}
-			}
-			break;
-		case D3DFMT_X1R5G5B5 :
-		case D3DFMT_A1R5G5B5 :
-			{
-				for(UINT x = 0; x < uWidth; ++x) {
-					const UINT uColor		= *((UINT *) pRow);
-					BYTE byBlue		= (uColor >> 10) & 0x1F;
-					BYTE byGreen	= (uColor >> 5) & 0x1F;
-					BYTE byRed		= uColor & 0x1F;
-
-					*pbyDestination++ = (byBlue << 3)	| (byBlue >> 2);		// Blue
-					*pbyDestination++ = (byGreen << 3)	| (byGreen >> 2);		// Green
-					*pbyDestination++ = (byRed << 3)	| (byRed >> 2);			// Red
-					pRow += 2;
-				}
+				*pbyDestination++ = 0;
+				*pbyDestination++ = 0;
+				*pbyDestination++ = 0;
 			}
 			break;
 		}
 
-		// increase by one line
-		pbySource += lockRect.Pitch;
+		pbySource += mappedResource.RowPitch;
 	}
 
-	if(lpSystemSurface) {
-		lpSystemSurface->UnlockRect();
-		lpSystemSurface->Release();
-		lpSystemSurface = nullptr;
-	}
+	ms_pContext->Unmap(pStagingTexture, 0);
+	pStagingTexture->Release();
 
-	const bool bSaved = SaveJPEG(c_pszFileName, pbyBuffer, uWidth, uHeight);
+	bool bSaved = SaveJPEG(c_pszFileName, (LPBYTE)pbyBuffer, uWidth, uHeight);
 
 	if(pbyBuffer) {
 		delete [] pbyBuffer;
-		pbyBuffer = nullptr;
+		pbyBuffer = NULL;
 	}
 
 	if(bSaved == false) {
@@ -330,12 +321,12 @@ bool CPythonGraphic::SaveScreenShot(const char * c_pszFileName) const
 		if (srcFilePtr)
 		{
 			fseek(srcFilePtr, 0, SEEK_END);
-			const size_t fileSize = ftell(srcFilePtr);
+			size_t fileSize = ftell(srcFilePtr);
 			fseek(srcFilePtr, 0, SEEK_SET);
 
 			char head[21];
-			const size_t tailSize = fileSize - sizeof(head);
-			const auto tail = (char*)malloc(tailSize);
+			size_t tailSize = fileSize - sizeof(head);
+			char* tail = (char*)malloc(tailSize);
 
 			fread(head, sizeof(head), 1, srcFilePtr);
 			fread(tail, tailSize, 1, srcFilePtr);
@@ -344,7 +335,7 @@ bool CPythonGraphic::SaveScreenShot(const char * c_pszFileName) const
 			char imgDesc[64];
 			GenScreenShotTag(c_pszFileName, GetCRC32(tail, tailSize), imgDesc, sizeof(imgDesc));
 
-			int imgDescLen = strlen(imgDesc) + 1;
+			int imgDescLen = (int)(strlen(imgDesc) + 1);
 
 			unsigned char exifHeader[] = {
 				0xe1,
@@ -370,7 +361,7 @@ bool CPythonGraphic::SaveScreenShot(const char * c_pszFileName) const
 				0x1,
 				0x2,
 				0x0,
-				imgDescLen, // textLen[0],
+				(unsigned char)imgDescLen,
 				0, // textLen[1],
 				0, // textLen[2],
 				0, // textLen[3],
@@ -384,7 +375,7 @@ bool CPythonGraphic::SaveScreenShot(const char * c_pszFileName) const
 				0x0,
 			};
 
-			exifHeader[2] = sizeof(exifHeader) + imgDescLen;
+			exifHeader[2] = (unsigned char)(sizeof(exifHeader) + imgDescLen);
 
 			FILE* dstFilePtr = fopen(c_pszFileName, "wb");
 			//FILE* dstFilePtr = fopen("temp.jpg", "wb");
@@ -411,10 +402,8 @@ void CPythonGraphic::PushState()
 
 	curState.matProj = ms_matProj;
 	curState.matView = ms_matView;
-	//STATEMANAGER.SaveTransform(D3DTS_WORLD, &m_SaveWorldMatrix);
 
 	m_stateStack.push(curState);
-	//CCamera::Instance().PushParams();
 }
 
 void CPythonGraphic::PopState()
@@ -425,27 +414,25 @@ void CPythonGraphic::PopState()
 		return;
 	}
 
-	const TState & rState = m_stateStack.top();
+	TState & rState = m_stateStack.top();
 
-	//STATEMANAGER.RestoreTransform(D3DTS_WORLD);
 	ms_matProj = rState.matProj;
 	ms_matView = rState.matView;
 
 	UpdatePipeLineMatrix();
 
 	m_stateStack.pop();
-	//CCamera::Instance().PopParams();
 }
 
-void CPythonGraphic::RenderImage(CGraphicImageInstance* pImageInstance, float x, float y) const
+void CPythonGraphic::RenderImage(CGraphicImageInstance* pImageInstance, float x, float y)
 {
-	assert(pImageInstance != nullptr);
+	assert(pImageInstance != NULL);
 
 	//SetColorRenderState();
 	const CGraphicTexture * c_pTexture = pImageInstance->GetTexturePointer();
 
-	const float width = (float) pImageInstance->GetWidth();
-	const float height = (float) pImageInstance->GetHeight();
+	float width = (float) pImageInstance->GetWidth();
+	float height = (float) pImageInstance->GetHeight();
 
 	c_pTexture->SetTextureStage(0);
 
@@ -460,30 +447,30 @@ void CPythonGraphic::RenderImage(CGraphicImageInstance* pImageInstance, float x,
 					 (height + 0.5f) / height);
 }
 
-void CPythonGraphic::RenderAlphaImage(CGraphicImageInstance* pImageInstance, float x, float y, float aLeft, float aRight) const
+void CPythonGraphic::RenderAlphaImage(CGraphicImageInstance* pImageInstance, float x, float y, float aLeft, float aRight)
 {
-	assert(pImageInstance != nullptr);
+	assert(pImageInstance != NULL);
 
-	const auto DiffuseColor1 = D3DXCOLOR(1.0f, 1.0f, 1.0f, aLeft);
-	const auto DiffuseColor2 = D3DXCOLOR(1.0f, 1.0f, 1.0f, aRight);
+	Color DiffuseColor1 = Color(1.0f, 1.0f, 1.0f, aLeft);
+	Color DiffuseColor2 = Color(1.0f, 1.0f, 1.0f, aRight);
 
 	const CGraphicTexture * c_pTexture = pImageInstance->GetTexturePointer();
 
-	const float width = (float) pImageInstance->GetWidth();
-	const float height = (float) pImageInstance->GetHeight();
+	float width = (float) pImageInstance->GetWidth();
+	float height = (float) pImageInstance->GetHeight();
 
 	c_pTexture->SetTextureStage(0);
 
-	const float sx = x;
-	const float sy = y;
-	const float ex = x + width;
-	const float ey = y + height;
-	const float z = 0.0f;
+	float sx = x;
+	float sy = y;
+	float ex = x + width;
+	float ey = y + height;
+	float z = 0.0f;
 
-	const float su = 0.0f;
-	const float sv = 0.0f;
-	const float eu = 1.0f;
-	const float ev = 1.0f;
+	float su = 0.0f;
+	float sv = 0.0f;
+	float eu = 1.0f;
+	float ev = 1.0f;
 
 	TPDTVertex vertices[4];
 	vertices[0].position = TPosition(sx, sy, z);
@@ -502,64 +489,62 @@ void CPythonGraphic::RenderAlphaImage(CGraphicImageInstance* pImageInstance, flo
 	vertices[3].diffuse = DiffuseColor2;
 	vertices[3].texCoord = TTextureCoordinate(eu, ev);
 
-	STATEMANAGER.SetFVF(ms_pntVS);
-	// 2004.11.18.myevan.DrawIndexPrimitiveUP -> DynamicVertexBuffer
+	SHADERMANAGER.SetInputLayout(INPUT_LAYOUT_PDT);
 	CGraphicBase::SetDefaultIndexBuffer(DEFAULT_IB_FILL_RECT);
 	if (CGraphicBase::SetPDTStream(vertices, 4))
-		STATEMANAGER.DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 4, 0, 2, 0);
+		SHADERMANAGER.DrawIndexed(TOPOLOGY_TRIANGLELIST, 0, 4, 0, 2);
 }
 
-void CPythonGraphic::RenderCoolTimeBox(float fxCenter, float fyCenter, float fRadius, float fTime) const
+void CPythonGraphic::RenderCoolTimeBox(float fxCenter, float fyCenter, float fRadius, float fTime)
 {
 	if (fTime >= 1.0f)
 		return;
 
 	fTime = max(0.0f, fTime);
 
-	static auto color = D3DXCOLOR(0.0f, 0.0f, 0.0f, 0.5f);
-	static D3DXVECTOR2 s_v2BoxPos[8] =
+	static Color color = Color(0.0f, 0.0f, 0.0f, 0.5f);
+	static Vector2 s_v2BoxPos[8] =
 	{
-		D3DXVECTOR2( -1.0f, -1.0f ),
-		D3DXVECTOR2( -1.0f,  0.0f ),
-		D3DXVECTOR2( -1.0f, +1.0f ),
-		D3DXVECTOR2(  0.0f, +1.0f ),
-		D3DXVECTOR2( +1.0f, +1.0f ),
-		D3DXVECTOR2( +1.0f,  0.0f ),
-		D3DXVECTOR2( +1.0f, -1.0f ),
-		D3DXVECTOR2(  0.0f, -1.0f ),
+		Vector2( -1.0f, -1.0f ),
+		Vector2( -1.0f,  0.0f ),
+		Vector2( -1.0f, +1.0f ),
+		Vector2(  0.0f, +1.0f ),
+		Vector2( +1.0f, +1.0f ),
+		Vector2( +1.0f,  0.0f ),
+		Vector2( +1.0f, -1.0f ),
+		Vector2(  0.0f, -1.0f ),
 	};
 
 	int iTriCount = int(8 - 8.0f * fTime);
-	const float fLastPercentage = (8 - 8.0f * fTime) - iTriCount;
+	float fLastPercentage = (8 - 8.0f * fTime) - iTriCount;
 
-	std::vector<TPDTVertex> vertices;
+
+	// First, collect edge vertices (not including center)
+	std::vector<TPDTVertex> edgeVerts;
 	TPDTVertex vertex;
-	vertex.position.x = fxCenter;
-	vertex.position.y = fyCenter;
 	vertex.position.z = 0.0f;
 	vertex.diffuse = color;
 	vertex.texCoord.x = 0.0f;
 	vertex.texCoord.y = 0.0f;
-	vertices.push_back(vertex);
+
+	// First edge vertex (top)
 	vertex.position.x = fxCenter;
 	vertex.position.y = fyCenter - fRadius;
-	vertex.position.z = 0.0f;
-	vertex.diffuse = color;
-	vertex.texCoord.x = 0.0f;
-	vertex.texCoord.y = 0.0f;
-	vertices.push_back(vertex);
+	edgeVerts.push_back(vertex);
 
+	// Box corner vertices
 	for (int j = 0; j < iTriCount; ++j)
 	{
 		vertex.position.x = fxCenter + s_v2BoxPos[j].x * fRadius;
 		vertex.position.y = fyCenter + s_v2BoxPos[j].y * fRadius;
-		vertices.push_back(vertex);
+		edgeVerts.push_back(vertex);
 	}
 
+	// Partial last vertex for smooth animation
 	if (fLastPercentage > 0.0f)
 	{
-		D3DXVECTOR2 * pv2Pos;
-		D3DXVECTOR2 * pv2LastPos;
+		Vector2 * pv2Pos;
+		Vector2 * pv2LastPos;
 
 		assert((iTriCount-1+8)%8 >= 0 && (iTriCount-1+8)%8 < 8);
 		assert((iTriCount+8)%8 >= 0 && (iTriCount+8)%8 < 8);
@@ -568,36 +553,47 @@ void CPythonGraphic::RenderCoolTimeBox(float fxCenter, float fyCenter, float fRa
 
 		vertex.position.x = fxCenter + ((pv2Pos->x-pv2LastPos->x) * fLastPercentage + pv2LastPos->x) * fRadius;
 		vertex.position.y = fyCenter + ((pv2Pos->y-pv2LastPos->y) * fLastPercentage + pv2LastPos->y) * fRadius;
-		vertices.push_back(vertex);
+		edgeVerts.push_back(vertex);
 		++iTriCount;
 	}
 
-	if (vertices.empty())
+	if (edgeVerts.size() < 2 || iTriCount < 1)
 		return;
 
-	if (SetPDTStream(&vertices[0], vertices.size()))
+	std::vector<TPDTVertex> triListVerts;
+	TPDTVertex centerVert;
+	centerVert.position.x = fxCenter;
+	centerVert.position.y = fyCenter;
+	centerVert.position.z = 0.0f;
+	centerVert.diffuse = color;
+	centerVert.texCoord.x = 0.0f;
+	centerVert.texCoord.y = 0.0f;
+
+	for (int i = 0; i < iTriCount && i + 1 < (int)edgeVerts.size(); ++i)
 	{
-		STATEMANAGER.SaveTextureStageState(0, D3DTSS_COLORARG1,	D3DTA_DIFFUSE);
-		STATEMANAGER.SaveTextureStageState(0, D3DTSS_COLOROP,	D3DTOP_SELECTARG1);
-		STATEMANAGER.SaveTextureStageState(0, D3DTSS_ALPHAARG1,	D3DTA_DIFFUSE);
-		STATEMANAGER.SaveTextureStageState(0, D3DTSS_ALPHAOP,	D3DTOP_SELECTARG1);
-		STATEMANAGER.SetTexture(0, nullptr);
-		STATEMANAGER.SetTexture(1, nullptr);
-		STATEMANAGER.SetFVF(D3DFVF_XYZ|D3DFVF_DIFFUSE|D3DFVF_TEX1);
-		STATEMANAGER.DrawPrimitive(D3DPT_TRIANGLEFAN, 0, iTriCount);
-		STATEMANAGER.RestoreTextureStageState(0, D3DTSS_COLORARG1);
-		STATEMANAGER.RestoreTextureStageState(0, D3DTSS_COLOROP);
-		STATEMANAGER.RestoreTextureStageState(0, D3DTSS_ALPHAARG1);
-		STATEMANAGER.RestoreTextureStageState(0, D3DTSS_ALPHAOP);
+		triListVerts.push_back(centerVert);
+		triListVerts.push_back(edgeVerts[i]);
+		triListVerts.push_back(edgeVerts[i + 1]);
+	}
+
+	if (triListVerts.empty())
+		return;
+
+	if (SetPDTStream(&triListVerts[0], (UINT)(triListVerts.size())))
+	{
+		SHADERMANAGER.SetDefaultTexture(0);
+		SHADERMANAGER.SetShaderResource(1, NULL);
+			SHADERMANAGER.SetInputLayout(INPUT_LAYOUT_PDT);
+		SHADERMANAGER.Draw(TOPOLOGY_TRIANGLELIST, 0, iTriCount);
 	}
 }
 
-long CPythonGraphic::GenerateColor(float r, float g, float b, float a) const
+long CPythonGraphic::GenerateColor(float r, float g, float b, float a)
 {
 	return GetColor(r, g, b, a);
 }
 
-void CPythonGraphic::RenderDownButton(float sx, float sy, float ex, float ey) const
+void CPythonGraphic::RenderDownButton(float sx, float sy, float ex, float ey)
 {
 	RenderBox2d(sx, sy, ex, ey);
 
@@ -610,7 +606,7 @@ void CPythonGraphic::RenderDownButton(float sx, float sy, float ex, float ey) co
 	RenderLine2d(ex, sy, ex, ey);
 }
 
-void CPythonGraphic::RenderUpButton(float sx, float sy, float ex, float ey) const
+void CPythonGraphic::RenderUpButton(float sx, float sy, float ex, float ey)
 {
 	RenderBox2d(sx, sy, ex, ey);
 
@@ -623,9 +619,32 @@ void CPythonGraphic::RenderUpButton(float sx, float sy, float ex, float ey) cons
 	RenderLine2d(ex, sy, ex, ey);
 }
 
-DWORD CPythonGraphic::GetAvailableMemory() const
+DWORD CPythonGraphic::GetAvailableMemory()
 {
-	return ms_lpd3dDevice->GetAvailableTextureMem();
+	IDXGIDevice* pDXGIDevice = nullptr;
+	if (FAILED(ms_pDevice->QueryInterface(__uuidof(IDXGIDevice), (void**)&pDXGIDevice)))
+		return 0;
+
+	IDXGIAdapter* pAdapter = nullptr;
+	if (FAILED(pDXGIDevice->GetAdapter(&pAdapter)))
+	{
+		pDXGIDevice->Release();
+		return 0;
+	}
+
+	DXGI_ADAPTER_DESC adapterDesc;
+	if (FAILED(pAdapter->GetDesc(&adapterDesc)))
+	{
+		pAdapter->Release();
+		pDXGIDevice->Release();
+		return 0;
+	}
+
+	pAdapter->Release();
+	pDXGIDevice->Release();
+
+	// Return dedicated video memory in bytes
+	return static_cast<DWORD>(adapterDesc.DedicatedVideoMemory);
 }
 
 CPythonGraphic::CPythonGraphic()
@@ -633,7 +652,7 @@ CPythonGraphic::CPythonGraphic()
 	m_lightColor = GetColor(1.0f, 1.0f, 1.0f);
 	m_darkColor = GetColor(0.0f, 0.0f, 0.0f);
 
-	memset(&m_backupViewport, 0, sizeof(D3DVIEWPORT9));
+	memset(&m_backupViewport, 0, sizeof(D3D11_VIEWPORT));
 
 	m_fOrthoDepth = 1000.0f;
 }
@@ -642,4 +661,4 @@ CPythonGraphic::~CPythonGraphic()
 {
 	Tracef("Python Graphic Clear\n");
 }
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

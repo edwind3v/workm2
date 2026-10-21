@@ -4,6 +4,7 @@
 #include "../eterlib/GrpImage.h"
 #include "../eterlib/GrpCollisionObject.h"
 
+
 #include "Model.h"
 #include "Motion.h"
 #include <cstdint>
@@ -27,22 +28,25 @@ class CGrannyModelInstance : public CGraphicCollisionObject
 	public:
 		struct FCreateDeviceObjects
 		{
-			void operator() (CGrannyModelInstance * pModelInstance) const
+			void operator() (CGrannyModelInstance * pModelInstance)
 			{pModelInstance->CreateDeviceObjects();}
 		};
 
 		struct FDestroyDeviceObjects
 		{
-			void operator() (CGrannyModelInstance * pModelInstance) const
+			void operator() (CGrannyModelInstance * pModelInstance)
 			{pModelInstance->DestroyDeviceObjects();}
 		};
 
 	public:
 		CGrannyModelInstance();
+		static void DestroyWorldPoseCache();
 		virtual ~CGrannyModelInstance();
 
-		bool	IsEmpty() const;
-		void SetDeformBuffer(CGraphicVertexBuffer* buffer) { __SetSharedDeformableVertexBuffer(buffer); m_skinnedBuffer = nullptr; }
+		bool	IsEmpty();
+        void SetDeformBuffer(CGraphicVertexBuffer* buffer) { __SetSharedDeformableVertexBuffer(buffer); }
+        void InvalidatePose() const { ++m_poseInputRevision; }
+        std::uint64_t GetPoseRevision() const;
 		void	Clear();
 
 		bool	CreateDeviceObjects();
@@ -51,25 +55,34 @@ class CGrannyModelInstance : public CGraphicCollisionObject
 		// Update & Render
 		void	Update(DWORD dwAniFPS);
 		void	UpdateLocalTime(float fElapsedTime);
-		void	UpdateTransform(D3DXMATRIX * pMatrix, float fSecondsElapsed) const;
+		void	UpdateTransform(Matrix * pMatrix, float fSecondsElapsed);
 
-		void	UpdateSkeleton(const D3DXMATRIX * c_pWorldMatrix, float fLocalTime) const;
-		void	DeformNoSkin(const D3DXMATRIX * c_pWorldMatrix);
-		void	Deform(const D3DXMATRIX * c_pWorldMatrix);
+		void	UpdateSkeleton(const Matrix * c_pWorldMatrix, float fLocalTime);
+		void	DeformNoSkin(const Matrix * c_pWorldMatrix);
+		void	Deform(const Matrix * c_pWorldMatrix);
 
 		void	RenderWithOneTexture();
+		void RenderSkinnedWithOneTexture();
+		void RenderRigidWithOneTexture();
+		void RenderRigidMesh(int meshIndex, bool shadow, bool blend);
 		void	RenderWithTwoTexture();
 		void	BlendRenderWithOneTexture();
 		void	BlendRenderWithTwoTexture();
 		void	RenderWithoutTexture();
-		// One-shot debug handoff of real Granny mesh vertices to D3D11.
-		void	TryCaptureDX11ModelPreview(const TPNTVertex* deformedVertices) const;
 
 		// Model
-		CGrannyModel* GetModel() const;
+		CGrannyModel* GetModel();
 		void	SetMaterialImagePointer(const char* c_szImageName, CGraphicImage* pImage);
+
+		// VTF instancing support
+		const Matrix* GetMeshMatricesPtr() const { return m_meshMatrices; }
+		int GetMeshCount() const;
+		CGrannyMaterialPalette& GetMaterialPaletteRef() { return m_kMtrlPal; }
+		bool HasRigidMeshes() const;
+
+		static bool ms_bShadowSkipRigid;
 		void	SetMaterialData(const char* c_szImageName, const SMaterialData& c_rkMaterialData);
-		void	SetSpecularInfo(const char* c_szMtrlName, BOOL bEnable, float fPower) const;
+		void	SetSpecularInfo(const char* c_szMtrlName, BOOL bEnable, float fPower);
 
 		void	SetMainModelPointer(CGrannyModel* pkModel, CGraphicVertexBuffer* pkSharedDefromableVertexBuffer);
 		void	SetLinkedModelPointer(CGrannyModel* pkModel, CGraphicVertexBuffer* pkSharedDefromableVertexBuffer, CGrannyModelInstance** ppkSkeletonInst);
@@ -85,30 +98,30 @@ class CGrannyModelInstance : public CGraphicCollisionObject
 		// Time
 		void	SetLocalTime(float fLocalTime);
 		int		ResetLocalTime();
-		float	GetLocalTime() const;
+		float	GetLocalTime();
 		float	GetNextTime();
 
 		// WORK
-		DWORD	GetDeformableVertexCount() const;
-		DWORD	GetVertexCount() const;
+		DWORD	GetDeformableVertexCount();
+		DWORD	GetVertexCount();
 
 		// END_OF_WORK
 
 		// Bone & Attaching
 		const float *	GetBoneMatrixPointer(int iBone) const;
 		const float *	GetCompositeBoneMatrixPointer(int iBone) const;
-		bool			GetMeshMatrixPointer(int iMesh, const D3DXMATRIX ** c_ppMatrix) const;
+		bool			GetMeshMatrixPointer(int iMesh, const Matrix ** c_ppMatrix) const;
 		bool			GetBoneIndexByName(const char * c_szBoneName, int * pBoneIndex) const;
 		void			SetParentModelInstance(const CGrannyModelInstance* c_pParentModelInstance, const char * c_szBoneName);
 		void			SetParentModelInstance(const CGrannyModelInstance* c_pParentModelInstance, int iBone);
 
 		// Collision Detection
-		bool	Intersect(const D3DXMATRIX * c_pMatrix, float * pu, float * pv, float * pt);
-		void	MakeBoundBox(TBoundBox* pBoundBox, const float* mat, const float* OBBMin, const float* OBBMax, D3DXVECTOR3* vtMin, D3DXVECTOR3* vtMax) const;
-		void	GetBoundBox(D3DXVECTOR3 * vtMin, D3DXVECTOR3* vtMax);
+		bool	Intersect(const Matrix * c_pMatrix, float * pu, float * pv, float * pt);
+		void	MakeBoundBox(TBoundBox* pBoundBox, const float* mat, const float* OBBMin, const float* OBBMax, Vector3* vtMin, Vector3* vtMax) const;
+		void	GetBoundBox(Vector3 * vtMin, Vector3* vtMax);
 
 		// Reload Texture
-		void	ReloadTexture() const;
+		void	ReloadTexture();
 
 	protected:
 		void	__Initialize();
@@ -136,26 +149,27 @@ class CGrannyModelInstance : public CGraphicCollisionObject
 #error "unknown granny version"
 #endif
 
-		bool	__IsDeformableVertexBuffer() const;
+		bool	__IsDeformableVertexBuffer();
 		void	__SetSharedDeformableVertexBuffer(CGraphicVertexBuffer* pkSharedDeformableVertexBuffer);
 
-		IDirect3DVertexBuffer9* __GetDeformableD3DVertexBufferPtr();
+		ID3D11Buffer* __GetDeformableD3DVertexBufferPtr();
 		CGraphicVertexBuffer&	__GetDeformableVertexBufferRef();
 
 		granny_world_pose* __GetWorldPosePtr() const;
+
+		bool	__CreateLocalSkinnedVertexBuffer();
+		void	__DestroyLocalSkinnedVertexBuffer();
+		ID3D11Buffer* __GetSkinnedD3DVertexBuffer() const;
+		int		__GetMaxBoneIndex() const;
 		// END_OF_WORK
 
 		// Update & Render
 		void	UpdateWorldPose() const;
-		void	UpdateWorldMatrices(const D3DXMATRIX * c_pWorldMatrix) const;
-		void	DeformPNTVertices(void * pvDest) const;
-		void InvalidatePose() const { ++m_poseInputRevision; }
-		std::uint64_t GetPoseRevision() const;
-		static void DestroyWorldPoseCache();
+		void	UpdateWorldMatrices(const Matrix * c_pWorldMatrix);
 
-		void	RenderMeshNodeListWithOneTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType) const;
-		void	RenderMeshNodeListWithTwoTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType) const;
-		void	RenderMeshNodeListWithoutTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType) const;
+		void	RenderMeshNodeListWithOneTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType);
+		void	RenderMeshNodeListWithTwoTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType);
+		void	RenderMeshNodeListWithoutTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType);
 
 	protected:
 		// Static Data
@@ -168,7 +182,7 @@ class CGrannyModelInstance : public CGraphicCollisionObject
 		granny_animation *				m_pgrnAni;
 
 		// Meshes' Transform Data
-		D3DXMATRIX *					m_meshMatrices;
+		Matrix *					m_meshMatrices;
 
 		// Attaching Data
 		const CGrannyModelInstance *	mc_pParentInstance;
@@ -184,31 +198,31 @@ class CGrannyModelInstance : public CGraphicCollisionObject
 
 		// WORK
 		granny_world_pose*					m_pgrnWorldPoseReal;
+		bool m_ownsMeshBindings = false;
+		int m_worldPoseBoneCount = 0;
 		std::vector<granny_mesh_binding*>	m_vct_pgrnMeshBinding;
 
+		mutable std::uint64_t m_poseInputRevision = 1, m_sampledInputRevision = 0, m_poseRevision = 0;
+        mutable const CGrannyModelInstance* m_sampledParent = nullptr;
+        mutable bool m_hasParentMatrix = false;
+        mutable Matrix m_sampledParentMatrix;
 		// Dynamic Vertex Buffer
 		CGraphicVertexBuffer*			m_pkSharedDeformableVertexBuffer;
 		CGraphicVertexBuffer			m_kLocalDeformableVertexBuffer;
 		bool							m_isDeformableVertexBuffer;
+
+		CGraphicVertexBuffer			m_kLocalSkinnedVertexBuffer;
+		int								m_nLocalMaxBoneIndex;
+		bool							m_bHasLocalSkinnedVB;
 		// END_OF_WORK
-
-        mutable std::uint64_t m_poseInputRevision = 1, m_sampledInputRevision = 0, m_poseRevision = 0;
-        mutable const CGrannyModelInstance* m_sampledParent = nullptr;
-        mutable bool m_hasParentMatrix = false;
-        mutable D3DXMATRIX m_sampledParentMatrix;
-        std::uint64_t m_skinnedPoseRevision = 0, m_skinnedBufferVersion = 0;
-        const CGraphicVertexBuffer* m_skinnedBuffer = nullptr;
-        bool m_ownsMeshBindings = true;
-
-		SMaterialData m_material_data{}; // @fixme057
 
 		// TEST
 		CGrannyModelInstance** m_ppkSkeletonInst;
 		// END_OF_TEST
 #ifdef _TEST
-		D3DXMATRIX TEST_matWorld;
+		Matrix TEST_matWorld;
 #endif
 	public:
-		bool							HaveBlendThing() const { return m_pModel->HaveBlendThing(); }
+		bool							HaveBlendThing() { return m_pModel->HaveBlendThing(); }
 };
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

@@ -43,7 +43,7 @@ class CGraphicTextInstance
 		void Update();
 		void Render(RECT * pClipRect = nullptr);
 #ifdef ENABLE_FIX_MOBS_LAG
-		static void CreateWorldTextDeviceObjects(IDirect3DDevice9Ex* device);
+		static void CreateWorldTextDeviceObjects(ID3D11Device* device);
 		static void DestroyWorldTextDeviceObjects();
 		static void BeginWorldTextBatch();
 		static bool IsWorldTextBatchActive();
@@ -135,7 +135,7 @@ class CGraphicTextInstance
 		/////
 
 		std::string m_stText;
-		D3DXVECTOR3 m_v3Position;
+		Vector3 m_v3Position;
 
 	private:
 #ifdef ENABLE_FIX_MOBS_LAG

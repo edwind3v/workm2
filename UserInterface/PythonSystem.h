@@ -32,7 +32,7 @@ class CPythonSystem : public CSingleton<CPythonSystem>
 			DWORD	height;
 			DWORD	bpp;		// bits per pixel (high-color = 16bpp, true-color = 32bpp)
 
-			DWORD	frequency[20];
+			DWORD	frequency[FREQUENCY_MAX_NUM];
 			BYTE	frequency_count;
 		} TResolution;
 
@@ -58,6 +58,8 @@ class CPythonSystem : public CSingleton<CPythonSystem>
 			int				iDistance;
 			int				iShadowLevel;
 			int				iAntialiasing;
+			int dx11MSAASamples;
+			bool dx11Bloom, dx11SSAO, dx11GodRays;
 
 			FLOAT			music_volume;
 			BYTE			voice_volume;

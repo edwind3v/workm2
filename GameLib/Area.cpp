@@ -6,10 +6,13 @@
 #include "../eterLib/ResourceManager.h"
 #include "../eterLib/StateManager.h"
 #include "../effectLib/EffectManager.h"
-#include "../SpeedTreeLib/CSpeedTreeDirectX.h"
+#include "../SpeedTreeLib/SpeedTreeForestDX11.h"
 #include "../eterBase/Timer.h"
 
 #include "Area.h"
+#include "../EterLib/ShaderManager.h"
+#include "../EterLib/ShaderInit.h"
+#include "../EterLib/VTFInstanceManager.h"
 #include "PropertyManager.h"
 #include "Property.h"
 
@@ -97,7 +100,7 @@ namespace { thread_local CFrameWorkBudget areaPreparationBudget; }
 
 void CArea::BeginPreparationFrame() { areaPreparationBudget.Reset(2.0); }
 
-bool CArea::PrepareObjects(D3DXVECTOR3& player)
+bool CArea::PrepareObjects(Vector3& player)
 {
 #ifdef ENABLE_AREA_OPTIMIZATION
 	return __UpdateLoadedObjectInstances(player);
@@ -122,7 +125,7 @@ bool CArea::ClearStep(unsigned maxObjects)
 }
 
 #ifdef ENABLE_AREA_OPTIMIZATION
-bool CArea::__UpdateLoadedObjectInstances(D3DXVECTOR3& player)
+bool CArea::__UpdateLoadedObjectInstances(Vector3& player)
 {
 	MapPerformance::Scope profile("area.object_distance_update");
 	const float visibleSqr = GetMaxLoadingDistanceSqr();
@@ -168,7 +171,7 @@ bool CArea::__UpdateLoadedObjectInstances(D3DXVECTOR3& player)
 }
 
 extern DWORD GetUpdateFPS();
-void CArea::__UpdateEffectList(D3DXVECTOR3& v3Player)
+void CArea::__UpdateEffectList(Vector3& v3Player)
 {
 	m_kVct_pkEftInstSort.clear();
 
@@ -181,7 +184,7 @@ void CArea::__UpdateEffectList(D3DXVECTOR3& v3Player)
 		{
 			CEffectInstance* pEffectInstance = i->second;
 
-			const D3DXMATRIX& gMatrix = pEffectInstance->GetGlobalMatrix();
+			const Matrix& gMatrix = pEffectInstance->GetGlobalMatrix();
 			const float fDist = (v3Player.x - gMatrix._41) * (v3Player.x - gMatrix._41) + (v3Player.y - gMatrix._42) * (v3Player.y - gMatrix._42);
 			const int iDistRatio = HermiteInterpolation(1, iUpdateFPS / 2, fDist / fMaxDist);
 
@@ -218,7 +221,7 @@ float CArea::GetMaxLoadingDistanceSqr() const
 	return pfFarClip * pfFarClip;
 }
 
-bool CArea::Update(D3DXVECTOR3& v3Player)
+bool CArea::Update(Vector3& v3Player)
 {
 	MapPerformance::Scope mapProfile("area.update");
 	mapProfile.Detail("sector=(%u,%u)", m_wX, m_wY);
@@ -289,8 +292,8 @@ struct CArea_FEffectInstanceRender
 void CArea::RenderEffect()
 {
 #ifdef ENABLE_AREA_OPTIMIZATION
-	STATEMANAGER.SetTexture(0, nullptr);
-	STATEMANAGER.SetTexture(1, nullptr);
+	SHADERMANAGER.SetDefaultTexture(0);
+	SHADERMANAGER.SetShaderResource(1, nullptr);
 
 	std::sort(m_kVct_pkEftInstSort.begin(), m_kVct_pkEftInstSort.end(), CArea_LessEffectInstancePtrRenderOrder());
 	std::for_each(m_kVct_pkEftInstSort.begin(), m_kVct_pkEftInstSort.end(), CArea_FEffectInstanceRender());
@@ -298,8 +301,8 @@ void CArea::RenderEffect()
 	__UpdateEffectList();
 
 	// Effect
-	STATEMANAGER.SetTexture(0, nullptr);
-	STATEMANAGER.SetTexture(1, nullptr);
+	SHADERMANAGER.SetDefaultTexture(0);
+	SHADERMANAGER.SetShaderResource(1, nullptr);
 
 	const bool m_isDisableSortRendering=false;
 
@@ -372,7 +375,7 @@ void CArea::Render()
 	{
 		CGraphicThingInstance* pkThingInst;
 
-		auto i=m_AniThingCloneInstanceVector.begin();
+		TThingInstanceVector::iterator i=m_AniThingCloneInstanceVector.begin();
 		while (i!=m_AniThingCloneInstanceVector.end())
 		{
 			pkThingInst=*i++;
@@ -380,12 +383,20 @@ void CArea::Render()
 		}
 	}
 
+	// Use VTF batched path if available
+	if (VTFMANAGER.IsInitialized())
+	{
+		RenderVTFBatched();
+		return;
+	}
+
 	CGraphicThingInstance* pkThingInst;
 
-	auto i=m_ThingCloneInstaceVector.begin();
+	TThingInstanceVector::iterator i=m_ThingCloneInstaceVector.begin();
 
 	m_kRenderedThingInstanceCRCWithNumberVector.clear();
 	m_kRenderedGrapphicThingInstanceVector.clear();
+	m_kRenderedCRCCountMap.clear();
 	TGraphicThingInstanceCRCMap::iterator aGraphicThingInstanceCRCMapIterator;
 
 	while (i!=m_ThingCloneInstaceVector.end())
@@ -394,45 +405,39 @@ void CArea::Render()
 		if (pkThingInst->Render())
 		{
 			aGraphicThingInstanceCRCMapIterator = m_GraphicThingInstanceCRCMap.find(pkThingInst);
-			const DWORD dwCRC = (*aGraphicThingInstanceCRCMapIterator).second;
+			DWORD dwCRC = (*aGraphicThingInstanceCRCMapIterator).second;
 
 			m_kRenderedGrapphicThingInstanceVector.push_back(pkThingInst);
 
-			auto aCRCWithNumberVectorIterator = std::find_if(m_kRenderedThingInstanceCRCWithNumberVector.begin(), m_kRenderedThingInstanceCRCWithNumberVector.end(), FFindIfCRC(dwCRC));
-
-			if ( m_kRenderedThingInstanceCRCWithNumberVector.end() == aCRCWithNumberVectorIterator)
-			{
-				TCRCWithNumber aCRCWithNumber;
-				aCRCWithNumber.dwCRC = dwCRC;
-				aCRCWithNumber.dwNumber = 1;
-				m_kRenderedThingInstanceCRCWithNumberVector.push_back(aCRCWithNumber);
-			}
-			else
-			{
-				TCRCWithNumber & rCRCWithNumber = *aCRCWithNumberVectorIterator;
-				rCRCWithNumber.dwNumber += 1;
-			}
+			// O(1) lookup using hash map instead of O(n) linear search
+			m_kRenderedCRCCountMap[dwCRC]++;
 		}
 	}
- 	std::sort(m_kRenderedThingInstanceCRCWithNumberVector.begin(), m_kRenderedThingInstanceCRCWithNumberVector.end(), CRCNumComp());
+
+	// Build sorted vector from map for debug purposes
+	m_kRenderedThingInstanceCRCWithNumberVector.reserve(m_kRenderedCRCCountMap.size());
+	for (const auto& pair : m_kRenderedCRCCountMap)
+	{
+		TCRCWithNumber aCRCWithNumber;
+		aCRCWithNumber.dwCRC = pair.first;
+		aCRCWithNumber.dwNumber = pair.second;
+		m_kRenderedThingInstanceCRCWithNumberVector.push_back(aCRCWithNumber);
+	}
+	std::sort(m_kRenderedThingInstanceCRCWithNumberVector.begin(), m_kRenderedThingInstanceCRCWithNumberVector.end(), CRCNumComp());
 }
 
 void CArea::RenderCollision() const
 {
 	DWORD i;
 
-	STATEMANAGER.SetTexture(0, nullptr);
-	STATEMANAGER.SetTexture(1, nullptr);
-
-	STATEMANAGER.SaveRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
-	STATEMANAGER.SaveRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-	STATEMANAGER.SetRenderState(D3DRS_LIGHTING, FALSE);
-	STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, 0xff000000);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG1,	D3DTA_TEXTURE);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLOROP,	D3DTOP_SELECTARG1);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
+	SHADERMANAGER.SetDefaultTexture(0);
+	SHADERMANAGER.SetShaderResource(1, NULL);
+	SHADERMANAGER.PushState();
+	SHADERMANAGER.SetPipelineState(PSTATE_BLENDENABLE, FALSE);
+	SHADERMANAGER.SetPipelineState(PSTATE_CULLMODE, CULL_NONE);
+	SHADERMANAGER.SetLightingEnabled(false);
+	if (SHADERMANAGER.IsInitialized())
+		SHADERMANAGER.SetParticleColor(0xff000000);
 
 	for(i=0;i<GetObjectInstanceCount();i++)
 	{
@@ -466,40 +471,22 @@ void CArea::RenderCollision() const
 		}
 	}
 
-	STATEMANAGER.RestoreRenderState(D3DRS_ALPHABLENDENABLE);
-	STATEMANAGER.RestoreRenderState(D3DRS_CULLMODE);
-	STATEMANAGER.SetRenderState(D3DRS_LIGHTING, TRUE);
+	SHADERMANAGER.PopState();
+	SHADERMANAGER.SetLightingEnabled(true);
 }
 
 void CArea::RenderAmbience()
 {
-	DWORD dwColorArg1, dwColorOp;
-	STATEMANAGER.GetTextureStageState(0, D3DTSS_COLORARG1, &dwColorArg1);
-	STATEMANAGER.GetTextureStageState(0, D3DTSS_COLOROP, &dwColorOp);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TFACTOR);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
-	auto itor = m_AmbienceCloneInstanceVector.begin();
+	TAmbienceInstanceVector::iterator itor = m_AmbienceCloneInstanceVector.begin();
 	for (; itor != m_AmbienceCloneInstanceVector.end(); ++itor)
 	{
 		TAmbienceInstance * pInstance = *itor;
 		pInstance->Render();
 	}
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG1, dwColorArg1);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLOROP, dwColorOp);
 }
 
 void CArea::RenderDungeon()
 {
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG1,	D3DTA_TEXTURE);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLOROP,	D3DTOP_SELECTARG1);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG1,	D3DTA_TEXTURE);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLOROP,	D3DTOP_SELECTARG1);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_COLORARG1,	D3DTA_TEXTURE);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_COLORARG2,	D3DTA_CURRENT);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_COLOROP,	D3DTOP_MODULATE);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_ALPHAARG1,	D3DTA_TEXTURE);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_ALPHAARG2,	D3DTA_CURRENT);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_ALPHAOP,	D3DTOP_MODULATE);
 
 #ifdef WORLD_EDITOR
 	bool bRenderTransparent = false;
@@ -511,39 +498,35 @@ void CArea::RenderDungeon()
 	{
 		bRenderTransparent = true;
 
-		oldAlphaBlendState = STATEMANAGER.GetRenderState(D3DRS_ALPHABLENDENABLE);
-		oldZWriteenableState = STATEMANAGER.GetRenderState(D3DRS_ZWRITEENABLE);
+		oldAlphaBlendState = SHADERMANAGER.GetPipelineState(PSTATE_BLENDENABLE);
+		oldZWriteenableState = SHADERMANAGER.GetPipelineState(PSTATE_DEPTHWRITEMASK);
 
-		STATEMANAGER.SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-		STATEMANAGER.SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+		SHADERMANAGER.SetPipelineState(PSTATE_BLENDENABLE, TRUE);
+		SHADERMANAGER.SetPipelineState(PSTATE_DEPTHWRITEMASK, FALSE);
 
-		STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
-		STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-		STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_TFACTOR);
-		STATEMANAGER.SetTextureStageState(1, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
-		STATEMANAGER.SetTextureStageState(1, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-		STATEMANAGER.SetTextureStageState(1, D3DTSS_ALPHAARG2, D3DTA_TFACTOR);
-
-		STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, D3DCOLOR_ARGB( 128, 255, 0, 0) );
+			if (SHADERMANAGER.IsInitialized())
+			SHADERMANAGER.SetParticleColor(COLOR_ARGB( 128, 255, 0, 0) );
 	}
 #endif
 
-	auto itor = m_DungeonBlockCloneInstanceVector.begin();
-	for (; itor != m_DungeonBlockCloneInstanceVector.end(); ++itor)
+	if (VTFMANAGER.IsInitialized() && m_DungeonBlockCloneInstanceVector.size() > 0)
+		RenderDungeonVTFBatched();
+	else
 	{
-		(*itor)->Render();
+		TDungeonBlockInstanceVector::iterator itor = m_DungeonBlockCloneInstanceVector.begin();
+		for (; itor != m_DungeonBlockCloneInstanceVector.end(); ++itor)
+		{
+			(*itor)->Render();
+		}
 	}
 
 #ifdef WORLD_EDITOR
 	if (bRenderTransparent)
 	{
-		STATEMANAGER.SetRenderState(D3DRS_ZWRITEENABLE, oldZWriteenableState);
-		STATEMANAGER.SetRenderState(D3DRS_ALPHABLENDENABLE, oldAlphaBlendState);
+		SHADERMANAGER.SetPipelineState(PSTATE_DEPTHWRITEMASK, oldZWriteenableState);
+		SHADERMANAGER.SetPipelineState(PSTATE_BLENDENABLE, oldAlphaBlendState);
 	}
 #endif
-
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_COLOROP,	D3DTOP_DISABLE);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_ALPHAOP,	D3DTOP_DISABLE);
 }
 
 #ifdef ENABLE_AREA_OPTIMIZATION
@@ -853,11 +836,11 @@ void CArea::__SetObjectInstance_SetEffect(TObjectInstance * pObjectInstance, con
 	CEffectInstance * pEffectInstance{nullptr}; //@fixme030
 	rem.CreateUnsafeEffectInstance(pObjectInstance->dwEffectID, &pEffectInstance);
 
-	D3DXMATRIX mat;
-	D3DXMatrixRotationYawPitchRoll(&mat,
-		D3DXToRadian(c_pData->m_fYaw),
-		D3DXToRadian(c_pData->m_fPitch),
-		D3DXToRadian(c_pData->m_fRoll)
+	Matrix mat;
+	MatrixRotationYawPitchRoll(&mat,
+		ToRadian(c_pData->m_fYaw),
+		ToRadian(c_pData->m_fPitch),
+		ToRadian(c_pData->m_fRoll)
 	);
 
 	mat._41 = c_pData->Position.x;
@@ -892,7 +875,7 @@ void CArea::__SetObjectInstance_SetTree(TObjectInstance * pObjectInstance, const
 
 void CArea::TObjectInstance::SetTree(float x, float y, float z, DWORD dwTreeCRC, const char* c_szTreeName)
 {
-	CSpeedTreeForest& rkForest = CSpeedTreeForest::Instance();
+	CSpeedTreeForest& rkForest = CSpeedTreeForestDX11::Instance();
 	pTree=rkForest.CreateInstance(x, y, z, dwTreeCRC, c_szTreeName);
 	dwType = prt::PROPERTY_TYPE_TREE;
 }
@@ -1049,17 +1032,17 @@ void CArea::__LoadAttribute(TObjectInstance * pObjectInstance, const char * c_sz
 			{
 				CGraphicThingInstance* object = pObjectInstance->pThingInstance;
 
-				D3DXVECTOR3 v3Min, v3Max;
+				Vector3 v3Min, v3Max;
 
 				object->GetBoundingAABB(v3Min, v3Max);
 
 				CStaticCollisionData collision;
 				collision.dwType = COLLISION_TYPE_OBB;
-				D3DXQuaternionRotationYawPitchRoll(&collision.quatRotation, object->GetYaw(), object->GetPitch(), object->GetRoll());
+				QuaternionRotationYawPitchRoll(&collision.quatRotation, object->GetYaw(), object->GetPitch(), object->GetRoll());
 				strcpy(collision.szName, "DummyCollisionOBB");
 				collision.v3Position = (v3Min + v3Max) * 0.5f;
 
-				const D3DXVECTOR3 vDelta = (v3Max - v3Min);
+				const Vector3 vDelta = (v3Max - v3Min);
 				collision.fDimensions[0] = vDelta.x * 0.5f;
 				collision.fDimensions[1] = vDelta.y * 0.5f;
 				collision.fDimensions[2] = vDelta.z * 0.5f;
@@ -1506,7 +1489,7 @@ void CArea::__Clear_DestroyObjectInstance(TObjectInstance * pObjectInstance)
 	if (pObjectInstance->pTree)
 	{
 		pObjectInstance->pTree->Clear();
-		CSpeedTreeForest::Instance().DeleteInstance(pObjectInstance->pTree);
+		CSpeedTreeForestDX11::Instance().DeleteInstance(pObjectInstance->pTree);
 		pObjectInstance->pTree = nullptr;
 	}
 
@@ -1671,19 +1654,21 @@ float CArea::TAmbienceInstance::__GetVolumeFromDistance(float fDistance) const
 
 void CArea::TAmbienceInstance::Render()
 {
-	const float fBoxSize = 10.0f;
-	STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, 0xff00ff00);
+	float fBoxSize = 10.0f;
+	if (SHADERMANAGER.IsInitialized())
+		SHADERMANAGER.SetParticleColor(0xff00ff00);
 	RenderCube(fx-fBoxSize, fy-fBoxSize, fz-fBoxSize, fx+fBoxSize, fy+fBoxSize, fz+fBoxSize);
-	STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, 0xffffffff);
-	RenderSphere(nullptr, fx, fy, fz, float(dwRange) * fMaxVolumeAreaPercentage, D3DFILL_POINT);
-	RenderSphere(nullptr, fx, fy, fz, float(dwRange), D3DFILL_POINT);
+	if (SHADERMANAGER.IsInitialized())
+		SHADERMANAGER.SetParticleColor(0xffffffff);
+	RenderSphere(NULL, fx, fy, fz, float(dwRange) * fMaxVolumeAreaPercentage, FILL_POINT);
+	RenderSphere(NULL, fx, fy, fz, float(dwRange), FILL_POINT);
 	RenderCircle2d(fx, fy, fz, float(dwRange) * fMaxVolumeAreaPercentage);
 	RenderCircle2d(fx, fy, fz, float(dwRange));
 
 	for (int i = 0; i < 4; ++i)
 	{
-		float fxAdd = cosf(float(i) * D3DX_PI/4.0f) * float(dwRange) / 2.0f;
-		float fyAdd = sinf(float(i) * D3DX_PI/4.0f) * float(dwRange) / 2.0f;
+		float fxAdd = cosf(float(i) * MATH_PI/4.0f) * float(dwRange) / 2.0f;
+		float fyAdd = sinf(float(i) * MATH_PI/4.0f) * float(dwRange) / 2.0f;
 
 		if (i%2)
 		{
@@ -1697,7 +1682,7 @@ void CArea::TAmbienceInstance::Render()
 
 bool CArea::SAmbienceInstance::Picking()
 {
-	return CGraphicCollisionObject::IntersectSphere(D3DXVECTOR3(fx, fy, fz), dwRange);
+	return CGraphicCollisionObject::IntersectSphere(Vector3(fx, fy, fz), dwRange);
 }
 
 CArea::SAmbienceInstance::SAmbienceInstance()
@@ -1710,3 +1695,765 @@ CArea::SAmbienceInstance::SAmbienceInstance()
 	fNextPlayTime = 0.0f;
 }
 
+
+void CArea::RenderToShadowMap()
+{
+	SHADERMANAGER.BeginShadow();
+
+	// Render ALL building/thing objects to shadow map
+	CGraphicThingInstance* pkThingInst;
+
+	TThingInstanceVector::iterator i = m_ThingCloneInstaceVector.begin();
+	while (i != m_ThingCloneInstaceVector.end())
+	{
+		pkThingInst = *i++;
+
+		Vector3 v3Center;
+		float fRadius = 0.0f;
+		if (pkThingInst->GetBoundingSphere(v3Center, fRadius) &&
+			!SHADERMANAGER.IsInShadowCull(v3Center.x, v3Center.y, v3Center.z, fRadius))
+			continue;
+
+		pkThingInst->RenderToShadowMap();
+	}
+}
+
+void CArea::RenderVTFBatched()
+{
+	m_kRenderedThingInstanceCRCWithNumberVector.clear();
+	m_kRenderedGrapphicThingInstanceVector.clear();
+	m_kRenderedCRCCountMap.clear();
+
+	struct SVTFInstanceInfo
+	{
+		CGraphicThingInstance* pThingInst;
+		CGrannyModelInstance* pModelInst;
+	};
+	struct SVTFBatchKey
+	{
+		CGrannyModel* pModel;
+		const CGrannyMaterialPalette* pFirstTex;
+		bool operator==(const SVTFBatchKey& o) const { return pModel == o.pModel && (pFirstTex == o.pFirstTex || (pFirstTex && o.pFirstTex && pFirstTex->HasSameMaterials(*o.pFirstTex))); }
+	};
+	struct SVTFBatchKeyHash
+	{
+		size_t operator()(const SVTFBatchKey& k) const { return std::hash<void*>()(k.pModel) ^ ((k.pFirstTex ? k.pFirstTex->GetBatchHash() : 0) << 1); }
+	};
+	std::unordered_map<SVTFBatchKey, std::vector<SVTFInstanceInfo>, SVTFBatchKeyHash> vtfGroups;
+	std::vector<CGraphicThingInstance*> nonBatchable;
+
+	for (auto it = m_ThingCloneInstaceVector.begin(); it != m_ThingCloneInstaceVector.end(); ++it)
+	{
+		CGraphicThingInstance* pkThingInst = *it;
+		if (!pkThingInst->isShow())
+			continue;
+
+		bool bBatchable = false;
+		if (pkThingInst->GetLODControllerCount() == 1 && !pkThingInst->HaveBlendThing())
+		{
+			CGrannyLODController* pLOD = pkThingInst->GetLODControllerPointer(0);
+			if (pLOD && pLOD->isModelInstance())
+			{
+				CGrannyModelInstance* pModelInst = pLOD->GetCurrentModelInstance();
+				if (pModelInst && !pModelInst->IsEmpty() && pModelInst->HasRigidMeshes() && !pModelInst->GetModel()->GetSkinnedD3DVertexBuffer())
+				{
+					CGrannyModel* pModel = pModelInst->GetModel();
+					if (pModel)
+					{
+						const CGrannyMaterialPalette* pFirstTex = nullptr;
+						CGrannyMaterialPalette& rkPal = pModelInst->GetMaterialPaletteRef();
+						if (rkPal.GetMaterialCount() > 0)
+							pFirstTex = &rkPal;
+
+						SVTFBatchKey key = { pModel, pFirstTex };
+						SVTFInstanceInfo info;
+						info.pThingInst = pkThingInst;
+						info.pModelInst = pModelInst;
+						vtfGroups[key].push_back(info);
+						bBatchable = true;
+					}
+				}
+			}
+		}
+
+		if (!bBatchable)
+			nonBatchable.push_back(pkThingInst);
+	}
+
+	// Render non-batchable objects normally
+	for (auto* pkThingInst : nonBatchable)
+	{
+		if (pkThingInst->Render())
+		{
+			auto crcIt = m_GraphicThingInstanceCRCMap.find(pkThingInst);
+			if (crcIt != m_GraphicThingInstanceCRCMap.end())
+			{
+				DWORD dwCRC = crcIt->second;
+				m_kRenderedGrapphicThingInstanceVector.push_back(pkThingInst);
+				m_kRenderedCRCCountMap[dwCRC]++;
+			}
+		}
+	}
+
+	// Render VTF-batched groups
+	for (auto& groupPair : vtfGroups)
+	{
+		CGrannyModel* pModel = groupPair.first.pModel;
+		std::vector<SVTFInstanceInfo>& instances = groupPair.second;
+
+		if (instances.size() < 3)
+		{
+			for (auto& info : instances)
+			{
+				if (info.pThingInst->Render())
+				{
+					auto crcIt = m_GraphicThingInstanceCRCMap.find(info.pThingInst);
+					if (crcIt != m_GraphicThingInstanceCRCMap.end())
+					{
+						DWORD dwCRC = crcIt->second;
+						m_kRenderedGrapphicThingInstanceVector.push_back(info.pThingInst);
+						m_kRenderedCRCCountMap[dwCRC]++;
+					}
+				}
+			}
+			continue;
+		}
+
+		ID3D11Buffer* pRigidVB = pModel->GetPNTD3DVertexBuffer();
+		ID3D11Buffer* pIdxBuf = pModel->GetD3DIndexBuffer();
+		if (!pRigidVB || !pIdxBuf)
+			continue;
+
+		// Use first instance's material palette for textures
+		CGrannyModelInstance* pFirstModelInst = instances[0].pModelInst;
+		CGrannyMaterialPalette& rkMtrlPal = pFirstModelInst->GetMaterialPaletteRef();
+
+		// Set up VTF mesh shader and bind model buffers
+		SHADERMANAGER.BeginMeshVTF();
+		SHADERMANAGER.SetDiffuseColor(1.0f, 1.0f, 1.0f, 1.0f);
+		SHADERMANAGER.SetInputLayout(INPUT_LAYOUT_PNT);
+		SHADERMANAGER.SetVertexBuffer(0, pRigidVB, sizeof(TPNTVertex));
+		SHADERMANAGER.SetIndexBuffer(pIdxBuf, DXGI_FORMAT_R16_UINT, 0);
+
+		// Iterate over each mesh in the model
+		const CGrannyModel::TMeshNode* pMeshNode = pModel->GetMeshNodeList(
+			CGrannyMesh::TYPE_RIGID, CGrannyMaterial::TYPE_DIFFUSE_PNT);
+
+		while (pMeshNode)
+		{
+			const CGrannyMesh* pMesh = pMeshNode->pMesh;
+			int iMeshIdx = pMeshNode->iMesh;
+			int vtxBasePos = pMesh->GetVertexBasePosition();
+			int vtxCount = pMesh->GetVertexCount();
+
+			// Upload per-instance mesh matrices to VTF texture
+			for (size_t batchStart = 0; batchStart < instances.size(); batchStart += VTF_MAX_INSTANCES)
+			{
+			VTFMANAGER.BeginBatch();
+			for (size_t instanceIndex = batchStart; instanceIndex < (std::min)(instances.size(), batchStart + size_t(VTF_MAX_INSTANCES)); ++instanceIndex)
+			{
+				auto& info = instances[instanceIndex];
+				const Matrix* pMeshMatrices = info.pModelInst->GetMeshMatricesPtr();
+				if (pMeshMatrices)
+					VTFMANAGER.AddInstance(&pMeshMatrices[iMeshIdx]);
+			}
+			if (!VTFMANAGER.CommitAndBind())
+            {
+                VTFMANAGER.Unbind();
+                for (size_t failed = batchStart; failed < (std::min)(instances.size(), batchStart + size_t(VTF_MAX_INSTANCES)); ++failed)
+                    instances[failed].pModelInst->RenderRigidMesh(iMeshIdx, false, false);
+                continue;
+            }
+
+			// Render each triangle group with its material
+			const CGrannyMesh::TTriGroupNode* pTriGroupNode = pMesh->GetTriGroupNodeList(
+				CGrannyMaterial::TYPE_DIFFUSE_PNT);
+
+			while (pTriGroupNode)
+			{
+				CGrannyMaterial& rkMtrl = rkMtrlPal.GetMaterialRef(pTriGroupNode->mtrlIndex);
+				rkMtrl.ApplyRenderState();
+
+				SHADERMANAGER.DrawIndexedInstanced(
+					TOPOLOGY_TRIANGLELIST,
+					pTriGroupNode->triCount * 3,
+					VTFMANAGER.GetInstanceCount(),
+					pTriGroupNode->idxPos,
+					vtxBasePos,
+					0);
+
+				rkMtrl.RestorePipelineState();
+				pTriGroupNode = pTriGroupNode->pNextTriGroupNode;
+			}
+
+			VTFMANAGER.Unbind();
+			
+			}
+			pMeshNode = pMeshNode->pNextMeshNode;
+		}
+
+		// Also render blend-type meshes if present
+		pMeshNode = pModel->GetMeshNodeList(
+			CGrannyMesh::TYPE_RIGID, CGrannyMaterial::TYPE_BLEND_PNT);
+
+		while (pMeshNode)
+		{
+			const CGrannyMesh* pMesh = pMeshNode->pMesh;
+			int iMeshIdx = pMeshNode->iMesh;
+			int vtxBasePos = pMesh->GetVertexBasePosition();
+
+			for (size_t batchStart = 0; batchStart < instances.size(); batchStart += VTF_MAX_INSTANCES)
+			{
+			VTFMANAGER.BeginBatch();
+			for (size_t instanceIndex = batchStart; instanceIndex < (std::min)(instances.size(), batchStart + size_t(VTF_MAX_INSTANCES)); ++instanceIndex)
+			{
+				auto& info = instances[instanceIndex];
+				const Matrix* pMeshMatrices = info.pModelInst->GetMeshMatricesPtr();
+				if (pMeshMatrices)
+					VTFMANAGER.AddInstance(&pMeshMatrices[iMeshIdx]);
+			}
+			if (!VTFMANAGER.CommitAndBind())
+            {
+                VTFMANAGER.Unbind();
+                for (size_t failed = batchStart; failed < (std::min)(instances.size(), batchStart + size_t(VTF_MAX_INSTANCES)); ++failed)
+                    instances[failed].pModelInst->RenderRigidMesh(iMeshIdx, false, true);
+                continue;
+            }
+
+			const CGrannyMesh::TTriGroupNode* pTriGroupNode = pMesh->GetTriGroupNodeList(
+				CGrannyMaterial::TYPE_BLEND_PNT);
+
+			while (pTriGroupNode)
+			{
+				CGrannyMaterial& rkMtrl = rkMtrlPal.GetMaterialRef(pTriGroupNode->mtrlIndex);
+				rkMtrl.ApplyRenderState();
+
+				SHADERMANAGER.DrawIndexedInstanced(
+					TOPOLOGY_TRIANGLELIST,
+					pTriGroupNode->triCount * 3,
+					VTFMANAGER.GetInstanceCount(),
+					pTriGroupNode->idxPos,
+					vtxBasePos,
+					0);
+
+				rkMtrl.RestorePipelineState();
+				pTriGroupNode = pTriGroupNode->pNextTriGroupNode;
+			}
+
+			VTFMANAGER.Unbind();
+			
+			}
+			pMeshNode = pMeshNode->pNextMeshNode;
+		}
+
+		SHADERMANAGER.End();
+
+		// Track rendered instances for CRC counting
+		for (auto& info : instances)
+		{
+			auto crcIt = m_GraphicThingInstanceCRCMap.find(info.pThingInst);
+			if (crcIt != m_GraphicThingInstanceCRCMap.end())
+			{
+				DWORD dwCRC = crcIt->second;
+				m_kRenderedGrapphicThingInstanceVector.push_back(info.pThingInst);
+				m_kRenderedCRCCountMap[dwCRC]++;
+			}
+		}
+	}
+
+	// Build sorted CRC vector for debug
+	m_kRenderedThingInstanceCRCWithNumberVector.reserve(m_kRenderedCRCCountMap.size());
+	for (const auto& pair : m_kRenderedCRCCountMap)
+	{
+		TCRCWithNumber aCRCWithNumber;
+		aCRCWithNumber.dwCRC = pair.first;
+		aCRCWithNumber.dwNumber = pair.second;
+		m_kRenderedThingInstanceCRCWithNumberVector.push_back(aCRCWithNumber);
+	}
+	std::sort(m_kRenderedThingInstanceCRCWithNumberVector.begin(), m_kRenderedThingInstanceCRCWithNumberVector.end(), CRCNumComp());
+}
+
+void CArea::RenderToShadowMapVTF()
+{
+	if (!VTFMANAGER.IsInitialized() || m_ThingCloneInstaceVector.empty())
+	{
+		RenderToShadowMap();
+		return;
+	}
+
+	struct SShadowVTFInfo
+	{
+		CGraphicThingInstance* pThingInst;
+		CGrannyModelInstance* pModelInst;
+	};
+	struct SShadowBatchKey
+	{
+		CGrannyModel* pModel;
+		const CGrannyMaterialPalette* pFirstTex;
+		bool operator==(const SShadowBatchKey& o) const { return pModel == o.pModel && (pFirstTex == o.pFirstTex || (pFirstTex && o.pFirstTex && pFirstTex->HasSameMaterials(*o.pFirstTex))); }
+	};
+	struct SShadowBatchKeyHash
+	{
+		size_t operator()(const SShadowBatchKey& k) const { return std::hash<void*>()(k.pModel) ^ ((k.pFirstTex ? k.pFirstTex->GetBatchHash() : 0) << 1); }
+	};
+	std::unordered_map<SShadowBatchKey, std::vector<SShadowVTFInfo>, SShadowBatchKeyHash> vtfGroups;
+	std::vector<CGraphicThingInstance*> nonBatchable;
+
+	for (auto it = m_ThingCloneInstaceVector.begin(); it != m_ThingCloneInstaceVector.end(); ++it)
+	{
+		CGraphicThingInstance* pkThingInst = *it;
+
+		{
+			Vector3 v3Center;
+			float fRadius = 0.0f;
+			if (pkThingInst->GetBoundingSphere(v3Center, fRadius) &&
+				!SHADERMANAGER.IsInShadowCull(v3Center.x, v3Center.y, v3Center.z, fRadius))
+				continue;
+		}
+
+		bool bBatchable = false;
+		if (pkThingInst->GetLODControllerCount() == 1 && !pkThingInst->HaveBlendThing())
+		{
+			CGrannyLODController* pLOD = pkThingInst->GetLODControllerPointer(0);
+			if (pLOD && pLOD->isModelInstance())
+			{
+				CGrannyModelInstance* pModelInst = pLOD->GetCurrentModelInstance();
+				if (pModelInst && !pModelInst->IsEmpty() && pModelInst->HasRigidMeshes() && !pModelInst->GetModel()->GetSkinnedD3DVertexBuffer())
+				{
+					CGrannyModel* pModel = pModelInst->GetModel();
+					if (pModel)
+					{
+						const CGrannyMaterialPalette* pFirstTex = nullptr;
+						CGrannyMaterialPalette& rkPal = pModelInst->GetMaterialPaletteRef();
+						if (rkPal.GetMaterialCount() > 0)
+							pFirstTex = &rkPal;
+
+						SShadowBatchKey key = { pModel, pFirstTex };
+						SShadowVTFInfo info;
+						info.pThingInst = pkThingInst;
+						info.pModelInst = pModelInst;
+						vtfGroups[key].push_back(info);
+						bBatchable = true;
+					}
+				}
+			}
+		}
+
+		if (!bBatchable)
+			nonBatchable.push_back(pkThingInst);
+	}
+
+	SHADERMANAGER.BeginShadow();
+
+	for (auto* pkThingInst : nonBatchable)
+	{
+		pkThingInst->RenderToShadowMap();
+	}
+
+	// Render VTF-batched shadow groups
+	for (auto& groupPair : vtfGroups)
+	{
+		CGrannyModel* pModel = groupPair.first.pModel;
+		std::vector<SShadowVTFInfo>& instances = groupPair.second;
+
+		if (instances.size() < 3)
+		{
+			for (auto& info : instances)
+			{
+				info.pThingInst->RenderToShadowMap();
+			}
+			continue;
+		}
+
+		ID3D11Buffer* pRigidVB = pModel->GetPNTD3DVertexBuffer();
+		ID3D11Buffer* pIdxBuf = pModel->GetD3DIndexBuffer();
+		if (!pRigidVB || !pIdxBuf)
+			continue;
+
+		SHADERMANAGER.BeginShadowVTF();
+		SHADERMANAGER.SetInputLayout(INPUT_LAYOUT_PNT);
+		SHADERMANAGER.SetVertexBuffer(0, pRigidVB, sizeof(TPNTVertex));
+		SHADERMANAGER.SetIndexBuffer(pIdxBuf, DXGI_FORMAT_R16_UINT, 0);
+
+		const CGrannyModel::TMeshNode* pMeshNode = pModel->GetMeshNodeList(
+			CGrannyMesh::TYPE_RIGID, CGrannyMaterial::TYPE_DIFFUSE_PNT);
+
+		while (pMeshNode)
+		{
+			const CGrannyMesh* pMesh = pMeshNode->pMesh;
+			int iMeshIdx = pMeshNode->iMesh;
+			int vtxBasePos = pMesh->GetVertexBasePosition();
+
+			for (size_t batchStart = 0; batchStart < instances.size(); batchStart += VTF_MAX_INSTANCES)
+			{
+			VTFMANAGER.BeginBatch();
+			for (size_t instanceIndex = batchStart; instanceIndex < (std::min)(instances.size(), batchStart + size_t(VTF_MAX_INSTANCES)); ++instanceIndex)
+			{
+				auto& info = instances[instanceIndex];
+				const Matrix* pMeshMatrices = info.pModelInst->GetMeshMatricesPtr();
+				if (pMeshMatrices)
+					VTFMANAGER.AddInstance(&pMeshMatrices[iMeshIdx]);
+			}
+			if (!VTFMANAGER.CommitAndBind())
+            {
+                VTFMANAGER.Unbind();
+                for (size_t failed = batchStart; failed < (std::min)(instances.size(), batchStart + size_t(VTF_MAX_INSTANCES)); ++failed)
+                    instances[failed].pModelInst->RenderRigidMesh(iMeshIdx, true, false);
+                continue;
+            }
+
+			const CGrannyMesh::TTriGroupNode* pTriGroupNode = pMesh->GetTriGroupNodeList(
+				CGrannyMaterial::TYPE_DIFFUSE_PNT);
+
+			while (pTriGroupNode)
+			{
+				CGrannyMaterialPalette& rkMtrlPal = instances[0].pModelInst->GetMaterialPaletteRef();
+				CGrannyMaterial& rkMtrl = rkMtrlPal.GetMaterialRef(pTriGroupNode->mtrlIndex);
+				rkMtrl.ApplyRenderState();
+
+				SHADERMANAGER.DrawIndexedInstanced(
+					TOPOLOGY_TRIANGLELIST,
+					pTriGroupNode->triCount * 3,
+					VTFMANAGER.GetInstanceCount(),
+					pTriGroupNode->idxPos,
+					vtxBasePos,
+					0);
+
+				rkMtrl.RestorePipelineState();
+				pTriGroupNode = pTriGroupNode->pNextTriGroupNode;
+			}
+
+			VTFMANAGER.Unbind();
+			
+			}
+			pMeshNode = pMeshNode->pNextMeshNode;
+		}
+
+		SHADERMANAGER.BeginShadow();
+	}
+}
+
+void CArea::RenderDungeonVTFBatched()
+{
+	struct SDungeonVTFInfo
+	{
+		CGrannyModelInstance* pModelInst;
+	};
+	struct SDungeonBatchKey
+	{
+		CGrannyModel* pModel;
+		const CGrannyMaterialPalette* pFirstTex;
+		bool operator==(const SDungeonBatchKey& o) const { return pModel == o.pModel && (pFirstTex == o.pFirstTex || (pFirstTex && o.pFirstTex && pFirstTex->HasSameMaterials(*o.pFirstTex))); }
+	};
+	struct SDungeonBatchKeyHash
+	{
+		size_t operator()(const SDungeonBatchKey& k) const { return std::hash<void*>()(k.pModel) ^ ((k.pFirstTex ? k.pFirstTex->GetBatchHash() : 0) << 1); }
+	};
+	std::unordered_map<SDungeonBatchKey, std::vector<SDungeonVTFInfo>, SDungeonBatchKeyHash> vtfGroups;
+	std::vector<CDungeonBlock*> nonBatchableBlocks;
+
+	for (auto it = m_DungeonBlockCloneInstanceVector.begin(); it != m_DungeonBlockCloneInstanceVector.end(); ++it)
+	{
+		CDungeonBlock* pBlock = *it;
+		const CDungeonBlock::TModelInstanceContainer& models = pBlock->GetModelInstances();
+
+		for (size_t i = 0; i < models.size(); ++i)
+		{
+			CGrannyModelInstance* pModelInst = static_cast<CGrannyModelInstance*>(models[i]);
+			if (!pModelInst || pModelInst->IsEmpty())
+				continue;
+
+			CGrannyModel* pModel = pModelInst->GetModel();
+			if (pModel)
+			{
+				const CGrannyMaterialPalette* pFirstTex = nullptr;
+				CGrannyMaterialPalette& rkPal = pModelInst->GetMaterialPaletteRef();
+				if (rkPal.GetMaterialCount() > 0)
+					pFirstTex = &rkPal;
+
+				SDungeonBatchKey key = { pModel, pFirstTex };
+				SDungeonVTFInfo info;
+				info.pModelInst = pModelInst;
+				vtfGroups[key].push_back(info);
+			}
+		}
+	}
+
+	std::set<CGrannyModelInstance*> batchedModels;
+
+	for (auto& groupPair : vtfGroups)
+	{
+		CGrannyModel* pModel = groupPair.first.pModel;
+		std::vector<SDungeonVTFInfo>& instances = groupPair.second;
+
+		if (instances.size() < 3)
+			continue;
+
+		ID3D11Buffer* pRigidVB = pModel->GetPNTD3DVertexBuffer();
+		ID3D11Buffer* pIdxBuf = pModel->GetD3DIndexBuffer();
+		if (!pRigidVB || !pIdxBuf)
+			continue;
+
+		CGrannyModelInstance* pFirstModelInst = instances[0].pModelInst;
+		CGrannyMaterialPalette& rkMtrlPal = pFirstModelInst->GetMaterialPaletteRef();
+
+		SHADERMANAGER.BeginMesh2TexVTF();
+		SHADERMANAGER.SetDiffuseColor(1.0f, 1.0f, 1.0f, 1.0f);
+		SHADERMANAGER.SetInputLayout(INPUT_LAYOUT_PNT2);
+		SHADERMANAGER.SetVertexBuffer(0, pRigidVB, sizeof(TPNT2Vertex));
+		SHADERMANAGER.SetIndexBuffer(pIdxBuf, DXGI_FORMAT_R16_UINT, 0);
+
+		const CGrannyModel::TMeshNode* pMeshNode = pModel->GetMeshNodeList(
+			CGrannyMesh::TYPE_RIGID, CGrannyMaterial::TYPE_BLEND_PNT);
+
+		while (pMeshNode)
+		{
+			const CGrannyMesh* pMesh = pMeshNode->pMesh;
+			int iMeshIdx = pMeshNode->iMesh;
+			int vtxBasePos = pMesh->GetVertexBasePosition();
+
+			for (size_t batchStart = 0; batchStart < instances.size(); batchStart += VTF_MAX_INSTANCES)
+			{
+			VTFMANAGER.BeginBatch();
+			for (size_t instanceIndex = batchStart; instanceIndex < (std::min)(instances.size(), batchStart + size_t(VTF_MAX_INSTANCES)); ++instanceIndex)
+			{
+				auto& info = instances[instanceIndex];
+				const Matrix* pMeshMatrices = info.pModelInst->GetMeshMatricesPtr();
+				if (pMeshMatrices)
+					VTFMANAGER.AddInstance(&pMeshMatrices[iMeshIdx]);
+			}
+			if (!VTFMANAGER.CommitAndBind())
+            {
+                VTFMANAGER.Unbind();
+                for (size_t failed = batchStart; failed < (std::min)(instances.size(), batchStart + size_t(VTF_MAX_INSTANCES)); ++failed)
+                    instances[failed].pModelInst->RenderRigidMesh(iMeshIdx, false, true);
+                continue;
+            }
+
+			const CGrannyMesh::TTriGroupNode* pTriGroupNode = pMesh->GetTriGroupNodeList(
+				CGrannyMaterial::TYPE_BLEND_PNT);
+
+			while (pTriGroupNode)
+			{
+				CGrannyMaterial& rkMtrl = rkMtrlPal.GetMaterialRef(pTriGroupNode->mtrlIndex);
+				SHADERMANAGER.SetShaderResource(0, rkMtrl.GetD3DTexture(0));
+				SHADERMANAGER.SetShaderResource(1, rkMtrl.GetD3DTexture(1));
+
+				SHADERMANAGER.DrawIndexedInstanced(
+					TOPOLOGY_TRIANGLELIST,
+					pTriGroupNode->triCount * 3,
+					VTFMANAGER.GetInstanceCount(),
+					pTriGroupNode->idxPos,
+					vtxBasePos,
+					0);
+
+				pTriGroupNode = pTriGroupNode->pNextTriGroupNode;
+			}
+
+			VTFMANAGER.Unbind();
+			
+			}
+			pMeshNode = pMeshNode->pNextMeshNode;
+		}
+
+		SHADERMANAGER.End();
+
+		for (auto& info : instances)
+			batchedModels.insert(info.pModelInst);
+	}
+
+	for (auto it = m_DungeonBlockCloneInstanceVector.begin(); it != m_DungeonBlockCloneInstanceVector.end(); ++it)
+	{
+		CDungeonBlock* pBlock = *it;
+		const CDungeonBlock::TModelInstanceContainer& models = pBlock->GetModelInstances();
+
+		bool bAllBatched = true;
+		for (size_t i = 0; i < models.size(); ++i)
+		{
+			CGrannyModelInstance* pModelInst = static_cast<CGrannyModelInstance*>(models[i]);
+			if (batchedModels.find(pModelInst) == batchedModels.end())
+			{
+				bAllBatched = false;
+				break;
+			}
+		}
+
+		if (!bAllBatched)
+			pBlock->Render();
+	}
+}
+
+void CArea::RenderDungeonShadowVTFBatched()
+{
+	if (m_DungeonBlockCloneInstanceVector.empty())
+		return;
+
+	struct SDungeonShadowVTFInfo
+	{
+		CGrannyModelInstance* pModelInst;
+	};
+	struct SDungeonShadowBatchKey
+	{
+		CGrannyModel* pModel;
+		const CGrannyMaterialPalette* pFirstTex;
+		bool operator==(const SDungeonShadowBatchKey& o) const { return pModel == o.pModel && (pFirstTex == o.pFirstTex || (pFirstTex && o.pFirstTex && pFirstTex->HasSameMaterials(*o.pFirstTex))); }
+	};
+	struct SDungeonShadowBatchKeyHash
+	{
+		size_t operator()(const SDungeonShadowBatchKey& k) const { return std::hash<void*>()(k.pModel) ^ ((k.pFirstTex ? k.pFirstTex->GetBatchHash() : 0) << 1); }
+	};
+	std::unordered_map<SDungeonShadowBatchKey, std::vector<SDungeonShadowVTFInfo>, SDungeonShadowBatchKeyHash> vtfGroups;
+
+	for (auto it = m_DungeonBlockCloneInstanceVector.begin(); it != m_DungeonBlockCloneInstanceVector.end(); ++it)
+	{
+		CDungeonBlock* pBlock = *it;
+		const CDungeonBlock::TModelInstanceContainer& models = pBlock->GetModelInstances();
+
+		for (size_t i = 0; i < models.size(); ++i)
+		{
+			CGrannyModelInstance* pModelInst = static_cast<CGrannyModelInstance*>(models[i]);
+			if (!pModelInst || pModelInst->IsEmpty())
+				continue;
+
+			CGrannyModel* pModel = pModelInst->GetModel();
+			if (pModel)
+			{
+				const CGrannyMaterialPalette* pFirstTex = nullptr;
+				CGrannyMaterialPalette& rkPal = pModelInst->GetMaterialPaletteRef();
+				if (rkPal.GetMaterialCount() > 0)
+					pFirstTex = &rkPal;
+
+				SDungeonShadowBatchKey key = { pModel, pFirstTex };
+				SDungeonShadowVTFInfo info;
+				info.pModelInst = pModelInst;
+				vtfGroups[key].push_back(info);
+			}
+		}
+	}
+
+	std::set<CGrannyModelInstance*> batchedModels;
+
+	if (VTFMANAGER.IsInitialized())
+	{
+		for (auto& groupPair : vtfGroups)
+		{
+			CGrannyModel* pModel = groupPair.first.pModel;
+			std::vector<SDungeonShadowVTFInfo>& instances = groupPair.second;
+
+			if (instances.size() < 3)
+				continue;
+
+			ID3D11Buffer* pRigidVB = pModel->GetPNTD3DVertexBuffer();
+			ID3D11Buffer* pIdxBuf = pModel->GetD3DIndexBuffer();
+			if (!pRigidVB || !pIdxBuf)
+				continue;
+
+			SHADERMANAGER.BeginShadowVTF();
+			SHADERMANAGER.SetInputLayout(INPUT_LAYOUT_PNT);
+			SHADERMANAGER.SetVertexBuffer(0, pRigidVB, sizeof(TPNT2Vertex));
+			SHADERMANAGER.SetIndexBuffer(pIdxBuf, DXGI_FORMAT_R16_UINT, 0);
+
+			const CGrannyModel::TMeshNode* pMeshNode = pModel->GetMeshNodeList(
+				CGrannyMesh::TYPE_RIGID, CGrannyMaterial::TYPE_BLEND_PNT);
+
+			while (pMeshNode)
+			{
+				const CGrannyMesh* pMesh = pMeshNode->pMesh;
+				int iMeshIdx = pMeshNode->iMesh;
+				int vtxBasePos = pMesh->GetVertexBasePosition();
+
+				for (size_t batchStart = 0; batchStart < instances.size(); batchStart += VTF_MAX_INSTANCES)
+			{
+			VTFMANAGER.BeginBatch();
+				for (size_t instanceIndex = batchStart; instanceIndex < (std::min)(instances.size(), batchStart + size_t(VTF_MAX_INSTANCES)); ++instanceIndex)
+				{
+				auto& info = instances[instanceIndex];
+					const Matrix* pMeshMatrices = info.pModelInst->GetMeshMatricesPtr();
+					if (pMeshMatrices)
+						VTFMANAGER.AddInstance(&pMeshMatrices[iMeshIdx]);
+				}
+				if (!VTFMANAGER.CommitAndBind())
+            {
+                VTFMANAGER.Unbind();
+                for (size_t failed = batchStart; failed < (std::min)(instances.size(), batchStart + size_t(VTF_MAX_INSTANCES)); ++failed)
+                    instances[failed].pModelInst->RenderRigidMesh(iMeshIdx, true, true);
+                continue;
+            }
+
+				const CGrannyMesh::TTriGroupNode* pTriGroupNode = pMesh->GetTriGroupNodeList(
+					CGrannyMaterial::TYPE_BLEND_PNT);
+
+				while (pTriGroupNode)
+				{
+					SHADERMANAGER.DrawIndexedInstanced(
+						TOPOLOGY_TRIANGLELIST,
+						pTriGroupNode->triCount * 3,
+						VTFMANAGER.GetInstanceCount(),
+						pTriGroupNode->idxPos,
+						vtxBasePos,
+						0);
+
+					pTriGroupNode = pTriGroupNode->pNextTriGroupNode;
+				}
+
+				VTFMANAGER.Unbind();
+				
+			}
+			pMeshNode = pMeshNode->pNextMeshNode;
+			}
+
+			SHADERMANAGER.BeginShadow();
+
+			for (auto& info : instances)
+				batchedModels.insert(info.pModelInst);
+		}
+	}
+
+	for (auto& groupPair : vtfGroups)
+	{
+		std::vector<SDungeonShadowVTFInfo>& instances = groupPair.second;
+		CGrannyModel* pModel = groupPair.first.pModel;
+
+		for (auto& info : instances)
+		{
+			if (batchedModels.find(info.pModelInst) != batchedModels.end())
+				continue;
+
+			ID3D11Buffer* pRigidVB = pModel->GetPNTD3DVertexBuffer();
+			ID3D11Buffer* pIdxBuf = pModel->GetD3DIndexBuffer();
+			if (!pRigidVB || !pIdxBuf)
+				continue;
+
+			SHADERMANAGER.BeginShadow();
+			SHADERMANAGER.SetInputLayout(INPUT_LAYOUT_PNT);
+			SHADERMANAGER.SetVertexBuffer(0, pRigidVB, sizeof(TPNT2Vertex));
+			SHADERMANAGER.SetIndexBuffer(pIdxBuf, DXGI_FORMAT_R16_UINT, 0);
+
+			const CGrannyModel::TMeshNode* pMeshNode = pModel->GetMeshNodeList(
+				CGrannyMesh::TYPE_RIGID, CGrannyMaterial::TYPE_BLEND_PNT);
+
+			while (pMeshNode)
+			{
+				const CGrannyMesh* pMesh = pMeshNode->pMesh;
+				int iMeshIdx = pMeshNode->iMesh;
+				int vtxBasePos = pMesh->GetVertexBasePosition();
+
+				const Matrix* pMeshMatrices = info.pModelInst->GetMeshMatricesPtr();
+				if (pMeshMatrices)
+					SetShaderWorldMatrix(&pMeshMatrices[iMeshIdx]);
+
+				const CGrannyMesh::TTriGroupNode* pTriGroupNode = pMesh->GetTriGroupNodeList(
+					CGrannyMaterial::TYPE_BLEND_PNT);
+				int vtxCount = pMesh->GetVertexCount();
+
+				while (pTriGroupNode)
+				{
+					SHADERMANAGER.DrawIndexed(TOPOLOGY_TRIANGLELIST, 0, vtxCount, pTriGroupNode->idxPos, pTriGroupNode->triCount, vtxBasePos);
+					pTriGroupNode = pTriGroupNode->pNextTriGroupNode;
+				}
+
+				pMeshNode = pMeshNode->pNextMeshNode;
+			}
+		}
+	}
+}

@@ -3,10 +3,12 @@
 #include "PythonApplication.h"
 #include "../EterLib/Camera.h"
 #include "Locale.h"
+#include "../EterLib/ShaderManager.h"
+#include "../EffectLib/EffectManager.h"
 #include "../GameLib/GameLibDefines.h"
 
 extern bool PERF_CHECKER_RENDER_GAME;
-extern D3DXCOLOR g_fSpecularColor;
+extern Color g_fSpecularColor;
 extern BOOL bVisibleNotice = true;
 extern BOOL bTestServerFlag = FALSE;
 extern int TWOHANDED_WEWAPON_ATT_SPEED_DECREASE_VALUE = 0;
@@ -986,7 +988,7 @@ PyObject * apptestSetSpecularColor(PyObject * poSelf, PyObject * poArgs)
 	float fb;
 	if (!PyTuple_GetFloat(poArgs, 2, &fb))
 		return Py_BuildException();
-	g_fSpecularColor = D3DXCOLOR(fr, fg, fb, 1.0f);
+	g_fSpecularColor = Color(fr, fg, fb, 1.0f);
 	return Py_BuildNone();
 }
 
@@ -1220,10 +1222,67 @@ PyObject* appGetTextWidth(PyObject* poSelf, PyObject* poArgs)
 }
 #endif
 
+
+PyObject* appSetBloomEnabled(PyObject*, PyObject* args)
+{
+    int enabled;
+    if (!PyTuple_GetInteger(args, 0, &enabled)) return Py_BuildException();
+    CPythonSystem::Instance().GetConfig()->dx11Bloom = enabled != 0;
+    SHADERMANAGER.SetBloomEnabled(enabled != 0);
+    return Py_BuildNone();
+}
+PyObject* appIsBloomEnabled(PyObject*, PyObject*) { return Py_BuildValue("i", int(SHADERMANAGER.IsBloomEnabled())); }
+PyObject* appSetSSAOEnabled(PyObject*, PyObject* args)
+{
+    int enabled;
+    if (!PyTuple_GetInteger(args, 0, &enabled)) return Py_BuildException();
+    CPythonSystem::Instance().GetConfig()->dx11SSAO = enabled != 0;
+    SHADERMANAGER.SetSSAOEnabled(enabled != 0);
+    return Py_BuildNone();
+}
+PyObject* appIsSSAOEnabled(PyObject*, PyObject*) { return Py_BuildValue("i", int(SHADERMANAGER.IsSSAOEnabled())); }
+PyObject* appSetBloomParams(PyObject*, PyObject* args)
+{
+    float threshold, intensity;
+    if (!PyTuple_GetFloat(args, 0, &threshold) || !PyTuple_GetFloat(args, 1, &intensity)) return Py_BuildException();
+    SHADERMANAGER.SetBloomParams(threshold, intensity);
+    return Py_BuildNone();
+}
+PyObject* appSetGodRaysEnabled(PyObject*, PyObject* args)
+{
+    int enabled;
+    if (!PyTuple_GetInteger(args, 0, &enabled)) return Py_BuildException();
+    CPythonSystem::Instance().GetConfig()->dx11GodRays = enabled != 0;
+    if (!enabled) SHADERMANAGER.SetGodRaysEnabled(false);
+    return Py_BuildNone();
+}
+PyObject* appSetCharacterRenderLimit(PyObject*, PyObject* args)
+{
+    int limit;
+    if (!PyTuple_GetInteger(args, 0, &limit)) return Py_BuildException();
+    CPythonCharacterManager::SetRenderLimit(max(0, limit));
+    return Py_BuildNone();
+}
+PyObject* appSetEffectLimit(PyObject*, PyObject* args)
+{
+    int limit;
+    if (!PyTuple_GetInteger(args, 0, &limit)) return Py_BuildException();
+    CEffectManager::SetEffectLimit(max(0, limit));
+    return Py_BuildNone();
+}
+
 void initapp()
 {
 	static PyMethodDef s_methods[] =
 	{
+		{"SetBloomEnabled", appSetBloomEnabled, METH_VARARGS},
+		{"IsBloomEnabled", appIsBloomEnabled, METH_VARARGS},
+		{"SetBloomParams", appSetBloomParams, METH_VARARGS},
+		{"SetSSAOEnabled", appSetSSAOEnabled, METH_VARARGS},
+		{"IsSSAOEnabled", appIsSSAOEnabled, METH_VARARGS},
+		{"SetGodRaysEnabled", appSetGodRaysEnabled, METH_VARARGS},
+		{"SetCharacterRenderLimit", appSetCharacterRenderLimit, METH_VARARGS},
+		{"SetEffectLimit", appSetEffectLimit, METH_VARARGS},
 		{ "IsDevStage",					appIsDevStage,					METH_VARARGS },
 		{ "IsTestStage",				appIsTestStage,					METH_VARARGS },
 		{ "IsLiveStage",				appIsLiveStage,					METH_VARARGS },
@@ -1368,6 +1427,7 @@ void initapp()
 	};
 
 	PyObject * poModule = Py_InitModule("app", s_methods);
+	PyModule_AddIntConstant(poModule, "ENABLE_DIRECTX11", 1);
 #if defined(ENABLE_LOADING_PERFORMANCE)
 	PyModule_AddIntConstant(poModule, "ENABLE_LOADING_PERFORMANCE", 1);
 #else

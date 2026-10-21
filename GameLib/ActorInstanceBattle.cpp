@@ -120,7 +120,7 @@ BOOL CActorInstance::IsClickableDistanceDestInstance(CActorInstance & rkInstDst,
 	TPixelPosition kPPosSrc;
 	GetPixelPosition(&kPPosSrc);
 
-	const D3DXVECTOR3 kD3DVct3Src(kPPosSrc);
+	const Vector3 kD3DVct3Src(kPPosSrc);
 
 	TCollisionPointInstanceList& rkLstkDefPtInst=rkInstDst.m_DefendingPointInstanceList;
 	TCollisionPointInstanceList::iterator i;
@@ -134,8 +134,8 @@ BOOL CActorInstance::IsClickableDistanceDestInstance(CActorInstance & rkInstDst,
 		{
 			CDynamicSphereInstance& rkSphere=(*j);
 
-			auto val = D3DXVECTOR3(rkSphere.v3Position-kD3DVct3Src);
-			const float fMovDistance=D3DXVec3Length(&val);
+			auto val = Vector3(rkSphere.v3Position-kD3DVct3Src);
+			const float fMovDistance=Vec3Length(&val);
 			const float fAtkDistance=rkSphere.fRadius+fDistance;
 
 			if (fAtkDistance>fMovDistance)
@@ -512,7 +512,7 @@ void CActorInstance::__ProcessMotionEventAttackSuccess(DWORD dwMotionKey, BYTE b
 	if (!pMotionData->GetMotionAttackingEventDataPointer(byEventIndex, &pMotionEventData))
 		return;
 
-	const D3DXVECTOR3& c_rv3VictimPos=rVictim.GetPositionVectorRef();
+	const Vector3& c_rv3VictimPos=rVictim.GetPositionVectorRef();
 	__ProcessDataAttackSuccess(pMotionEventData->AttackData, rVictim, c_rv3VictimPos);
 }
 
@@ -523,7 +523,7 @@ void CActorInstance::__ProcessMotionAttackSuccess(DWORD dwMotionKey, CActorInsta
 	if (!m_pkCurRaceData->GetMotionDataPointer(dwMotionKey, &c_pMotionData))
 		return;
 
-	const D3DXVECTOR3& c_rv3VictimPos=rVictim.GetPositionVectorRef();
+	const Vector3& c_rv3VictimPos=rVictim.GetPositionVectorRef();
 	__ProcessDataAttackSuccess(c_pMotionData->GetMotionAttackDataReference(), rVictim, c_rv3VictimPos);
 }
 
@@ -595,7 +595,7 @@ float CActorInstance::__GetInvisibleTimeAdjust(const UINT uiSkill, const NRaceDa
 	return adjustedIT;
 }
 
-void CActorInstance::__ProcessDataAttackSuccess(const NRaceData::TAttackData & c_rAttackData, CActorInstance & rVictim, const D3DXVECTOR3 & c_rv3Position, UINT uiSkill, BOOL isSendPacket)
+void CActorInstance::__ProcessDataAttackSuccess(const NRaceData::TAttackData & c_rAttackData, CActorInstance & rVictim, const Vector3 & c_rv3Position, UINT uiSkill, BOOL isSendPacket)
 {
 	if (NRaceData::HIT_TYPE_NONE == c_rAttackData.iHittingType)
 		return;
@@ -607,7 +607,7 @@ void CActorInstance::__ProcessDataAttackSuccess(const NRaceData::TAttackData & c
 		__PushCircle(rVictim);
 
 		// VICTIM_COLLISION_TEST
-		const D3DXVECTOR3& kVictimPos = rVictim.GetPosition();
+		const Vector3& kVictimPos = rVictim.GetPosition();
 		auto externalForceRatio = 1.0f;
 		if (rVictim.IsResistFallen()) // @fixme033 reduced force with mental strong body almost like before
 			externalForceRatio = 0.8f;
@@ -623,7 +623,7 @@ void CActorInstance::__ProcessDataAttackSuccess(const NRaceData::TAttackData & c
 	rVictim.InsertDelay(c_rAttackData.fStiffenTime);
 
 	// Hit Effect
-	D3DXVECTOR3 vec3Effect(rVictim.m_x, rVictim.m_y, rVictim.m_z);
+	Vector3 vec3Effect(rVictim.m_x, rVictim.m_y, rVictim.m_z);
 
 	extern bool IS_HUGE_RACE(unsigned int vnum);
 	if (IS_HUGE_RACE(rVictim.GetRace()))
@@ -631,25 +631,25 @@ void CActorInstance::__ProcessDataAttackSuccess(const NRaceData::TAttackData & c
 		vec3Effect = c_rv3Position;
 	}
 
-	const D3DXVECTOR3 & v3Pos = GetPosition();
+	const Vector3 & v3Pos = GetPosition();
 
-	const float fHeight = D3DXToDegree(atan2(-vec3Effect.x + v3Pos.x,+vec3Effect.y - v3Pos.y));
+	const float fHeight = ToDegree(atan2(-vec3Effect.x + v3Pos.x,+vec3Effect.y - v3Pos.y));
 
 	if (rVictim.IsBuilding()||rVictim.IsDoor())
 	{
-		D3DXVECTOR3 vec3Delta=vec3Effect-v3Pos;
-		D3DXVec3Normalize(&vec3Delta, &vec3Delta);
+		Vector3 vec3Delta=vec3Effect-v3Pos;
+		Vec3Normalize(&vec3Delta, &vec3Delta);
 		vec3Delta*=30.0f;
 
 		CEffectManager& rkEftMgr=CEffectManager::Instance();
 		if (m_dwBattleHitEffectID)
-			rkEftMgr.CreateEffect(m_dwBattleHitEffectID, v3Pos+vec3Delta, D3DXVECTOR3(0.0f, 0.0f, 0.0f));
+			rkEftMgr.CreateEffect(m_dwBattleHitEffectID, v3Pos+vec3Delta, Vector3(0.0f, 0.0f, 0.0f));
 	}
 	else
 	{
 		CEffectManager& rkEftMgr=CEffectManager::Instance();
 		if (m_dwBattleHitEffectID)
-			rkEftMgr.CreateEffect(m_dwBattleHitEffectID, vec3Effect, D3DXVECTOR3(0.0f, 0.0f, fHeight));
+			rkEftMgr.CreateEffect(m_dwBattleHitEffectID, vec3Effect, Vector3(0.0f, 0.0f, fHeight));
 		if (m_dwBattleAttachEffectID)
 			rVictim.AttachEffectByID(0, nullptr, m_dwBattleAttachEffectID);
 	}
@@ -710,7 +710,7 @@ void CActorInstance::ShakeProcess()
 {
 	if (m_dwShakeTime)
 	{
-		D3DXVECTOR3 v3Pos(0.0f, 0.0f, 0.0f);
+		Vector3 v3Pos(0.0f, 0.0f, 0.0f);
 
 		const DWORD dwCurTime=ELTimer_GetMSec();
 
@@ -774,16 +774,16 @@ void CActorInstance::__HitGood(CActorInstance& rVictim)
 
 		if (!rVictim.isLock())
 		{
-			const float fRotRad = D3DXToRadian(GetRotation());
-			const float fVictimRotRad = D3DXToRadian(rVictim.GetRotation());
+			const float fRotRad = ToRadian(GetRotation());
+			const float fVictimRotRad = ToRadian(rVictim.GetRotation());
 
-			D3DXVECTOR2 v2Normal(sin(fRotRad), cos(fRotRad));
-			D3DXVECTOR2 v2VictimNormal(sin(fVictimRotRad), cos(fVictimRotRad));
+			Vector2 v2Normal(sin(fRotRad), cos(fRotRad));
+			Vector2 v2VictimNormal(sin(fVictimRotRad), cos(fVictimRotRad));
 
-			D3DXVec2Normalize(&v2Normal, &v2Normal);
-			D3DXVec2Normalize(&v2VictimNormal, &v2VictimNormal);
+			Vec2Normalize(&v2Normal, &v2Normal);
+			Vec2Normalize(&v2VictimNormal, &v2VictimNormal);
 
-			const float fScalar = D3DXVec2Dot(&v2Normal, &v2VictimNormal);
+			const float fScalar = Vec2Dot(&v2Normal, &v2VictimNormal);
 
 			if (fScalar < 0.0f)
 			{
@@ -810,16 +810,16 @@ void CActorInstance::__HitGreate(CActorInstance& rVictim)
 		return;
 	// END_OF_DISABLE_KNOCKDOWN_ATTACK
 
-	const float fRotRad = D3DXToRadian(GetRotation());
-	const float fVictimRotRad = D3DXToRadian(rVictim.GetRotation());
+	const float fRotRad = ToRadian(GetRotation());
+	const float fVictimRotRad = ToRadian(rVictim.GetRotation());
 
-	D3DXVECTOR2 v2Normal(sin(fRotRad), cos(fRotRad));
-	D3DXVECTOR2 v2VictimNormal(sin(fVictimRotRad), cos(fVictimRotRad));
+	Vector2 v2Normal(sin(fRotRad), cos(fRotRad));
+	Vector2 v2VictimNormal(sin(fVictimRotRad), cos(fVictimRotRad));
 
-	D3DXVec2Normalize(&v2Normal, &v2Normal);
-	D3DXVec2Normalize(&v2VictimNormal, &v2VictimNormal);
+	Vec2Normalize(&v2Normal, &v2Normal);
+	Vec2Normalize(&v2VictimNormal, &v2VictimNormal);
 
-	const float fScalar = D3DXVec2Dot(&v2Normal, &v2VictimNormal);
+	const float fScalar = Vec2Dot(&v2Normal, &v2VictimNormal);
 
 	rVictim.__Shake(100);
 
@@ -905,25 +905,25 @@ void CActorInstance::__PushCircle(CActorInstance & rVictim)
 {
 	const TPixelPosition& c_rkPPosAtk=NEW_GetAtkPixelPositionRef();
 
-	const D3DXVECTOR3 v3SrcPos(c_rkPPosAtk.x, -c_rkPPosAtk.y, c_rkPPosAtk.z);
+	const Vector3 v3SrcPos(c_rkPPosAtk.x, -c_rkPPosAtk.y, c_rkPPosAtk.z);
 
-	const D3DXVECTOR3& c_rv3SrcPos = v3SrcPos;
-	const D3DXVECTOR3& c_rv3DstPos = rVictim.GetPosition();
+	const Vector3& c_rv3SrcPos = v3SrcPos;
+	const Vector3& c_rv3DstPos = rVictim.GetPosition();
 
-	D3DXVECTOR3 v3Direction;
+	Vector3 v3Direction;
 	v3Direction.x = c_rv3DstPos.x - c_rv3SrcPos.x;
 	v3Direction.y = c_rv3DstPos.y - c_rv3SrcPos.y;
 	v3Direction.z = 0.0f;
-	D3DXVec3Normalize(&v3Direction, &v3Direction);
+	Vec3Normalize(&v3Direction, &v3Direction);
 
 	rVictim.__SetFallingDirection(v3Direction.x, v3Direction.y);
 }
 
 void CActorInstance::__PushDirect(CActorInstance & rVictim) const
 {
-	D3DXVECTOR3 v3Direction;
-	v3Direction.x = cosf(D3DXToRadian(m_fcurRotation + 270.0f));
-	v3Direction.y = sinf(D3DXToRadian(m_fcurRotation + 270.0f));
+	Vector3 v3Direction;
+	v3Direction.x = cosf(ToRadian(m_fcurRotation + 270.0f));
+	v3Direction.y = sinf(ToRadian(m_fcurRotation + 270.0f));
 	v3Direction.z = 0.0f;
 
 	rVictim.__SetFallingDirection(v3Direction.x, v3Direction.y);
@@ -944,6 +944,6 @@ bool CActorInstance::__isInvisible() const
 
 void CActorInstance::__SetFallingDirection(float fx, float fy)
 {
-	m_PhysicsObject.SetDirection(D3DXVECTOR3(fx, fy, 0.0f));
+	m_PhysicsObject.SetDirection(Vector3(fx, fy, 0.0f));
 }
 

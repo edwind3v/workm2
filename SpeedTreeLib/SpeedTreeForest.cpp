@@ -9,6 +9,7 @@
 #include "../eterBase/Filename.h"
 #include "../eterBase/MappedFile.h"
 #include "../eterPack/EterPackManager.h"
+#include "../EterBase/StepTimer.h"
 
 #include "SpeedTreeForest.h"
 #include "SpeedTreeConfig.h"
@@ -37,7 +38,7 @@ CSpeedTreeForest::~CSpeedTreeForest()
 
 void CSpeedTreeForest::Clear()
 {
-	auto itor = m_pMainTreeMap.begin();
+	TTreeMap::iterator itor = m_pMainTreeMap.begin();
 	UINT uiCount;
 
 	while (itor != m_pMainTreeMap.end())
@@ -56,17 +57,17 @@ void CSpeedTreeForest::Clear()
 
 CSpeedTreeWrapper * CSpeedTreeForest::GetMainTree(DWORD dwCRC)
 {
-	const auto itor = m_pMainTreeMap.find(dwCRC);
+	TTreeMap::iterator itor = m_pMainTreeMap.find(dwCRC);
 
 	if (itor == m_pMainTreeMap.end())
-		return nullptr;
+		return NULL;
 
 	return itor->second;
 }
 
 BOOL CSpeedTreeForest::GetMainTree(DWORD dwCRC, CSpeedTreeWrapper ** ppMainTree, const char * c_pszFileName)
 {
-	const auto itor = m_pMainTreeMap.find(dwCRC);
+	TTreeMap::iterator itor = m_pMainTreeMap.find(dwCRC);
 
 	CSpeedTreeWrapper * pTree;
 
@@ -101,7 +102,7 @@ CSpeedTreeWrapper* CSpeedTreeForest::CreateInstance(float x, float y, float z, D
 {
 	CSpeedTreeWrapper * pMainTree;
 	if (!GetMainTree(dwTreeCRC, &pMainTree, c_szTreeName))
-		return nullptr;
+		return NULL;
 
 	CSpeedTreeWrapper* pTreeInst = pMainTree->MakeInstance();
 	pTreeInst->SetPosition(x, y, z);
@@ -109,7 +110,7 @@ CSpeedTreeWrapper* CSpeedTreeForest::CreateInstance(float x, float y, float z, D
 	return pTreeInst;
 }
 
-void CSpeedTreeForest::DeleteInstance(CSpeedTreeWrapper * pInstance) const
+void CSpeedTreeForest::DeleteInstance(CSpeedTreeWrapper * pInstance)
 {
 	if (!pInstance)
 		return;
@@ -124,10 +125,18 @@ void CSpeedTreeForest::DeleteInstance(CSpeedTreeWrapper * pInstance) const
 
 void CSpeedTreeForest::UpdateSystem(float fCurrentTime)
 {
-	static float fLastTime = fCurrentTime;
-	const float fElapsedTime = fCurrentTime - fLastTime;
-	CSpeedTreeRT::SetTime(fElapsedTime);
+	const float fNow = (float)DX::StepTimer::instance().GetTotalSeconds();
 
+	static float fLastTime = fNow;
+	float fElapsedTime = fNow - fLastTime;
+	fLastTime = fNow;
+
+	if (fElapsedTime < 0.0f)
+		fElapsedTime = 0.0f;
+
+	CSpeedTreeRT::SetTime(fNow);
+
+	// the wind matrices, by contrast, integrate the DELTA
 	m_fAccumTime += fElapsedTime;
 	SetupWindMatrices(m_fAccumTime);
 }
@@ -156,7 +165,7 @@ void CSpeedTreeForest::SetWindStrength(float fStrength)
 
 	m_fWindStrength = fStrength;
 
-	auto itor = m_pMainTreeMap.begin();
+	TTreeMap::iterator itor = m_pMainTreeMap.begin();
 	UINT uiCount;
 
 	while (itor != m_pMainTreeMap.end())
@@ -171,7 +180,7 @@ void CSpeedTreeForest::SetWindStrength(float fStrength)
 
 ///////////////////////////////////////////////////////////////////////
 //	CSpeedTreeForest::SetupWindMatrices
-void CSpeedTreeForest::SetupWindMatrices(float fTimeInSecs) const
+void CSpeedTreeForest::SetupWindMatrices(float fTimeInSecs)
 {
 	// matrix computational data
 	static float afMatrixTimes[c_nNumWindMatrices] = { 0.0f };
@@ -185,7 +194,7 @@ void CSpeedTreeForest::SetupWindMatrices(float fTimeInSecs) const
 
 	// compute time since last call
 	static float fTimeOfLastCall = 0.0f;
-	const float fTimeSinceLastCall = fTimeInSecs - fTimeOfLastCall;
+	float fTimeSinceLastCall = fTimeInSecs - fTimeOfLastCall;
 	fTimeOfLastCall = fTimeInSecs;
 
 	// wind strength
@@ -195,27 +204,25 @@ void CSpeedTreeForest::SetupWindMatrices(float fTimeInSecs) const
 	for (int i = 0; i < c_nNumWindMatrices; ++i)
 		afMatrixTimes[i] += fTimeSinceLastCall;
 
+	const float c_fWindThrowDegrees = 13.0f;
+	const float c_fWindSpeed        = 2.5f;
+
 	// compute maximum branch throw
-	const float fBaseAngle = m_fWindStrength * 35.0f;
+	float fBaseAngle = m_fWindStrength * c_fWindThrowDegrees;
 
 	// build rotation matrices
 	for (int j = 0; j < c_nNumWindMatrices; ++j)
 	{
-		// adjust time to prevent "jumping"
-		if (m_fWindStrength != 0.0f)
-			afMatrixTimes[j] = (afMatrixTimes[j] * fOldStrength) / m_fWindStrength;
-
 		// compute percentages for each axis
-		const float fBaseFreq = m_fWindStrength * 20.0f;
-		const float fXPercent = sinf(fBaseFreq * afFrequencies[j % c_nNumWindMatrices][0] * afMatrixTimes[j]);
-		const float fYPercent = cosf(fBaseFreq * afFrequencies[j % c_nNumWindMatrices][1] * afMatrixTimes[j]);
+		float fBaseFreq = c_fWindSpeed;
+		float fXPercent = sinf(fBaseFreq * afFrequencies[j % c_nNumWindMatrices][0] * afMatrixTimes[j]);
+		float fYPercent = cosf(fBaseFreq * afFrequencies[j % c_nNumWindMatrices][1] * afMatrixTimes[j]);
 
-		// build compound rotation matrix (rotate on 'x' then on 'y')
-		constexpr float c_fDeg2Rad = 57.2957795f;
-		const float fSinX = sinf(fBaseAngle * fXPercent / c_fDeg2Rad);
-		const float fSinY = sinf(fBaseAngle * fYPercent / c_fDeg2Rad);
-		const float fCosX = cosf(fBaseAngle * fXPercent / c_fDeg2Rad);
-		const float fCosY = cosf(fBaseAngle * fYPercent / c_fDeg2Rad);
+		const float c_fDeg2Rad = 57.2957795f;
+        float fSinX = sinf(fBaseAngle * fXPercent / c_fDeg2Rad);
+        float fSinY = sinf(fBaseAngle * fYPercent / c_fDeg2Rad);
+        float fCosX = cosf(fBaseAngle * fXPercent / c_fDeg2Rad);
+        float fCosY = cosf(fBaseAngle * fYPercent / c_fDeg2Rad);
 
         float afMatrix[16] = { 0.0f };
         afMatrix[0] = fCosY;
@@ -234,7 +241,7 @@ void CSpeedTreeForest::SetupWindMatrices(float fTimeInSecs) const
 
 		#ifdef WRAPPER_USE_GPU_WIND
 			// graphics API specific
-			UploadWindMatrix(c_nVertexShader_WindMatrices + j * 4, afMatrix);
+			UploadWindMatrix(j, afMatrix);
 		#endif
 	}
 
@@ -310,4 +317,4 @@ void CSpeedTreeForest::SetFog(float fFogNear, float fFogFar)
 	m_afFog[2] = c_fFogLinearScale;
 	m_afFog[3] = 0.0f;
 }
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

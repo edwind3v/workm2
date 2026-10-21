@@ -5,7 +5,7 @@
 
 typedef struct STerrainTexture
 {
-	STerrainTexture() :	pd3dTexture(nullptr),
+	STerrainTexture() :	pd3dTexture(NULL),
 		UScale(4.0f),
 		VScale(4.0f),
 		UOffset(0.0f),
@@ -21,7 +21,7 @@ typedef struct STerrainTexture
 	}
 
 	std::string					stFilename;
-	LPDIRECT3DTEXTURE9			pd3dTexture;
+	ID3D11ShaderResourceView*			pd3dTexture;
 	CGraphicImageInstance 		ImageInstance;
 	float						UScale;
 	float						VScale;
@@ -29,7 +29,7 @@ typedef struct STerrainTexture
 	float						VOffset;
 	bool						bSplat;
 	unsigned short				Begin, End;
-	D3DXMATRIX					m_matTransform;
+	Matrix					m_matTransform;
 } TTerrainTexture;
 
 class CTextureSet
@@ -40,7 +40,7 @@ class CTextureSet
 		CTextureSet();
 		virtual ~CTextureSet();
 
-		void			Initialize() const;
+		void			Initialize();
 		void			Clear();
 
 		void			Create();
@@ -48,7 +48,7 @@ class CTextureSet
 		bool			Load(const char * c_pszFileName, float fTerrainTexCoordBase);
 		bool			Save(const char * c_pszFileName);
 
-		unsigned long	GetTextureCount() const;
+		unsigned long	GetTextureCount();
 
 		TTerrainTexture	& GetTexture(unsigned long ulIndex);
 		bool			RemoveTexture(unsigned long ulIndex);
@@ -76,7 +76,7 @@ class CTextureSet
 								   unsigned short usEnd,
 								   float fTerrainTexCoordBase);
 
-		const char *	GetFileName() const { return m_stFileName.c_str(); }
+		const char *	GetFileName()	{ return m_stFileName.c_str(); }
 
 	protected:
 		void			AddEmptyTexture();
@@ -88,4 +88,4 @@ class CTextureSet
 };
 
 #endif
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

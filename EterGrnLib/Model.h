@@ -29,17 +29,21 @@ class CGrannyModel : public CReferenceObject
 		int GetDeformVertexCount() const;
 		int GetVertexCount() const;
 
-		bool CanDeformPNTVertices() const;
-		void DeformPNTVertices(void* dstBaseVertices, D3DXMATRIX* boneMatrices, const std::vector<granny_mesh_binding*>& c_rvct_pgrnMeshBinding) const;
-
-		int GetIdxCount() const;
+		int GetIdxCount();
 		int GetMeshCount() const;
 		CGrannyMesh * GetMeshPointer(int iMesh);
-		granny_model * GetGrannyModelPointer() const;
+		granny_model * GetGrannyModelPointer();
 		const CGrannyMesh* GetMeshPointer(int iMesh) const;
 
-		LPDIRECT3DVERTEXBUFFER9 GetPNTD3DVertexBuffer() const;
-		LPDIRECT3DINDEXBUFFER9 GetD3DIndexBuffer() const;
+		ID3D11Buffer* GetPNTD3DVertexBuffer() const;
+		UINT GetRigidVertexStride() const { return m_pntVtxBuf.GetVertexStride(); }
+		EInputLayoutType GetRigidInputLayout() const { return m_LayoutType; }
+		ID3D11Buffer* GetSkinnedD3DVertexBuffer() const;  // GPU skinning vertex buffer
+		ID3D11Buffer* GetD3DIndexBuffer() const;
+
+		// GPU Skinning support
+		bool HasGPUSkinning() const { return m_bHasGPUSkinning; }
+		int GetMaxBoneIndex() const { return m_maxBoneIndex; }
 
 		const CGrannyModel::TMeshNode*  GetMeshNodeList(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType) const;
 
@@ -51,6 +55,7 @@ class CGrannyModel : public CReferenceObject
 	protected:
 		bool LoadMeshs();
 		bool LoadPNTVertices();
+		bool LoadSkinnedVertices();  // Load skinned vertices for GPU skinning
 		bool LoadIndices();
 		void Initialize();
 
@@ -65,7 +70,10 @@ class CGrannyModel : public CReferenceObject
 		CGrannyMesh *			m_meshs;
 
 		CGraphicVertexBuffer	m_pntVtxBuf;	// for rigid mesh
+		CGraphicVertexBuffer	m_skinnedVtxBuf; // for GPU skinned mesh (static buffer with blend weights)
 		CGraphicIndexBuffer		m_idxBuf;
+		bool					m_bHasGPUSkinning;
+		int						m_maxBoneIndex;  // Max bone index used across all meshes (for selective upload)
 
 		TMeshNode *				m_meshNodes;
 		TMeshNode *				m_meshNodeLists[CGrannyMesh::TYPE_MAX_NUM][CGrannyMaterial::TYPE_MAX_NUM];
@@ -78,21 +86,18 @@ class CGrannyModel : public CReferenceObject
 		int						m_meshNodeSize;
 		int						m_meshNodeCapacity;
 
-		bool					m_canDeformPNVertices;
-
 		CGrannyMaterialPalette	m_kMtrlPal;
 	private:
 		bool					m_bHaveBlendThing;
 	public:
-		bool					HaveBlendThing() const { return m_bHaveBlendThing; }
+		bool					HaveBlendThing() { return m_bHaveBlendThing; }
 
 	//////////////////////////////////////////////////////////////////////////
-	// New members to support PNT2 type models
+	// Vertex layout type (PNT or PNT2)
 	protected:
 		bool __LoadVertices();
 	protected:
-		DWORD m_dwFvF;
-	// New members to support PNT2 type models
+		EInputLayoutType m_LayoutType;
 	//////////////////////////////////////////////////////////////////////////
 };
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

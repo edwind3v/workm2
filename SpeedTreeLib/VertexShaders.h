@@ -28,108 +28,236 @@
 
 ///////////////////////////////////////////////////////////////////////
 //	Includes
-
 #pragma once
-#include <d3d9.h>
-#include <d3dx9.h>
+#include "../UserInterface/Locale_inc.h"
+
 #include "SpeedTreeConfig.h"
 #include <map>
 #include <string>
 
+
 ///////////////////////////////////////////////////////////////////////
-//	Branch & Frond Vertex Formats
+// Branch Vertex Structure
 
-static DWORD D3DFVF_SPEEDTREE_BRANCH_VERTEX = D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX2 | D3DFVF_TEXCOORDSIZE2(0) | D3DFVF_TEXCOORDSIZE2(1);
-
-struct SFVFBranchVertex
+struct SBranchVertex
 {
-	D3DXVECTOR3		m_vPosition;			// Always Used
+	Vector3		m_vPosition;			// Always Used
+#ifdef WRAPPER_USE_DYNAMIC_LIGHTING
+	Vector3		m_vNormal;				// Dynamic Lighting Only
+#else
 	DWORD			m_dwDiffuseColor;		// Static Lighting Only
-	FLOAT			m_fTexCoords[2];		// Always Used
-	FLOAT			m_fShadowCoords[2];		// Texture coordinates for the shadows
-};
-
-static constexpr char g_achSimpleVertexProgram[] =
-{
-	"vs.1.1\n"
-	"dcl_position v0\n"
-	"dcl_color v5\n"
-	"dcl_texcoord0 v7\n"
-	"dcl_texcoord1 v8\n"
-	"mov oT0.xy, v7\n"
-	"mov oT1.xy, v8\n"
-	"mov a0.x, v8.x\n"
-	"m4x4 r1, v0, c[54+a0.x]\n"
-	"sub r2, r1, v0\n"
-	"mov r3.x, v8.y\n"
-	"mad r1, r2, r3.x, v0\n"
-	"add r2, c[52], r1\n"
-	"m4x4 oPos, r2, c[0]\n"
-#ifdef WRAPPER_USE_FOG
-	"dp4 r1, r2, c[2]\n"
-	"sub r2.x, c[85].y, r1.z\n"
-	"mul oFog, r2.x, c[85].z\n"
 #endif
-	"mov oD0, v5\n"
+	FLOAT			m_fTexCoords[2];		// Always Used
+#ifdef WRAPPER_RENDER_SELF_SHADOWS
+	FLOAT			m_fShadowCoords[2];		// Texture coordinates for the shadows
+#endif
+#ifdef WRAPPER_USE_GPU_WIND
+	FLOAT			m_fWindIndex;			// GPU Only
+	FLOAT			m_fWindWeight;
+#endif
 };
 
 ///////////////////////////////////////////////////////////////////////
-//	LoadBranchShader
+//	Branch/Frond Vertex Program
 
-inline LPDIRECT3DVERTEXSHADER9 LoadBranchShader(LPDIRECT3DDEVICE9 pDx)
+static const char g_achSimpleVertexProgram[] =
 {
-	UNREFERENCED_PARAMETER(pDx);
-	return nullptr;
+		"vs.1.1\n"												// identity shader version
+
+		"mov		oT0.xy,		v7\n"							// always pass texcoord0 through
+
+	#ifdef WRAPPER_RENDER_SELF_SHADOWS
+		"mov		oT1.xy,		v8\n"							// pass shadow texcoords through if enabled
+	#endif
+
+	#ifdef WRAPPER_USE_GPU_WIND
+		// retrieve and convert wind matrix index
+		"mov		a0.x,	v9.x\n"
+
+		// perform wind interpolation
+		"m4x4		r1,			v0,			c[54+a0.x]\n"		// compute full wind effect
+		"sub		r2,			r1,			v0\n"				// compute difference between full wind and none
+		"mov		r3.x,		v9.y\n"							// mad can't access two v's at once, use r3.x as tmp
+		"mad		r1,			r2,			r3.x,		v0\n"	// perform interpolation
+
+		"add		r2,			c[52],		r1\n"				// translate to tree's position
+	#else
+		"add		r2,			c[52],		v0\n"				// no wind - just translate to tree's position
+	#endif
+		"m4x4		oPos,		r2,			c[0]\n"				// project to screen
+
+	#ifdef WRAPPER_USE_FOG
+		"dp4		r1,			r2,			c[2]\n"				// find distance to vertex
+		"sub		r2.x,		c[85].y,	r1.z\n"				// linear fogging
+		"mul		oFog,		r2.x,		c[85].z\n"			// write to fog register
+	#endif
+
+	#ifdef WRAPPER_USE_STATIC_LIGHTING
+		"mov		oD0,		v5\n"							// pass color through
+	#else
+		"mov		r1,			c[74]\n"						// can only use one const register per instruction
+		"mul		r5,			c[73],		r1\n"				// diffuse values
+
+		"mov		r1,			c[75]\n"						// can only use one const register per instruction
+		"mul		r4,			c[72],		r1\n"				// ambient values
+
+		"dp3		r2,		v3,			c[71]\n"				// dot light direction with normal
+//		"max		r2.x,		r2.x,		c[70].x\n"			// limit it
+		"mad		oD0,		r2.x,		r5,			r4\n"	// compute the final color
+	#endif
+};
+
+
+static ID3D11InputLayout* LoadBranchShader(ID3D11Device* pDx, ID3DBlob* pVSBlob = nullptr)
+{
+	// branch shader declaration (DX11)
+	D3D11_INPUT_ELEMENT_DESC pBranchShaderDecl[] = {
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "COLOR", 0, DXGI_FORMAT_B8G8R8A8_UNORM, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+#ifdef WRAPPER_RENDER_SELF_SHADOWS
+		{ "TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+#ifdef WRAPPER_USE_GPU_WIND
+		{ "TEXCOORD", 2, DXGI_FORMAT_R32G32_FLOAT, 0, 32, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+#endif
+#else
+#ifdef WRAPPER_USE_GPU_WIND
+		{ "TEXCOORD", 2, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+#endif
+#endif
+	};
+
+	if (!pVSBlob)
+	{
+		return nullptr;
+	}
+
+	// create input layout
+	ID3D11InputLayout* pInputLayout = NULL;
+
+	HRESULT hr = pDx->CreateInputLayout(
+		pBranchShaderDecl,
+		ARRAYSIZE(pBranchShaderDecl),
+		pVSBlob->GetBufferPointer(),
+		pVSBlob->GetBufferSize(),
+		&pInputLayout);
+
+	if (FAILED(hr))
+	{
+		char szError[1024];
+		sprintf_s(szError, "Failed to create branch input layout. HRESULT: 0x%08X", hr);
+		MessageBox(NULL, szError, "Input Layout Error", MB_ICONSTOP);
+	}
+
+	return pInputLayout;
 }
 
-///////////////////////////////////////////////////////////////////////
-//	Leaf Vertex Formats
-
-static DWORD D3DFVF_SPEEDTREE_LEAF_VERTEX = D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEXCOORDSIZE2(0) | D3DFVF_TEXCOORDSIZE2(1) | D3DFVF_TEXCOORDSIZE2(2) | D3DFVF_TEX1;
 
 ///////////////////////////////////////////////////////////////////////
-// FVF Leaf Vertex Structure
+// Leaf Vertex Structure
 
-struct SFVFLeafVertex
+struct SLeafVertex
 {
-		D3DXVECTOR3		m_vPosition;			// Always Used
+		Vector3		m_vPosition;			// Always Used
+	#ifdef WRAPPER_USE_DYNAMIC_LIGHTING
+		Vector3		m_vNormal;				// Dynamic Lighting Only
+	#else
 		DWORD			m_dwDiffuseColor;		// Static Lighting Only
+	#endif
 		FLOAT			m_fTexCoords[2];		// Always Used
+	#if defined WRAPPER_USE_GPU_WIND || defined WRAPPER_USE_GPU_LEAF_PLACEMENT
+		FLOAT			m_fWindIndex;			// Only used when GPU is involved
+		FLOAT			m_fWindWeight;
+		FLOAT			m_fLeafPlacementIndex;
+		FLOAT			m_fLeafScalarValue;
+	#endif
 };
 
 ///////////////////////////////////////////////////////////////////////
 //	Leaf Vertex Program
 
-static constexpr char g_achLeafVertexProgram[] =
+static const char g_achLeafVertexProgram[] =
 {
-	"vs.1.1\n"
+		"vs.1.1\n"											// identity shader version
 
-	"dcl_position v0\n"
-	"dcl_color v5\n"
-	"dcl_texcoord0 v7\n"
-	"dcl_texcoord1 v8\n"
-	"dcl_texcoord2 v9\n"
-	"mov oT0.xy, v7\n"
-	"mov r0, v0\n"
-	"add r0, c[52], r0\n"
-	"m4x4 oPos, r0, c[0]\n"
+		"mov		oT0.xy,	v7\n"							// always pass texcoord0 through
 
-#ifdef WRAPPER_USE_FOG
-	"dp4 r1, r0, c[2]\n"
-	"sub r2.x, c[85].y, r1.z\n"
-	"mul oFog, r2.x, c[85].z\n"
-#endif
-	"mov oD0, v5\n"
+	#ifdef WRAPPER_USE_GPU_WIND
+		// retrieve and convert wind matrix index
+		"mov		a0.x,	v9.x\n"
+
+		// perform wind interpolation
+		"m4x4		r1,		v0,			c[54+a0.x]\n"		// compute full wind effect
+		"sub		r2,		r1,			v0\n"				// compute difference between full wind and none
+		"mov		r3.x,	v9.y\n"							// mad can't access two v's at once, use r3.x as tmp
+		"mad		r0,		r2,			r3.x,		v0\n"	// perform interpolation
+	#else
+		"mov		r0,		v0\n"							// wind already handled, pass the vertex through
+	#endif
+
+	#ifdef WRAPPER_USE_GPU_LEAF_PLACEMENT
+		"mov		a0.x,	v9.z\n"							// place the leaves
+		"mul		r1,		c[a0.x],	v9.w\n"
+		"add		r0,		r1,			r0\n"
+	#endif
+
+		"add		r0,		c[52],		r0\n"				// translate to tree's position
+		"m4x4		oPos,	r0,			c[0]\n"				// project to screen
+
+	#ifdef WRAPPER_USE_FOG
+		"dp4		r1,			r0,			c[2]\n"			// find distance to vertex
+		"sub		r2.x,		c[85].y,	r1.z\n"
+		"mul		oFog,		r2.x,		c[85].z\n"
+	#endif
+
+	#ifdef WRAPPER_USE_STATIC_LIGHTING
+		"mov		oD0,	v5\n"							// pass color through
+	#else
+		"mov		r1,		c[74]\n"						// can only use one const register per instruction
+		"mul		r5,		c[73],		r1\n"				// diffuse values
+
+		"mov		r1,		c[75]\n"						// can only use one const register per instruction
+		"mul		r4,		c[72],		r1\n"				// ambient values
+
+		"dp3		r2.x,   v3,			c[71]\n"			// dot light direction with normal
+		"max		r2.x,	r2.x,		c[70].x\n"			// limit it
+		"mad		oD0,	r2.x,		r5,			r4\n"	// compute the final color
+	#endif
 };
 
-///////////////////////////////////////////////////////////////////////
-//	LoadLeafShader
 
-inline LPDIRECT3DVERTEXSHADER9 LoadLeafShader(LPDIRECT3DDEVICE9 pDx)
+static ID3D11InputLayout* LoadLeafShader(ID3D11Device* pDx, ID3DBlob* pVSBlob = nullptr)
 {
-	LPDIRECT3DVERTEXSHADER9 dwShader = nullptr;
-	return dwShader;
+	// leaf shader declaration (DX11)
+	D3D11_INPUT_ELEMENT_DESC pLeafShaderDecl[] = {
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "COLOR", 0, DXGI_FORMAT_B8G8R8A8_UNORM, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+	};
+
+	if (!pVSBlob)
+	{
+		return nullptr;
+	}
+
+	// create input layout
+	ID3D11InputLayout* pInputLayout = NULL;
+
+	HRESULT hr = pDx->CreateInputLayout(
+		pLeafShaderDecl,
+		ARRAYSIZE(pLeafShaderDecl),
+		pVSBlob->GetBufferPointer(),
+		pVSBlob->GetBufferSize(),
+		&pInputLayout);
+
+	if (FAILED(hr))
+	{
+		char szError[1024];
+		sprintf_s(szError, "Failed to create leaf input layout. HRESULT: 0x%08X", hr);
+		MessageBox(NULL, szError, "Input Layout Error", MB_ICONSTOP);
+	}
+
+	return pInputLayout;
 }
-
-static DWORD D3DFVF_SPEEDTREE_BILLBOARD_VERTEX = D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1;
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

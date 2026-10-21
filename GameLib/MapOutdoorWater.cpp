@@ -1,9 +1,13 @@
 #include "StdAfx.h"
-#include "../eterLib/StateManager.h"
+#include "../eterLib/ShaderManager.h"
 #include "../eterLib/ResourceManager.h"
+#include "../eterLib/ShaderInit.h"
+#include "../eterLib/Camera.h"
 
 #include "MapOutdoor.h"
 #include "TerrainPatch.h"
+
+#include "../EterBase/StepTimer.h"
 
 void CMapOutdoor::LoadWaterTexture()
 {
@@ -24,119 +28,75 @@ void CMapOutdoor::UnloadWaterTexture()
 
 void CMapOutdoor::RenderWater()
 {
-	if (m_PatchVector.empty())
+	if (m_PatchVector.empty() || !IsVisiblePart(PART_WATER))
 		return;
 
-	if (!IsVisiblePart(PART_WATER))
-		return;
+	SHADERMANAGER.PushState();
 
-	//////////////////////////////////////////////////////////////////////////
-	// RenderState
-	D3DXMATRIX matTexTransformWater;
+	Matrix matTexTransformWater;
 
-	STATEMANAGER.SaveRenderState(D3DRS_ZWRITEENABLE, FALSE);
-	STATEMANAGER.SaveRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-	STATEMANAGER.SaveRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-	STATEMANAGER.SaveRenderState(D3DRS_DIFFUSEMATERIALSOURCE, D3DMCS_COLOR1);
-	STATEMANAGER.SaveRenderState(D3DRS_COLORVERTEX, TRUE);
+	SHADERMANAGER.SetPipelineState(PSTATE_DEPTHWRITEMASK, FALSE);
+	SHADERMANAGER.SetPipelineState(PSTATE_BLENDENABLE, TRUE);
+	SHADERMANAGER.SetPipelineState(PSTATE_CULLMODE, CULL_NONE);
 
-	STATEMANAGER.SetTexture(0, m_WaterInstances[((ELTimer_GetMSec() / 70) % 30)].GetTexturePointer()->GetD3DTexture());
+	const DWORD dwWaterTime = (DWORD)DX::StepTimer::instance().GetTotalMillieSeconds();
+	CGraphicTexture* pWaterTexture = m_WaterInstances[(dwWaterTime / 70) % 30].GetTexturePointer();
+	if (pWaterTexture)
+		SHADERMANAGER.SetShaderResource(0, pWaterTexture->GetD3DTexture());
 
-	D3DXMatrixScaling(&matTexTransformWater, m_fWaterTexCoordBase, -m_fWaterTexCoordBase, 0.0f);
-	D3DXMatrixMultiply(&matTexTransformWater, &m_matViewInverse, &matTexTransformWater);
+	MatrixScaling(&matTexTransformWater, m_fWaterTexCoordBase, -m_fWaterTexCoordBase, 0.0f);
+	SHADERMANAGER.SetMatrix(MATRIX_TEXTURE0, &matTexTransformWater);
 
-	STATEMANAGER.SaveTransform(D3DTS_TEXTURE0, &matTexTransformWater);
-	STATEMANAGER.SaveFVF(D3DFVF_XYZ|D3DFVF_DIFFUSE);
+	SHADERMANAGER.SetInputLayout(INPUT_LAYOUT_PD);
+	SHADERMANAGER.SetSamplerState(0, SAMPLER_MINFILTER, FILTER_LINEAR);
+	SHADERMANAGER.SetSamplerState(0, SAMPLER_MAGFILTER, FILTER_LINEAR);
+	SHADERMANAGER.SetSamplerState(0, SAMPLER_MIPFILTER, FILTER_LINEAR);
+	SHADERMANAGER.SetSamplerState(0, SAMPLER_ADDRESSU, ADDRESS_WRAP);
+	SHADERMANAGER.SetSamplerState(0, SAMPLER_ADDRESSV, ADDRESS_WRAP);
+	SHADERMANAGER.SetShaderResource(1, nullptr);
 
-	STATEMANAGER.SaveTextureStageState(0, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACEPOSITION);
-	STATEMANAGER.SaveTextureStageState(0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
-	STATEMANAGER.SaveSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
-	STATEMANAGER.SaveSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
-	STATEMANAGER.SaveSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_LINEAR);
-	STATEMANAGER.SaveSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
-	STATEMANAGER.SaveSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
+	SHADERMANAGER.BeginWater();
 
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_DIFFUSE);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
-
-	STATEMANAGER.SetTexture(1, nullptr);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
-
-	// RenderState
-	//////////////////////////////////////////////////////////////////////////
-
-	static float s_fWaterHeightCurrent = 0;
-	static float s_fWaterHeightBegin = 0;
-	static float s_fWaterHeightEnd = 0;
-	static DWORD s_dwLastHeightChangeTime = CTimer::Instance().GetCurrentMillisecond();
+	static float s_fWaterHeightCurrent = 0.0f;
+	static float s_fWaterHeightBegin = 0.0f;
+	static float s_fWaterHeightEnd = 0.0f;
+	static DWORD s_dwLastHeightChangeTime = DX::StepTimer::instance().GetTotalMillieSeconds();
 	static DWORD s_dwBlendtime = 300;
 
-	if ((CTimer::Instance().GetCurrentMillisecond() - s_dwLastHeightChangeTime) > s_dwBlendtime)
+	DWORD now = DX::StepTimer::instance().GetTotalMillieSeconds();
+
+	if (now - s_dwLastHeightChangeTime > s_dwBlendtime)
 	{
 		s_dwBlendtime = random_range(1000, 3000);
-
-		if (s_fWaterHeightEnd == 0)
-			s_fWaterHeightEnd = -random_range(0, 15);
-		else
-			s_fWaterHeightEnd = 0;
-
+		s_fWaterHeightEnd = (s_fWaterHeightEnd == 0.0f) ? -random_range(0, 15) : 0.0f;
 		s_fWaterHeightBegin = s_fWaterHeightCurrent;
-		s_dwLastHeightChangeTime = CTimer::Instance().GetCurrentMillisecond();
+		s_dwLastHeightChangeTime = now;
 	}
 
-	s_fWaterHeightCurrent = s_fWaterHeightBegin + (s_fWaterHeightEnd - s_fWaterHeightBegin) * (float) ((CTimer::Instance().GetCurrentMillisecond() - s_dwLastHeightChangeTime) / (float) s_dwBlendtime);
-	m_matWorldForCommonUse._43 = s_fWaterHeightCurrent;
+	s_fWaterHeightCurrent = s_fWaterHeightBegin +
+		(s_fWaterHeightEnd - s_fWaterHeightBegin) *
+		(float)(now - s_dwLastHeightChangeTime) / (float)s_dwBlendtime;
 
 	m_matWorldForCommonUse._41 = 0.0f;
 	m_matWorldForCommonUse._42 = 0.0f;
-	STATEMANAGER.SetTransform(D3DTS_WORLD, &m_matWorldForCommonUse);
+	m_matWorldForCommonUse._43 = s_fWaterHeightCurrent;
 
-	const float fFogDistance = __GetFogDistance();
+	SHADERMANAGER.SetMatrix(MATRIX_WORLD, &m_matWorldForCommonUse);
+	SHADERMANAGER.SetDiffuseColor(1.0f, 1.0f, 1.0f, 1.0f);
+	SHADERMANAGER.CommitChanges();
 
-	std::vector<std::pair<float, long> >::iterator i;
-
-	for(i = m_PatchVector.begin();i != m_PatchVector.end(); ++i)
-	{
-		if (i->first<fFogDistance)
-			DrawWater(i->second);
-	}
-
-	STATEMANAGER.SetTexture(0, nullptr);
-	STATEMANAGER.SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
-
-	for(i = m_PatchVector.begin();i != m_PatchVector.end(); ++i)
-	{
-		if (i->first>=fFogDistance)
-			DrawWater(i->second);
-	}
+	for (const auto& patch : m_PatchVector)
+		DrawWater(patch.second);
 
 	m_matWorldForCommonUse._43 = 0.0f;
 
-	//////////////////////////////////////////////////////////////////////////
-	// RenderState
-	STATEMANAGER.RestoreFVF();
-	STATEMANAGER.RestoreTransform(D3DTS_TEXTURE0);
-	STATEMANAGER.RestoreSamplerState(0, D3DSAMP_MINFILTER);
-	STATEMANAGER.RestoreSamplerState(0, D3DSAMP_MAGFILTER);
-	STATEMANAGER.RestoreSamplerState(0, D3DSAMP_MIPFILTER);
-	STATEMANAGER.RestoreSamplerState(0, D3DSAMP_ADDRESSU);
-	STATEMANAGER.RestoreSamplerState(0, D3DSAMP_ADDRESSV);
-	STATEMANAGER.RestoreTextureStageState(0, D3DTSS_TEXCOORDINDEX);
-	STATEMANAGER.RestoreTextureStageState(0, D3DTSS_TEXTURETRANSFORMFLAGS);
-
-	STATEMANAGER.RestoreRenderState(D3DRS_DIFFUSEMATERIALSOURCE);
-	STATEMANAGER.RestoreRenderState(D3DRS_COLORVERTEX);
-	STATEMANAGER.RestoreRenderState(D3DRS_ZWRITEENABLE);
-	STATEMANAGER.RestoreRenderState(D3DRS_ALPHABLENDENABLE);
-	STATEMANAGER.RestoreRenderState(D3DRS_CULLMODE);
+	SHADERMANAGER.End();
+	SHADERMANAGER.PopState();
 }
 
-void CMapOutdoor::DrawWater(long patchnum) const
+void CMapOutdoor::DrawWater(long patchnum)
 {
-	assert(nullptr!=m_pTerrainPatchProxyList);
+	assert(NULL!=m_pTerrainPatchProxyList);
 	if (!m_pTerrainPatchProxyList)
 		return;
 
@@ -148,20 +108,21 @@ void CMapOutdoor::DrawWater(long patchnum) const
 	if (!rkTerrainPatchProxy.isWaterExists())
 		return;
 
-	const CGraphicVertexBuffer* pkVB=rkTerrainPatchProxy.GetWaterVertexBufferPointer();
+	CGraphicVertexBuffer* pkVB=rkTerrainPatchProxy.GetWaterVertexBufferPointer();
 	if (!pkVB)
 		return;
 
 	if (!pkVB->GetD3DVertexBuffer())
 		return;
 
-	const UINT uPriCount=rkTerrainPatchProxy.GetWaterFaceCount();
+	UINT uPriCount=rkTerrainPatchProxy.GetWaterFaceCount();
 	if (!uPriCount)
 		return;
 
-	STATEMANAGER.SetStreamSource(0, pkVB->GetD3DVertexBuffer(), sizeof(SWaterVertex));
-	STATEMANAGER.DrawPrimitive(D3DPT_TRIANGLELIST, 0, uPriCount);
+	SHADERMANAGER.SetVertexBuffer(0, pkVB->GetD3DVertexBuffer(), sizeof(SWaterVertex));
+	SHADERMANAGER.Draw(TOPOLOGY_TRIANGLELIST, 0, uPriCount);
 
 	ms_faceCount += uPriCount;
 }
 
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

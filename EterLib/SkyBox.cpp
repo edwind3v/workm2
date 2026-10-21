@@ -1,10 +1,13 @@
 #include "stdafx.h"
 #include "SkyBox.h"
 #include "Camera.h"
-#include "StateManager.h"
+#include "ShaderManager.h"
 #include "ResourceManager.h"
+#include "ShaderInit.h"
 
 #include "../eterBase/Timer.h"
+
+#include "../EterBase/StepTimer.h"
 
 //////////////////////////////////////////////////////////////////////////
 // CSkyObjectQuad
@@ -91,8 +94,7 @@ bool CSkyObjectQuad::Update()
 void CSkyObjectQuad::Render()
 {
 	if (CGraphicBase::SetPDTStream(m_Vertex, 4))
-		STATEMANAGER.DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, 2);
-	//STATEMANAGER.DrawIndexedPrimitiveUP(D3DPT_TRIANGLESTRIP, 0, 4, 2, m_Indices, D3DFMT_INDEX16, &m_Vertex, sizeof(TPDTVertex));
+		SHADERMANAGER.Draw(TOPOLOGY_TRIANGLESTRIP, 0, 2);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -104,11 +106,11 @@ CSkyObject::CSkyObject() :
 	m_fScaleY(1.0f),
 	m_fScaleZ(1.0f)
 {
-	D3DXMatrixIdentity(&m_matWorld);
-	D3DXMatrixIdentity(&m_matTranslation);
-	D3DXMatrixIdentity(&m_matTextureCloud);
+	MatrixIdentity(&m_matWorld);
+	MatrixIdentity(&m_matTranslation);
+	MatrixIdentity(&m_matTextureCloud);
 
-	m_dwlastTime = CTimer::Instance().GetCurrentMillisecond();
+	m_dwlastTime = DX::StepTimer::instance().GetTotalMillieSeconds();
 
 	m_fCloudPositionU = 0.0f;
 	m_fCloudPositionV = 0.0f;
@@ -128,7 +130,11 @@ void CSkyObject::Destroy()
 
 void CSkyObject::Update()
 {
-	const D3DXVECTOR3 v3Eye = CCameraManager::Instance().GetCurrentCamera()->GetEye();
+	CCamera* pCamera = CCameraManager::Instance().GetCurrentCamera();
+	if (!pCamera)
+		return;
+
+	Vector3 v3Eye = pCamera->GetEye();
 
 	if (m_v3Position == v3Eye)
 		if (m_bSkyMatrixUpdated == false)
@@ -148,13 +154,27 @@ void CSkyObject::Update()
 		m_bSkyMatrixUpdated = false;
 }
 
+void CSkyObject::ForcePosition(const Vector3& v3Pos)
+{
+	m_v3Position = v3Pos;
+	m_matWorld._41 = v3Pos.x;
+	m_matWorld._42 = v3Pos.y;
+	m_matWorld._43 = v3Pos.z;
+
+	m_matWorldCloud._41 = v3Pos.x;
+	m_matWorldCloud._42 = v3Pos.y;
+	m_matWorldCloud._43 = v3Pos.z + m_fCloudHeight;
+
+	m_bSkyMatrixUpdated = true;
+}
+
 void CSkyObject::Render()
 {
 }
 
-CGraphicImageInstance * CSkyObject::GenerateTexture(const char * szfilename) const
+CGraphicImageInstance * CSkyObject::GenerateTexture(const char * szfilename)
 {
-	assert(szfilename != nullptr);
+	assert(szfilename != NULL);
 
 	if (strlen(szfilename) <= 0)
 		assert(false);
@@ -164,7 +184,7 @@ CGraphicImageInstance * CSkyObject::GenerateTexture(const char * szfilename) con
 	if (!pResource->IsType(CGraphicImage::Type()))
 	{
 		assert(false);
-		return nullptr;
+		return NULL;
 	}
 
 	CGraphicImageInstance * pImageInstance = CGraphicImageInstance::New();
@@ -172,7 +192,7 @@ CGraphicImageInstance * CSkyObject::GenerateTexture(const char * szfilename) con
 	return (pImageInstance);
 }
 
-void CSkyObject::DeleteTexture(CGraphicImageInstance * pImageInstance) const
+void CSkyObject::DeleteTexture(CGraphicImageInstance * pImageInstance)
 {
 	if (pImageInstance)
 		CGraphicImageInstance::Delete(pImageInstance);
@@ -218,6 +238,21 @@ CSkyBox::CSkyBox()
 {
 	m_ucVirticalGradientLevelUpper = 0;
 	m_ucVirticalGradientLevelLower = 0;
+	m_ucOriginalGradientLevelUpper = 0;
+	m_ucOriginalGradientLevelLower = 0;
+	m_lGradientTransitionDuration = 0;
+	m_dwGradientTransitionStart = 0;
+	m_bGradientTransitionActive = false;
+
+#ifdef ENABLE_CELESTIAL_BODY
+	m_pSunTextureInstance = nullptr;
+	m_pMoonTextureInstance = nullptr;
+	m_vLightDirection = Vector3(0.0f, 0.0f, -1.0f);
+	m_fSunSize = 0.07f;
+	m_fMoonSize = 0.055f;
+	m_bCelestialReady = false;
+	m_bIsNight = false;
+#endif
 }
 
 CSkyBox::~CSkyBox()
@@ -230,20 +265,24 @@ void CSkyBox::Destroy()
 	Unload();
 }
 
-void CSkyBox::SetSkyBoxScale(const D3DXVECTOR3 & c_rv3Scale)
+void CSkyBox::SetSkyBoxScale(const Vector3 & c_rv3Scale)
 {
 	m_fScaleX = c_rv3Scale.x;
 	m_fScaleY = c_rv3Scale.y;
 	m_fScaleZ = c_rv3Scale.z;
 
 	m_bSkyMatrixUpdated = true;
-	D3DXMatrixScaling(&m_matWorld, m_fScaleX, m_fScaleY, m_fScaleZ);
+	MatrixScaling(&m_matWorld, m_fScaleX, m_fScaleY, m_fScaleZ);
 }
+
+static const int SKY_GRADIENT_SUBDIV = 4;
 
 void CSkyBox::SetGradientLevel(BYTE byUpper, BYTE byLower)
 {
-	m_ucVirticalGradientLevelUpper = byUpper;
-	m_ucVirticalGradientLevelLower = byLower;
+	m_ucOriginalGradientLevelUpper = byUpper;
+	m_ucOriginalGradientLevelLower = byLower;
+	m_ucVirticalGradientLevelUpper = byUpper * SKY_GRADIENT_SUBDIV;
+	m_ucVirticalGradientLevelLower = byLower * SKY_GRADIENT_SUBDIV;
 }
 
 void CSkyBox::SetFaceTexture( const char* c_szFileName, int iFaceIndex )
@@ -251,7 +290,7 @@ void CSkyBox::SetFaceTexture( const char* c_szFileName, int iFaceIndex )
 	if( iFaceIndex < 0 || iFaceIndex > 5 )
 		return;
 
-	const auto itor = m_GraphicImageInstanceMap.find(c_szFileName);
+	TGraphicImageInstanceMap::iterator itor = m_GraphicImageInstanceMap.find(c_szFileName);
 	if (m_GraphicImageInstanceMap.end() != itor)
 		return;
 
@@ -263,24 +302,25 @@ void CSkyBox::SetFaceTexture( const char* c_szFileName, int iFaceIndex )
 
 void CSkyBox::SetCloudTexture(const char * c_szFileName)
 {
-	const auto itor = m_GraphicImageInstanceMap.find(c_szFileName);
+	TGraphicImageInstanceMap::iterator itor = m_GraphicImageInstanceMap.find(c_szFileName);
 	if (m_GraphicImageInstanceMap.end() != itor)
 		return;
 
 	m_FaceCloud.m_strfacename = c_szFileName;
 	CGraphicImageInstance * pGraphicImageInstance = GenerateTexture(c_szFileName);
-	m_GraphicImageInstanceMap.insert(TGraphicImageInstanceMap::value_type(m_FaceCloud.m_strfacename, pGraphicImageInstance));
+	if (pGraphicImageInstance)
+		m_GraphicImageInstanceMap.insert(TGraphicImageInstanceMap::value_type(m_FaceCloud.m_strfacename, pGraphicImageInstance));
 
 //	CGraphicImage * pImage = (CGraphicImage *) CResourceManager::Instance().GetResourcePointer("D:\\Ymir Work\\special/cloudalpha.tga");
 //	m_CloudAlphaImageInstance.SetImagePointer(pImage);
 }
 
-void CSkyBox::SetCloudScale(const D3DXVECTOR2 & c_rv2CloudScale)
+void CSkyBox::SetCloudScale(const Vector2 & c_rv2CloudScale)
 {
 	m_fCloudScaleX = c_rv2CloudScale.x;
 	m_fCloudScaleY = c_rv2CloudScale.y;
 
-	D3DXMatrixScaling(&m_matWorldCloud, m_fCloudScaleX, m_fCloudScaleY, 1.0f);
+	MatrixScaling(&m_matWorldCloud, m_fCloudScaleX, m_fCloudScaleY, 1.0f);
 }
 
 void CSkyBox::SetCloudHeight(float fHeight)
@@ -288,7 +328,7 @@ void CSkyBox::SetCloudHeight(float fHeight)
 	m_fCloudHeight = fHeight;
 }
 
-void CSkyBox::SetCloudTextureScale(const D3DXVECTOR2 & c_rv2CloudTextureScale)
+void CSkyBox::SetCloudTextureScale(const Vector2 & c_rv2CloudTextureScale)
 {
 	m_fCloudTextureScaleX = c_rv2CloudTextureScale.x;
 	m_fCloudTextureScaleY = c_rv2CloudTextureScale.y;
@@ -297,7 +337,7 @@ void CSkyBox::SetCloudTextureScale(const D3DXVECTOR2 & c_rv2CloudTextureScale)
 	m_matTextureCloud._22 = m_fCloudTextureScaleY;
 }
 
-void CSkyBox::SetCloudScrollSpeed(const D3DXVECTOR2 & c_rv2CloudScrollSpeed)
+void CSkyBox::SetCloudScrollSpeed(const Vector2 & c_rv2CloudScrollSpeed)
 {
 	m_fCloudScrollSpeedU = c_rv2CloudScrollSpeed.x;
 	m_fCloudScrollSpeedV = c_rv2CloudScrollSpeed.y;
@@ -305,7 +345,7 @@ void CSkyBox::SetCloudScrollSpeed(const D3DXVECTOR2 & c_rv2CloudScrollSpeed)
 
 void CSkyBox::Unload()
 {
-	auto itor = m_GraphicImageInstanceMap.begin();
+	TGraphicImageInstanceMap::iterator itor = m_GraphicImageInstanceMap.begin();
 
 	while (itor != m_GraphicImageInstanceMap.end())
 	{
@@ -314,91 +354,66 @@ void CSkyBox::Unload()
 	}
 
 	m_GraphicImageInstanceMap.clear();
+
+#ifdef ENABLE_CELESTIAL_BODY
+	if (m_pSunTextureInstance) { DeleteTexture(m_pSunTextureInstance); m_pSunTextureInstance = nullptr; }
+	if (m_pMoonTextureInstance) { DeleteTexture(m_pMoonTextureInstance); m_pMoonTextureInstance = nullptr; }
+	m_bCelestialReady = false;
+#endif
 }
 
-void CSkyBox::SetSkyObjectQuadVertical(TSkyObjectQuadVector * pSkyObjectQuadVector, const D3DXVECTOR2 * c_pv2QuadPoints) const
+void CSkyBox::SetSkyObjectQuadVertical(TSkyObjectQuadVector * pSkyObjectQuadVector, const Vector2 * c_pv2QuadPoints)
 {
 	TPDTVertex aPDTVertex;
 
-	DWORD dwIndex = 0;
+	DWORD dwTotalQuads = (DWORD)m_ucVirticalGradientLevelUpper + (DWORD)m_ucVirticalGradientLevelLower;
+	if (dwTotalQuads == 0)
+		return;
 
 	pSkyObjectQuadVector->clear();
-	pSkyObjectQuadVector->resize(m_ucVirticalGradientLevelUpper + m_ucVirticalGradientLevelLower);
+	pSkyObjectQuadVector->resize(dwTotalQuads);
 
-	unsigned char ucY;
-	for (ucY = 0; ucY < m_ucVirticalGradientLevelUpper; ++ucY)
+	for (DWORD ucY = 0; ucY < dwTotalQuads; ++ucY)
 	{
-		CSkyObjectQuad & rSkyObjectQuad = pSkyObjectQuadVector->at(dwIndex++);
+		CSkyObjectQuad & rSkyObjectQuad = pSkyObjectQuadVector->at(ucY);
+
+		float zTop = 1.0f - 2.0f * (float)ucY / (float)dwTotalQuads;
+		float zBot = 1.0f - 2.0f * (float)(ucY + 1) / (float)dwTotalQuads;
+		float texTop = (float)ucY / (float)dwTotalQuads;
+		float texBot = (float)(ucY + 1) / (float)dwTotalQuads;
 
 		aPDTVertex.position.x = c_pv2QuadPoints[0].x;
 		aPDTVertex.position.y = c_pv2QuadPoints[0].y;
-		aPDTVertex.position.z = 1.0f - (float)(ucY + 1)/ (float)(m_ucVirticalGradientLevelUpper);
+		aPDTVertex.position.z = zBot;
 		aPDTVertex.texCoord.x = 0.0f;
-		aPDTVertex.texCoord.y = (float)(ucY + 1)/ (float)(m_ucVirticalGradientLevelUpper) * 0.5f;
-		rSkyObjectQuad.SetVertex(0 , aPDTVertex);
-		aPDTVertex.position.x = c_pv2QuadPoints[0].x;
-		aPDTVertex.position.y = c_pv2QuadPoints[0].y;
-		aPDTVertex.position.z = 1.0f - (float)(ucY) / (float)(m_ucVirticalGradientLevelUpper);
-		aPDTVertex.texCoord.x = 0.0f;
-		aPDTVertex.texCoord.y = (float)(ucY)/ (float)(m_ucVirticalGradientLevelUpper) * 0.5f;
-		rSkyObjectQuad.SetVertex(1, aPDTVertex);
-		aPDTVertex.position.x = c_pv2QuadPoints[1].x;
-		aPDTVertex.position.y = c_pv2QuadPoints[1].y;
-		aPDTVertex.position.z = 1.0f - (float)(ucY + 1) / (float)(m_ucVirticalGradientLevelUpper);
-		aPDTVertex.texCoord.x = 1.0f;
-		aPDTVertex.texCoord.y = (float)(ucY + 1)/ (float)(m_ucVirticalGradientLevelUpper) * 0.5f;
-		rSkyObjectQuad.SetVertex(2, aPDTVertex);
-		aPDTVertex.position.x = c_pv2QuadPoints[1].x;
-		aPDTVertex.position.y = c_pv2QuadPoints[1].y;
-		aPDTVertex.position.z = 1.0f - (float)(ucY) / (float)(m_ucVirticalGradientLevelUpper);
-		aPDTVertex.texCoord.x = 1.0f;
-		aPDTVertex.texCoord.y = (float)(ucY)/ (float)(m_ucVirticalGradientLevelUpper) * 0.5f;
-		rSkyObjectQuad.SetVertex(3, aPDTVertex);
-	}
-	for (ucY = 0; ucY < m_ucVirticalGradientLevelLower; ++ucY)
-	{
-		CSkyObjectQuad & rSkyObjectQuad = pSkyObjectQuadVector->at(dwIndex++);
-
-		aPDTVertex.position.x = c_pv2QuadPoints[0].x;
-		aPDTVertex.position.y = c_pv2QuadPoints[0].y;
-		aPDTVertex.position.z = -(float)(ucY + 1)/ (float)(m_ucVirticalGradientLevelLower);
-		aPDTVertex.texCoord.x = 0.0f;
-		aPDTVertex.texCoord.y = 0.5f + (float)(ucY + 1)/ (float)(m_ucVirticalGradientLevelUpper) * 0.5f;
+		aPDTVertex.texCoord.y = texBot;
 		rSkyObjectQuad.SetVertex(0, aPDTVertex);
+
 		aPDTVertex.position.x = c_pv2QuadPoints[0].x;
 		aPDTVertex.position.y = c_pv2QuadPoints[0].y;
-		aPDTVertex.position.z = -(float)(ucY) / (float)(m_ucVirticalGradientLevelLower);
+		aPDTVertex.position.z = zTop;
 		aPDTVertex.texCoord.x = 0.0f;
-		aPDTVertex.texCoord.y = 0.5f + (float)(ucY)/ (float)(m_ucVirticalGradientLevelUpper) * 0.5f;
+		aPDTVertex.texCoord.y = texTop;
 		rSkyObjectQuad.SetVertex(1, aPDTVertex);
+
 		aPDTVertex.position.x = c_pv2QuadPoints[1].x;
 		aPDTVertex.position.y = c_pv2QuadPoints[1].y;
-		aPDTVertex.position.z = -(float)(ucY + 1) / (float)(m_ucVirticalGradientLevelLower);
+		aPDTVertex.position.z = zBot;
 		aPDTVertex.texCoord.x = 1.0f;
-		aPDTVertex.texCoord.y = 0.5f + (float)(ucY + 1)/ (float)(m_ucVirticalGradientLevelUpper) * 0.5f;
+		aPDTVertex.texCoord.y = texBot;
 		rSkyObjectQuad.SetVertex(2, aPDTVertex);
+
 		aPDTVertex.position.x = c_pv2QuadPoints[1].x;
 		aPDTVertex.position.y = c_pv2QuadPoints[1].y;
-		aPDTVertex.position.z = -(float)(ucY) / (float)(m_ucVirticalGradientLevelLower);
+		aPDTVertex.position.z = zTop;
 		aPDTVertex.texCoord.x = 1.0f;
-		aPDTVertex.texCoord.y = 0.5f + (float)(ucY)/ (float)(m_ucVirticalGradientLevelUpper) * 0.5f;
+		aPDTVertex.texCoord.y = texTop;
 		rSkyObjectQuad.SetVertex(3, aPDTVertex);
 	}
 }
 
-//void CSkyBox::UpdateSkyFaceQuadTransform(D3DXVECTOR3 * c_pv3QuadPoints)
-//{
-//	for( int i = 0; i < 4; ++i )
-//	{
-//		c_pv3QuadPoints[i].x *= m_fScaleX;
-//		c_pv3QuadPoints[i].y *= m_fScaleY;
-//		c_pv3QuadPoints[i].z *= m_fScaleZ;
-//
-//		c_pv3QuadPoints[i] += m_v3Position;
-//	}
-//}
 
-void CSkyBox::SetSkyObjectQuadHorizon(TSkyObjectQuadVector * pSkyObjectQuadVector, const D3DXVECTOR3 * c_pv3QuadPoints) const
+void CSkyBox::SetSkyObjectQuadHorizon(TSkyObjectQuadVector * pSkyObjectQuadVector, const Vector3 * c_pv3QuadPoints)
 {
 	pSkyObjectQuadVector->clear();
 	pSkyObjectQuadVector->resize(1);
@@ -428,52 +443,52 @@ void CSkyBox::SetSkyObjectQuadHorizon(TSkyObjectQuadVector * pSkyObjectQuadVecto
 
 void CSkyBox::Refresh()
 {
-	D3DXVECTOR3 v3QuadPoints[4];
+	Vector3 v3QuadPoints[4];
 
 	if( m_ucRenderMode == CSkyObject::SKY_RENDER_MODE_DEFAULT ||  m_ucRenderMode == CSkyObject::SKY_RENDER_MODE_DIFFUSE )
 	{
 		if (m_ucVirticalGradientLevelUpper + m_ucVirticalGradientLevelLower <= 0)
 			return;
 
-		D3DXVECTOR2 v2QuadPoints[2];
+		Vector2 v2QuadPoints[2];
 
 		//// Face 0: FRONT
-		v2QuadPoints[0] = D3DXVECTOR2(1.0f, -1.0f);
-		v2QuadPoints[1] = D3DXVECTOR2(-1.0f, -1.0f);
+		v2QuadPoints[0] = Vector2(1.0f, -1.0f);
+		v2QuadPoints[1] = Vector2(-1.0f, -1.0f);
 		SetSkyObjectQuadVertical(&m_Faces[0].m_SkyObjectQuadVector, v2QuadPoints);
 		m_Faces[0].m_strfacename = "front";
 
 		//// Face 1: BACK
-		v2QuadPoints[0] = D3DXVECTOR2(-1.0f, 1.0f);
-		v2QuadPoints[1] = D3DXVECTOR2(1.0f, 1.0f);
+		v2QuadPoints[0] = Vector2(-1.0f, 1.0f);
+		v2QuadPoints[1] = Vector2(1.0f, 1.0f);
 		SetSkyObjectQuadVertical(&m_Faces[1].m_SkyObjectQuadVector, v2QuadPoints);
 		m_Faces[1].m_strfacename = "back";
 
 		//// Face 2: LEFT
-		v2QuadPoints[0] = D3DXVECTOR2(-1.0f, -1.0f);
-		v2QuadPoints[1] = D3DXVECTOR2(-1.0f, 1.0f);
+		v2QuadPoints[0] = Vector2(-1.0f, -1.0f);
+		v2QuadPoints[1] = Vector2(-1.0f, 1.0f);
 		SetSkyObjectQuadVertical(&m_Faces[2].m_SkyObjectQuadVector, v2QuadPoints);
 		m_Faces[2].m_strfacename = "left";
 
 		//// Face 3: RIGHT
-		v2QuadPoints[0] = D3DXVECTOR2(1.0f, 1.0f);
-		v2QuadPoints[1] = D3DXVECTOR2(1.0f, -1.0f);
+		v2QuadPoints[0] = Vector2(1.0f, 1.0f);
+		v2QuadPoints[1] = Vector2(1.0f, -1.0f);
 		SetSkyObjectQuadVertical(&m_Faces[3].m_SkyObjectQuadVector, v2QuadPoints);
 		m_Faces[3].m_strfacename = "right";
 
 		//// Face 4: TOP
-		v3QuadPoints[0] = D3DXVECTOR3(1.0f, 1.0f, 1.0f);
-		v3QuadPoints[1] = D3DXVECTOR3(-1.0f, 1.0f, 1.0f);
-		v3QuadPoints[2] = D3DXVECTOR3(1.0f, -1.0f, 1.0f);
-		v3QuadPoints[3] = D3DXVECTOR3(-1.0f, -1.0f, 1.0f);
+		v3QuadPoints[0] = Vector3(1.0f, 1.0f, 1.0f);
+		v3QuadPoints[1] = Vector3(-1.0f, 1.0f, 1.0f);
+		v3QuadPoints[2] = Vector3(1.0f, -1.0f, 1.0f);
+		v3QuadPoints[3] = Vector3(-1.0f, -1.0f, 1.0f);
 		SetSkyObjectQuadHorizon(&m_Faces[4].m_SkyObjectQuadVector, v3QuadPoints);
 		m_Faces[4].m_strfacename = "top";
 
 		//// Face 5: BOTTOM
-		v3QuadPoints[0] = D3DXVECTOR3(-1.0f, 1.0f, -1.0f);
-		v3QuadPoints[1] = D3DXVECTOR3(1.0f, 1.0f, -1.0f);
-		v3QuadPoints[2] = D3DXVECTOR3(-1.0f, -1.0f, -1.0f);
-		v3QuadPoints[3] = D3DXVECTOR3(1.0f, -1.0f, -1.0f);
+		v3QuadPoints[0] = Vector3(-1.0f, 1.0f, -1.0f);
+		v3QuadPoints[1] = Vector3(1.0f, 1.0f, -1.0f);
+		v3QuadPoints[2] = Vector3(-1.0f, -1.0f, -1.0f);
+		v3QuadPoints[3] = Vector3(1.0f, -1.0f, -1.0f);
 		SetSkyObjectQuadHorizon(&m_Faces[5].m_SkyObjectQuadVector, v3QuadPoints);
 		m_Faces[5].m_strfacename = "bottom";
 
@@ -481,10 +496,10 @@ void CSkyBox::Refresh()
 	else if( m_ucRenderMode == CSkyObject::SKY_RENDER_MODE_TEXTURE )
 	{
 		// Face 0: FRONT
-		v3QuadPoints[0] = D3DXVECTOR3(1.0f, -1.0f, -1.0f);
-		v3QuadPoints[1] = D3DXVECTOR3(1.0f, -1.0f, 1.0f);
-		v3QuadPoints[2] = D3DXVECTOR3(-1.0f, -1.0f, -1.0f);
-		v3QuadPoints[3] = D3DXVECTOR3(-1.0f, -1.0f, 1.0f);
+		v3QuadPoints[0] = Vector3(1.0f, -1.0f, -1.0f);
+		v3QuadPoints[1] = Vector3(1.0f, -1.0f, 1.0f);
+		v3QuadPoints[2] = Vector3(-1.0f, -1.0f, -1.0f);
+		v3QuadPoints[3] = Vector3(-1.0f, -1.0f, 1.0f);
 
 		//UpdateSkyFaceQuadTransform(v3QuadPoints);
 
@@ -492,10 +507,10 @@ void CSkyBox::Refresh()
 		m_Faces[0].m_strfacename = "front";
 
 		//// Face 1: BACK
-		v3QuadPoints[0] = D3DXVECTOR3(-1.0f, 1.0f, -1.0f);
-		v3QuadPoints[1] = D3DXVECTOR3(-1.0f, 1.0f, 1.0f);
-		v3QuadPoints[2] = D3DXVECTOR3(1.0f, 1.0f, -1.0f);
-		v3QuadPoints[3] = D3DXVECTOR3(1.0f, 1.0f, 1.0f);
+		v3QuadPoints[0] = Vector3(-1.0f, 1.0f, -1.0f);
+		v3QuadPoints[1] = Vector3(-1.0f, 1.0f, 1.0f);
+		v3QuadPoints[2] = Vector3(1.0f, 1.0f, -1.0f);
+		v3QuadPoints[3] = Vector3(1.0f, 1.0f, 1.0f);
 
 		//UpdateSkyFaceQuadTransform(v3QuadPoints);
 
@@ -503,10 +518,10 @@ void CSkyBox::Refresh()
 		m_Faces[1].m_strfacename = "back";
 
 		// Face 2: LEFT
-		v3QuadPoints[0] = D3DXVECTOR3(1.0f, 1.0f, -1.0f);
-		v3QuadPoints[1] = D3DXVECTOR3(1.0f, 1.0f, 1.0f);
-		v3QuadPoints[2] = D3DXVECTOR3(1.0f, -1.0f, -1.0f);
-		v3QuadPoints[3] = D3DXVECTOR3(1.0f, -1.0f, 1.0f);
+		v3QuadPoints[0] = Vector3(1.0f, 1.0f, -1.0f);
+		v3QuadPoints[1] = Vector3(1.0f, 1.0f, 1.0f);
+		v3QuadPoints[2] = Vector3(1.0f, -1.0f, -1.0f);
+		v3QuadPoints[3] = Vector3(1.0f, -1.0f, 1.0f);
 
 		//UpdateSkyFaceQuadTransform(v3QuadPoints);
 
@@ -514,10 +529,10 @@ void CSkyBox::Refresh()
 		m_Faces[2].m_strfacename = "left";
 
 		// Face 3: RIGHT
-		v3QuadPoints[0] = D3DXVECTOR3(-1.0f, -1.0f, -1.0f);
-		v3QuadPoints[1] = D3DXVECTOR3(-1.0f, -1.0f, 1.0f);
-		v3QuadPoints[2] = D3DXVECTOR3(-1.0f, 1.0f, -1.0f);
-		v3QuadPoints[3] = D3DXVECTOR3(-1.0f, 1.0f, 1.0f);
+		v3QuadPoints[0] = Vector3(-1.0f, -1.0f, -1.0f);
+		v3QuadPoints[1] = Vector3(-1.0f, -1.0f, 1.0f);
+		v3QuadPoints[2] = Vector3(-1.0f, 1.0f, -1.0f);
+		v3QuadPoints[3] = Vector3(-1.0f, 1.0f, 1.0f);
 
 		//UpdateSkyFaceQuadTransform(v3QuadPoints);
 
@@ -525,10 +540,10 @@ void CSkyBox::Refresh()
 		m_Faces[3].m_strfacename = "right";
 
 		// Face 4: TOP
-		v3QuadPoints[0] = D3DXVECTOR3(1.0f, -1.0f, 1.0f);
-		v3QuadPoints[1] = D3DXVECTOR3(1.0f, 1.0f, 1.0f);
-		v3QuadPoints[2] = D3DXVECTOR3(-1.0f, -1.0f, 1.0f);
-		v3QuadPoints[3] = D3DXVECTOR3(-1.0f, 1.0f, 1.0f);
+		v3QuadPoints[0] = Vector3(1.0f, -1.0f, 1.0f);
+		v3QuadPoints[1] = Vector3(1.0f, 1.0f, 1.0f);
+		v3QuadPoints[2] = Vector3(-1.0f, -1.0f, 1.0f);
+		v3QuadPoints[3] = Vector3(-1.0f, 1.0f, 1.0f);
 
 		//UpdateSkyFaceQuadTransform(v3QuadPoints);
 
@@ -537,10 +552,10 @@ void CSkyBox::Refresh()
 
 		////// Face 5: BOTTOM
 		// @fixme005
-		v3QuadPoints[0] = D3DXVECTOR3(1.0f, 1.0f, -1.0f);
-		v3QuadPoints[1] = D3DXVECTOR3(1.0f, -1.0f, -1.0f);
-		v3QuadPoints[2] = D3DXVECTOR3(-1.0f, 1.0f, -1.0f);
-		v3QuadPoints[3] = D3DXVECTOR3(-1.0f, -1.0f, -1.0f);
+		v3QuadPoints[0] = Vector3(1.0f, 1.0f, -1.0f);
+		v3QuadPoints[1] = Vector3(1.0f, -1.0f, -1.0f);
+		v3QuadPoints[2] = Vector3(-1.0f, 1.0f, -1.0f);
+		v3QuadPoints[3] = Vector3(-1.0f, -1.0f, -1.0f);
 
 		//UpdateSkyFaceQuadTransform(v3QuadPoints);
 
@@ -549,237 +564,157 @@ void CSkyBox::Refresh()
 	}
 
 	//// Clouds..
-	v3QuadPoints[0] = D3DXVECTOR3(1.0f, 1.0f, 0.0f);
-	v3QuadPoints[1] = D3DXVECTOR3(-1.0f, 1.0f, 0.0f);
-	v3QuadPoints[2] = D3DXVECTOR3(1.0f, -1.0f, 0.0f);
-	v3QuadPoints[3] = D3DXVECTOR3(-1.0f, -1.0f, 0.0f);
+	v3QuadPoints[0] = Vector3(1.0f, 1.0f, 0.0f);
+	v3QuadPoints[1] = Vector3(-1.0f, 1.0f, 0.0f);
+	v3QuadPoints[2] = Vector3(1.0f, -1.0f, 0.0f);
+	v3QuadPoints[3] = Vector3(-1.0f, -1.0f, 0.0f);
 	SetSkyObjectQuadHorizon(&m_FaceCloud.m_SkyObjectQuadVector, v3QuadPoints);
 }
 
 void CSkyBox::SetCloudColor(const TGradientColor & c_rColor, const TGradientColor & c_rNextColor, const DWORD & dwTransitionTime)
 {
+	bool bColorIsBlack = (c_rColor.m_FirstColor.r < 0.01f && c_rColor.m_FirstColor.g < 0.01f &&
+	                      c_rColor.m_FirstColor.b < 0.01f && c_rColor.m_FirstColor.a < 0.01f);
+	bool bNextColorIsBlack = (c_rNextColor.m_FirstColor.r < 0.01f && c_rNextColor.m_FirstColor.g < 0.01f &&
+	                          c_rNextColor.m_FirstColor.b < 0.01f && c_rNextColor.m_FirstColor.a < 0.01f);
+
+	float fSrcR = bColorIsBlack ? 1.0f : c_rColor.m_FirstColor.r;
+	float fSrcG = bColorIsBlack ? 1.0f : c_rColor.m_FirstColor.g;
+	float fSrcB = bColorIsBlack ? 1.0f : c_rColor.m_FirstColor.b;
+	float fSrcA = bColorIsBlack ? 1.0f : c_rColor.m_FirstColor.a;
+	float fDstR = bNextColorIsBlack ? 1.0f : c_rNextColor.m_FirstColor.r;
+	float fDstG = bNextColorIsBlack ? 1.0f : c_rNextColor.m_FirstColor.g;
+	float fDstB = bNextColorIsBlack ? 1.0f : c_rNextColor.m_FirstColor.b;
+	float fDstA = bNextColorIsBlack ? 1.0f : c_rNextColor.m_FirstColor.a;
+
 	TSkyObjectFace & aFaceCloud = m_FaceCloud;
 	for (DWORD dwk = 0; dwk < aFaceCloud.m_SkyObjectQuadVector.size(); ++dwk)
 	{
 		CSkyObjectQuad & aSkyObjectQuad = aFaceCloud.m_SkyObjectQuadVector[dwk];
 
-		aSkyObjectQuad.SetSrcColor(0,
-			c_rColor.m_FirstColor.r,
-			c_rColor.m_FirstColor.g,
-			c_rColor.m_FirstColor.b,
-			c_rColor.m_FirstColor.a);
-		aSkyObjectQuad.SetTransition(0,
-			c_rNextColor.m_FirstColor.r,
-			c_rNextColor.m_FirstColor.g,
-			c_rNextColor.m_FirstColor.b,
-			c_rNextColor.m_FirstColor.a,
-			dwTransitionTime);
-		aSkyObjectQuad.SetSrcColor(1,
-			c_rColor.m_FirstColor.r,
-			c_rColor.m_FirstColor.g,
-			c_rColor.m_FirstColor.b,
-			c_rColor.m_FirstColor.a);
-		aSkyObjectQuad.SetTransition(1,
-			c_rNextColor.m_FirstColor.r,
-			c_rNextColor.m_FirstColor.g,
-			c_rNextColor.m_FirstColor.b,
-			c_rNextColor.m_FirstColor.a,
-			dwTransitionTime);
-		aSkyObjectQuad.SetSrcColor(2,
-			c_rColor.m_FirstColor.r,
-			c_rColor.m_FirstColor.g,
-			c_rColor.m_FirstColor.b,
-			c_rColor.m_FirstColor.a);
-		aSkyObjectQuad.SetTransition(2,
-			c_rNextColor.m_FirstColor.r,
-			c_rNextColor.m_FirstColor.g,
-			c_rNextColor.m_FirstColor.b,
-			c_rNextColor.m_FirstColor.a,
-			dwTransitionTime);
-		aSkyObjectQuad.SetSrcColor(3,
-			c_rColor.m_FirstColor.r,
-			c_rColor.m_FirstColor.g,
-			c_rColor.m_FirstColor.b,
-			c_rColor.m_FirstColor.a);
-		aSkyObjectQuad.SetTransition(3,
-			c_rNextColor.m_FirstColor.r,
-			c_rNextColor.m_FirstColor.g,
-			c_rNextColor.m_FirstColor.b,
-			c_rNextColor.m_FirstColor.a,
-			dwTransitionTime);
+		aSkyObjectQuad.SetSrcColor(0, fSrcR, fSrcG, fSrcB, fSrcA);
+		aSkyObjectQuad.SetTransition(0, fDstR, fDstG, fDstB, fDstA, dwTransitionTime);
+		aSkyObjectQuad.SetSrcColor(1, fSrcR, fSrcG, fSrcB, fSrcA);
+		aSkyObjectQuad.SetTransition(1, fDstR, fDstG, fDstB, fDstA, dwTransitionTime);
+		aSkyObjectQuad.SetSrcColor(2, fSrcR, fSrcG, fSrcB, fSrcA);
+		aSkyObjectQuad.SetTransition(2, fDstR, fDstG, fDstB, fDstA, dwTransitionTime);
+		aSkyObjectQuad.SetSrcColor(3, fSrcR, fSrcG, fSrcB, fSrcA);
+		aSkyObjectQuad.SetTransition(3, fDstR, fDstG, fDstB, fDstA, dwTransitionTime);
 	}
+}
+
+static TColor SampleGradient(const std::vector<TColor>& points, float t)
+{
+	int N = (int)points.size() - 1;
+	if (N <= 0) return points[0];
+
+	t = max(0.0f, min((float)N, t));
+	int seg = min((int)t, N - 1);
+	float f = t - (float)seg;
+
+	f = f * f * (3.0f - 2.0f * f);
+
+	const TColor& a = points[seg];
+	const TColor& b = points[seg + 1];
+
+	TColor result;
+	result.r = a.r + (b.r - a.r) * f;
+	result.g = a.g + (b.g - a.g) * f;
+	result.b = a.b + (b.b - a.b) * f;
+	result.a = a.a + (b.a - a.a) * f;
+	return result;
 }
 
 void CSkyBox::SetSkyColor(const TVectorGradientColor & c_rColorVector, const TVectorGradientColor & c_rNextColorVector, long lTransitionTime)
 {
-	unsigned long ulVectorGradientColornum = 0;
+	int numOriginal = (int)c_rColorVector.size();
+	std::vector<TColor> srcPoints, nextPoints;
+	srcPoints.reserve(numOriginal + 1);
+	nextPoints.reserve(numOriginal + 1);
+
+	if (numOriginal > 0)
+	{
+		srcPoints.push_back(c_rColorVector[0].m_FirstColor);
+		nextPoints.push_back(c_rNextColorVector[0].m_FirstColor);
+		for (int i = 0; i < numOriginal; ++i)
+		{
+			srcPoints.push_back(c_rColorVector[i].m_SecondColor);
+			nextPoints.push_back(c_rNextColorVector[i].m_SecondColor);
+		}
+	}
+
+	m_gradientSrc = srcPoints;
+	m_gradientDst = nextPoints;
+	m_lGradientTransitionDuration = lTransitionTime;
+	m_bGradientTransitionActive = false; // Will be activated by StartTransition()
+
+	int numSegments = numOriginal; // total gradient segments
 	unsigned long uck;
 	for (unsigned char ucj = 0; ucj < 4; ++ucj)
 	{
 		TSkyObjectFace & aFace = m_Faces[ucj];
-		ulVectorGradientColornum = 0;
-		for (uck = 0; uck < aFace.m_SkyObjectQuadVector.size(); ++uck)
+		DWORD dwTotalQuads = (DWORD)aFace.m_SkyObjectQuadVector.size();
+		if (dwTotalQuads == 0)
+			continue;
+
+		for (uck = 0; uck < dwTotalQuads; ++uck)
 		{
 			CSkyObjectQuad & aSkyObjectQuad = aFace.m_SkyObjectQuadVector[uck];
 
-			aSkyObjectQuad.SetSrcColor(0,
-				c_rColorVector[ulVectorGradientColornum].m_SecondColor.r,
-				c_rColorVector[ulVectorGradientColornum].m_SecondColor.g,
-				c_rColorVector[ulVectorGradientColornum].m_SecondColor.b,
-				c_rColorVector[ulVectorGradientColornum].m_SecondColor.a);
-			aSkyObjectQuad.SetTransition(0,
-				c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.r,
-				c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.g,
-				c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.b,
-				c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.a,
-				lTransitionTime);
-			aSkyObjectQuad.SetSrcColor(1,
-				c_rColorVector[ulVectorGradientColornum].m_FirstColor.r,
-				c_rColorVector[ulVectorGradientColornum].m_FirstColor.g,
-				c_rColorVector[ulVectorGradientColornum].m_FirstColor.b,
-				c_rColorVector[ulVectorGradientColornum].m_FirstColor.a);
-			aSkyObjectQuad.SetTransition(1,
-				c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.r,
-				c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.g,
-				c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.b,
-				c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.a,
-				lTransitionTime);
-			aSkyObjectQuad.SetSrcColor(2,
-				c_rColorVector[ulVectorGradientColornum].m_SecondColor.r,
-				c_rColorVector[ulVectorGradientColornum].m_SecondColor.g,
-				c_rColorVector[ulVectorGradientColornum].m_SecondColor.b,
-				c_rColorVector[ulVectorGradientColornum].m_SecondColor.a);
-			aSkyObjectQuad.SetTransition(2,
-				c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.r,
-				c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.g,
-				c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.b,
-				c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.a,
-				lTransitionTime);
-			aSkyObjectQuad.SetSrcColor(3,
-				c_rColorVector[ulVectorGradientColornum].m_FirstColor.r,
-				c_rColorVector[ulVectorGradientColornum].m_FirstColor.g,
-				c_rColorVector[ulVectorGradientColornum].m_FirstColor.b,
-				c_rColorVector[ulVectorGradientColornum].m_FirstColor.a);
-			aSkyObjectQuad.SetTransition(3,
-				c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.r,
-				c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.g,
-				c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.b,
-				c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.a,
-				lTransitionTime);
+			float tTop = (float)uck * (float)numSegments / (float)dwTotalQuads;
+			float tBot = (float)(uck + 1) * (float)numSegments / (float)dwTotalQuads;
 
-			ulVectorGradientColornum++;
+			TColor srcTop = SampleGradient(srcPoints, tTop);
+			TColor srcBot = SampleGradient(srcPoints, tBot);
+			TColor nextTop = SampleGradient(nextPoints, tTop);
+			TColor nextBot = SampleGradient(nextPoints, tBot);
+
+			// Vertices 0,2 = bottom edge, Vertices 1,3 = top edge
+			aSkyObjectQuad.SetSrcColor(0, srcBot.r, srcBot.g, srcBot.b, srcBot.a);
+			aSkyObjectQuad.SetTransition(0, nextBot.r, nextBot.g, nextBot.b, nextBot.a, lTransitionTime);
+			aSkyObjectQuad.SetSrcColor(1, srcTop.r, srcTop.g, srcTop.b, srcTop.a);
+			aSkyObjectQuad.SetTransition(1, nextTop.r, nextTop.g, nextTop.b, nextTop.a, lTransitionTime);
+			aSkyObjectQuad.SetSrcColor(2, srcBot.r, srcBot.g, srcBot.b, srcBot.a);
+			aSkyObjectQuad.SetTransition(2, nextBot.r, nextBot.g, nextBot.b, nextBot.a, lTransitionTime);
+			aSkyObjectQuad.SetSrcColor(3, srcTop.r, srcTop.g, srcTop.b, srcTop.a);
+			aSkyObjectQuad.SetTransition(3, nextTop.r, nextTop.g, nextTop.b, nextTop.a, lTransitionTime);
 		}
 	}
 
 	/////
 
 	TSkyObjectFace & aFaceTop = m_Faces[4];
-	ulVectorGradientColornum = 0;
-	for (uck = 0; uck < aFaceTop.m_SkyObjectQuadVector.size(); ++uck)
+	const TColor & srcZenith = srcPoints[0];
+	const TColor & nextZenith = nextPoints[0];
+	for (unsigned long uckTop = 0; uckTop < aFaceTop.m_SkyObjectQuadVector.size(); ++uckTop)
 	{
-		CSkyObjectQuad & aSkyObjectQuad = aFaceTop.m_SkyObjectQuadVector[uck];
-
-		aSkyObjectQuad.SetSrcColor(0,
-			c_rColorVector[ulVectorGradientColornum].m_FirstColor.r,
-			c_rColorVector[ulVectorGradientColornum].m_FirstColor.g,
-			c_rColorVector[ulVectorGradientColornum].m_FirstColor.b,
-			c_rColorVector[ulVectorGradientColornum].m_FirstColor.a);
-		aSkyObjectQuad.SetTransition(0,
-			c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.r,
-			c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.g,
-			c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.b,
-			c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.a,
-			lTransitionTime);
-		aSkyObjectQuad.SetSrcColor(1,
-			c_rColorVector[ulVectorGradientColornum].m_FirstColor.r,
-			c_rColorVector[ulVectorGradientColornum].m_FirstColor.g,
-			c_rColorVector[ulVectorGradientColornum].m_FirstColor.b,
-			c_rColorVector[ulVectorGradientColornum].m_FirstColor.a);
-		aSkyObjectQuad.SetTransition(1,
-			c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.r,
-			c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.g,
-			c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.b,
-			c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.a,
-			lTransitionTime);
-		aSkyObjectQuad.SetSrcColor(2,
-			c_rColorVector[ulVectorGradientColornum].m_FirstColor.r,
-			c_rColorVector[ulVectorGradientColornum].m_FirstColor.g,
-			c_rColorVector[ulVectorGradientColornum].m_FirstColor.b,
-			c_rColorVector[ulVectorGradientColornum].m_FirstColor.a);
-		aSkyObjectQuad.SetTransition(2,
-			c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.r,
-			c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.g,
-			c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.b,
-			c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.a,
-			lTransitionTime);
-		aSkyObjectQuad.SetSrcColor(3,
-			c_rColorVector[ulVectorGradientColornum].m_FirstColor.r,
-			c_rColorVector[ulVectorGradientColornum].m_FirstColor.g,
-			c_rColorVector[ulVectorGradientColornum].m_FirstColor.b,
-			c_rColorVector[ulVectorGradientColornum].m_FirstColor.a);
-		aSkyObjectQuad.SetTransition(3,
-			c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.r,
-			c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.g,
-			c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.b,
-			c_rNextColorVector[ulVectorGradientColornum].m_FirstColor.a,
-			lTransitionTime);
+		CSkyObjectQuad & aSkyObjectQuad = aFaceTop.m_SkyObjectQuadVector[uckTop];
+		for (unsigned char v = 0; v < 4; ++v)
+		{
+			aSkyObjectQuad.SetSrcColor(v, srcZenith.r, srcZenith.g, srcZenith.b, srcZenith.a);
+			aSkyObjectQuad.SetTransition(v, nextZenith.r, nextZenith.g, nextZenith.b, nextZenith.a, lTransitionTime);
+		}
 	}
-	TSkyObjectFace & aFaceBottom = m_Faces[5];
-	ulVectorGradientColornum = c_rColorVector.size() - 1;
-	for (uck = 0; uck < aFaceBottom.m_SkyObjectQuadVector.size(); ++uck)
-	{
-		CSkyObjectQuad & aSkyObjectQuad = aFaceBottom.m_SkyObjectQuadVector[uck];
 
-		aSkyObjectQuad.SetSrcColor(0,
-			c_rColorVector[ulVectorGradientColornum].m_SecondColor.r,
-			c_rColorVector[ulVectorGradientColornum].m_SecondColor.g,
-			c_rColorVector[ulVectorGradientColornum].m_SecondColor.b,
-			c_rColorVector[ulVectorGradientColornum].m_SecondColor.a);
-		aSkyObjectQuad.SetTransition(0,
-			c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.r,
-			c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.g,
-			c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.b,
-			c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.a,
-			lTransitionTime);
-		aSkyObjectQuad.SetSrcColor(1,
-			c_rColorVector[ulVectorGradientColornum].m_SecondColor.r,
-			c_rColorVector[ulVectorGradientColornum].m_SecondColor.g,
-			c_rColorVector[ulVectorGradientColornum].m_SecondColor.b,
-			c_rColorVector[ulVectorGradientColornum].m_SecondColor.a);
-		aSkyObjectQuad.SetTransition(1,
-			c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.r,
-			c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.g,
-			c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.b,
-			c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.a,
-			lTransitionTime);
-		aSkyObjectQuad.SetSrcColor(2,
-			c_rColorVector[ulVectorGradientColornum].m_SecondColor.r,
-			c_rColorVector[ulVectorGradientColornum].m_SecondColor.g,
-			c_rColorVector[ulVectorGradientColornum].m_SecondColor.b,
-			c_rColorVector[ulVectorGradientColornum].m_SecondColor.a);
-		aSkyObjectQuad.SetTransition(2,
-			c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.r,
-			c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.g,
-			c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.b,
-			c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.a,
-			lTransitionTime);
-		aSkyObjectQuad.SetSrcColor(3,
-			c_rColorVector[ulVectorGradientColornum].m_SecondColor.r,
-			c_rColorVector[ulVectorGradientColornum].m_SecondColor.g,
-			c_rColorVector[ulVectorGradientColornum].m_SecondColor.b,
-			c_rColorVector[ulVectorGradientColornum].m_SecondColor.a);
-		aSkyObjectQuad.SetTransition(3,
-			c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.r,
-			c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.g,
-			c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.b,
-			c_rNextColorVector[ulVectorGradientColornum].m_SecondColor.a,
-			lTransitionTime);
+	TSkyObjectFace & aFaceBottom = m_Faces[5];
+	const TColor & srcGround = srcPoints.back();
+	const TColor & nextGround = nextPoints.back();
+	for (unsigned long uckBot = 0; uckBot < aFaceBottom.m_SkyObjectQuadVector.size(); ++uckBot)
+	{
+		CSkyObjectQuad & aSkyObjectQuad = aFaceBottom.m_SkyObjectQuadVector[uckBot];
+		for (unsigned char v = 0; v < 4; ++v)
+		{
+			aSkyObjectQuad.SetSrcColor(v, srcGround.r, srcGround.g, srcGround.b, srcGround.a);
+			aSkyObjectQuad.SetTransition(v, nextGround.r, nextGround.g, nextGround.b, nextGround.a, lTransitionTime);
+		}
 	}
 }
 
 void CSkyBox::StartTransition()
 {
 	m_bTransitionStarted = true;
+	m_bGradientTransitionActive = true;
+	m_dwGradientTransitionStart = DX::StepTimer::instance().GetTotalMillieSeconds();
 	for (unsigned char ucj = 0; ucj < 6; ++ucj)
 		m_Faces[ucj].StartTransition();
 	m_FaceCloud.StartTransition();
@@ -788,6 +723,34 @@ void CSkyBox::StartTransition()
 void CSkyBox::Update()
 {
 	CSkyObject::Update();
+
+	if (!m_gradientSrc.empty())
+	{
+		int count = min((int)m_gradientSrc.size(), 8);
+		float blendFactor = 0.0f;
+
+		if (m_bGradientTransitionActive && m_lGradientTransitionDuration > 0)
+		{
+			DWORD dwElapsed = DX::StepTimer::instance().GetTotalMillieSeconds() - m_dwGradientTransitionStart;
+			blendFactor = min(1.0f, (float)dwElapsed / (float)m_lGradientTransitionDuration);
+			if (blendFactor >= 1.0f)
+				m_bGradientTransitionActive = false;
+		}
+
+		// Compute current blended gradient colors
+		float colors[8 * 4];
+		for (int i = 0; i < count; ++i)
+		{
+			const TColor& src = m_gradientSrc[i];
+			const TColor& dst = (i < (int)m_gradientDst.size()) ? m_gradientDst[i] : src;
+			colors[i * 4 + 0] = src.r + (dst.r - src.r) * blendFactor;
+			colors[i * 4 + 1] = src.g + (dst.g - src.g) * blendFactor;
+			colors[i * 4 + 2] = src.b + (dst.b - src.b) * blendFactor;
+			colors[i * 4 + 3] = src.a + (dst.a - src.a) * blendFactor;
+		}
+
+		SHADERMANAGER.SetSkyGradient(colors, count, (int)m_ucOriginalGradientLevelUpper);
+	}
 
 	if (!m_bTransitionStarted)
 		return;
@@ -802,122 +765,286 @@ void CSkyBox::Update()
 
 void CSkyBox::Render()
 {
-	STATEMANAGER.SaveRenderState(D3DRS_ZENABLE,	TRUE);
-	STATEMANAGER.SaveRenderState(D3DRS_ZWRITEENABLE, FALSE);
-	STATEMANAGER.SaveRenderState(D3DRS_LIGHTING, FALSE);
-	STATEMANAGER.SaveRenderState(D3DRS_FOGENABLE, FALSE);
-	STATEMANAGER.SaveRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+	SHADERMANAGER.PushState();
 
-	STATEMANAGER.SaveTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG2);
-	STATEMANAGER.SaveTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-	STATEMANAGER.SaveTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
+	SHADERMANAGER.SetPipelineState(PSTATE_DEPTHENABLE, TRUE);
+	SHADERMANAGER.SetPipelineState(PSTATE_DEPTHWRITEMASK, FALSE);
+	SHADERMANAGER.SetLightingEnabled(false);
+	SHADERMANAGER.SetFogEnabled(false);
+	SHADERMANAGER.SetPipelineState(PSTATE_BLENDENABLE, FALSE);
+	SHADERMANAGER.SetShaderResource(1, nullptr);
+	SHADERMANAGER.SetMatrix(MATRIX_WORLD, &m_matWorld);
 
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
-
-	STATEMANAGER.SetTexture(1, nullptr);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
-
- 	STATEMANAGER.SetFVF(D3DFVF_XYZ|D3DFVF_DIFFUSE|D3DFVF_TEX1);
-
-	STATEMANAGER.SetTransform(D3DTS_WORLD, &m_matWorld);
-
-	//Render Face
-	if( m_ucRenderMode == CSkyObject::SKY_RENDER_MODE_TEXTURE )
+	if (SHADERMANAGER.IsInitialized())
 	{
-		STATEMANAGER.SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
-		STATEMANAGER.SaveSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
-		STATEMANAGER.SaveSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+		SHADERMANAGER.BeginSky();
+		SHADERMANAGER.SetWorldMatrix(&m_matWorld);
+		SHADERMANAGER.SetDiffuseColor(1.0f, 1.0f, 1.0f, 1.0f);
+		SHADERMANAGER.SetSkyTint(0xFFFFFFFF);
+		SHADERMANAGER.CommitChanges();
+	}
+
+	if (m_ucRenderMode == CSkyObject::SKY_RENDER_MODE_TEXTURE)
+	{
+		SHADERMANAGER.SetMaterialParams(0.0f, 0.0f, 0.0f, 1.0f);
+
+		Matrix matTexIdentity;
+		MatrixIdentity(&matTexIdentity);
+
+		SHADERMANAGER.SetTextureMatrix(0, &matTexIdentity);
+		SHADERMANAGER.CommitChanges();
+
+		SHADERMANAGER.SetSamplerState(0, SAMPLER_ADDRESSU, ADDRESS_CLAMP);
+		SHADERMANAGER.SetSamplerState(0, SAMPLER_ADDRESSV, ADDRESS_CLAMP);
 
 		for (unsigned int i = 0; i < 6; ++i)
 		{
-			const CGraphicImageInstance * pFaceImageInstance = m_GraphicImageInstanceMap[m_Faces[i].m_strFaceTextureFileName];
+			CGraphicImageInstance* pFaceImageInstance =
+				m_GraphicImageInstanceMap[m_Faces[i].m_strFaceTextureFileName];
+
 			if (!pFaceImageInstance)
 				break;
 
-			STATEMANAGER.SetTexture( 0, pFaceImageInstance->GetTextureReference().GetD3DTexture() );
-
+			SHADERMANAGER.SetShaderResource(0, pFaceImageInstance->GetTextureReference().GetD3DTexture());
 			m_Faces[i].Render();
 		}
-
-		STATEMANAGER.RestoreSamplerState(0, D3DSAMP_ADDRESSU);
-		STATEMANAGER.RestoreSamplerState(0, D3DSAMP_ADDRESSV);
 	}
 	else
 	{
+		SHADERMANAGER.SetMaterialParams(0.0f, 0.0f, 0.0f, 0.0f);
+		SHADERMANAGER.SetDefaultTexture(0);
+		SHADERMANAGER.CommitChanges();
+
 		for (unsigned int i = 0; i < 6; ++i)
-		{
 			m_Faces[i].Render();
-		}
 	}
 
-	STATEMANAGER.RestoreRenderState(D3DRS_LIGHTING);
-	STATEMANAGER.RestoreRenderState(D3DRS_ZENABLE);
-	STATEMANAGER.RestoreRenderState(D3DRS_ZWRITEENABLE);
-	STATEMANAGER.RestoreRenderState(D3DRS_FOGENABLE);
-	STATEMANAGER.RestoreRenderState(D3DRS_ALPHABLENDENABLE);
+	SHADERMANAGER.SetMaterialParams(0.0f, 0.0f, 0.0f, 0.0f);
 
-	STATEMANAGER.RestoreTextureStageState(0, D3DTSS_COLOROP);
-	STATEMANAGER.RestoreTextureStageState(0, D3DTSS_COLORARG1);
-	STATEMANAGER.RestoreTextureStageState(0, D3DTSS_COLORARG2);
+#ifdef ENABLE_CELESTIAL_BODY
+	{
+		SHADERMANAGER.PushState();
+
+		SHADERMANAGER.SetPipelineState(PSTATE_BLENDENABLE, TRUE);
+		SHADERMANAGER.SetPipelineState(PSTATE_SRCBLEND, BLEND_SRCALPHA);
+		SHADERMANAGER.SetPipelineState(PSTATE_DESTBLEND, BLEND_INVSRCALPHA);
+		SHADERMANAGER.SetPipelineState(PSTATE_CULLMODE, CULL_NONE);
+
+		Vector3 vLN = m_vLightDirection;
+		float fLen = sqrtf(vLN.x * vLN.x + vLN.y * vLN.y + vLN.z * vLN.z);
+
+		if (fLen >= 0.001f)
+		{
+			vLN.x /= fLen;
+			vLN.y /= fLen;
+			vLN.z /= fLen;
+
+			float fBaseAngle = atan2f(-vLN.y, -vLN.x);
+
+			DWORD dwTime = DX::StepTimer::instance().GetTotalMillieSeconds();
+			float fTimeSec = (float)dwTime / 1000.0f;
+			const float fOrbitSpeed = 6.2831853f / 1200.0f;
+			float fTimeAngle = fTimeSec * fOrbitSpeed;
+
+			float fAngle = fBaseAngle + fTimeAngle;
+
+			if (m_bIsNight)
+				fAngle += 3.14159265f;
+
+			float fCosA = cosf(fAngle);
+			float fSinA = sinf(fAngle);
+
+			const float fElevBase = 0.10f;
+			const float fElevAmp = 0.04f;
+			const float fBodyDist = 0.88f;
+
+			float fBodyZ = fElevBase + fElevAmp * sinf(fTimeAngle * 2.0f);
+			Vector3 vBodyPos = { fCosA * fBodyDist, fSinA * fBodyDist, fBodyZ };
+
+			Vector3 vToBody = vBodyPos;
+			Vec3Normalize(&vToBody, &vToBody);
+
+			Vector3 vWorldUp(0.0f, 0.0f, 1.0f);
+			Vector3 vRight, vUp;
+
+			Vec3Cross(&vRight, &vToBody, &vWorldUp);
+			Vec3Normalize(&vRight, &vRight);
+			Vec3Cross(&vUp, &vRight, &vToBody);
+			Vec3Normalize(&vUp, &vUp);
+
+			CGraphicImageInstance* pTexInst =
+				m_bIsNight ? m_pMoonTextureInstance : m_pSunTextureInstance;
+
+			bool bHasTex = false;
+
+			if (pTexInst && !pTexInst->IsEmpty())
+			{
+				ID3D11ShaderResourceView* pSRV =
+					pTexInst->GetTextureReference().GetD3DTexture();
+
+				if (pSRV)
+				{
+					SHADERMANAGER.SetShaderResource(0, pSRV);
+					SHADERMANAGER.SetMaterialParams(0.0f, 0.0f, 0.0f, 0.3f);
+					bHasTex = true;
+				}
+			}
+
+			if (!bHasTex)
+			{
+				SHADERMANAGER.SetDefaultTexture(0);
+				SHADERMANAGER.SetMaterialParams(0.0f, 0.0f, 0.0f, 0.3f);
+			}
+
+			if (m_bIsNight)
+			{
+				SHADERMANAGER.SetPipelineState(PSTATE_SRCBLEND, BLEND_SRCALPHA);
+				SHADERMANAGER.SetPipelineState(PSTATE_DESTBLEND, BLEND_INVSRCALPHA);
+			}
+
+			SHADERMANAGER.CommitChanges();
+
+			DWORD dwBodyColor = m_bIsNight ? 0xFFC0C8D8 : 0xFFFFC850;
+			float fSize = m_bIsNight ? m_fMoonSize : m_fSunSize;
+
+			TPDTVertex bodyVerts[4];
+
+			bodyVerts[0].position.x = vBodyPos.x + (-vRight.x + vUp.x) * fSize;
+			bodyVerts[0].position.y = vBodyPos.y + (-vRight.y + vUp.y) * fSize;
+			bodyVerts[0].position.z = vBodyPos.z + (-vRight.z + vUp.z) * fSize;
+			bodyVerts[0].diffuse = dwBodyColor;
+			bodyVerts[0].texCoord.x = 0.0f; bodyVerts[0].texCoord.y = 0.0f;
+
+			bodyVerts[1].position.x = vBodyPos.x + (vRight.x + vUp.x) * fSize;
+			bodyVerts[1].position.y = vBodyPos.y + (vRight.y + vUp.y) * fSize;
+			bodyVerts[1].position.z = vBodyPos.z + (vRight.z + vUp.z) * fSize;
+			bodyVerts[1].diffuse = dwBodyColor;
+			bodyVerts[1].texCoord.x = 1.0f; bodyVerts[1].texCoord.y = 0.0f;
+
+			bodyVerts[2].position.x = vBodyPos.x + (-vRight.x - vUp.x) * fSize;
+			bodyVerts[2].position.y = vBodyPos.y + (-vRight.y - vUp.y) * fSize;
+			bodyVerts[2].position.z = vBodyPos.z + (-vRight.z - vUp.z) * fSize;
+			bodyVerts[2].diffuse = dwBodyColor;
+			bodyVerts[2].texCoord.x = 0.0f; bodyVerts[2].texCoord.y = 1.0f;
+
+			bodyVerts[3].position.x = vBodyPos.x + (vRight.x - vUp.x) * fSize;
+			bodyVerts[3].position.y = vBodyPos.y + (vRight.y - vUp.y) * fSize;
+			bodyVerts[3].position.z = vBodyPos.z + (vRight.z - vUp.z) * fSize;
+			bodyVerts[3].diffuse = dwBodyColor;
+			bodyVerts[3].texCoord.x = 1.0f; bodyVerts[3].texCoord.y = 1.0f;
+
+			if (CGraphicBase::SetPDTStream(bodyVerts, 4))
+				SHADERMANAGER.Draw(TOPOLOGY_TRIANGLESTRIP, 0, 2);
+		}
+
+		SHADERMANAGER.PopState();
+	}
+#endif
+
+	SHADERMANAGER.PopState();
 }
 
 void CSkyBox::RenderCloud()
 {
-	CGraphicImageInstance * pCloudGraphicImageInstance = m_GraphicImageInstanceMap[m_FaceCloud.m_strfacename];
+	CGraphicImageInstance* pCloudGraphicImageInstance =
+		m_GraphicImageInstanceMap[m_FaceCloud.m_strfacename];
+
 	if (!pCloudGraphicImageInstance)
 		return;
 
-	STATEMANAGER.SaveRenderState(D3DRS_ZENABLE,	TRUE);
-	STATEMANAGER.SaveRenderState(D3DRS_ZWRITEENABLE, FALSE);
-	STATEMANAGER.SaveRenderState(D3DRS_LIGHTING, FALSE);
-	STATEMANAGER.SaveRenderState(D3DRS_FOGENABLE, FALSE);
-	STATEMANAGER.SaveRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-	STATEMANAGER.SaveRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE);
-	STATEMANAGER.SaveRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCCOLOR);
+	SHADERMANAGER.PushState();
 
-	STATEMANAGER.SaveTextureStageState(0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
+	SHADERMANAGER.SetPipelineState(PSTATE_DEPTHENABLE, TRUE);
+	SHADERMANAGER.SetPipelineState(PSTATE_DEPTHWRITEMASK, FALSE);
+	SHADERMANAGER.SetLightingEnabled(false);
+	SHADERMANAGER.SetFogEnabled(false);
+	SHADERMANAGER.SetPipelineState(PSTATE_BLENDENABLE, TRUE);
+	SHADERMANAGER.SetPipelineState(PSTATE_SRCBLEND, BLEND_ONE);
+	SHADERMANAGER.SetPipelineState(PSTATE_DESTBLEND, BLEND_INVSRCCOLOR);
 
-	m_matTextureCloud._31 = m_fCloudPositionU;
-	m_matTextureCloud._32 = m_fCloudPositionV;
+	m_matTextureCloud._41 = m_fCloudPositionU;
+	m_matTextureCloud._42 = m_fCloudPositionV;
 
-	const DWORD dwCurTime = CTimer::Instance().GetCurrentMillisecond();
+	DWORD dwCurTime = DX::StepTimer::instance().GetTotalMillieSeconds();
 
-	m_fCloudPositionU += m_fCloudScrollSpeedU * (float)( dwCurTime - m_dwlastTime ) * 0.001f;
+	m_fCloudPositionU += m_fCloudScrollSpeedU * (float)(dwCurTime - m_dwlastTime) * 0.001f;
 	if (m_fCloudPositionU >= 1.0f)
 		m_fCloudPositionU = 0.0f;
 
-	m_fCloudPositionV += m_fCloudScrollSpeedV * (float)( dwCurTime - m_dwlastTime ) * 0.001f;
+	m_fCloudPositionV += m_fCloudScrollSpeedV * (float)(dwCurTime - m_dwlastTime) * 0.001f;
 	if (m_fCloudPositionV >= 1.0f)
 		m_fCloudPositionV = 0.0f;
 
 	m_dwlastTime = dwCurTime;
 
-	STATEMANAGER.SaveTransform(D3DTS_TEXTURE0, &m_matTextureCloud);
+	SHADERMANAGER.SetMatrix(MATRIX_TEXTURE0, &m_matTextureCloud);
 
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATEINVALPHA_ADDCOLOR);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
- 	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+	Matrix matProjCloud;
+	const D3D11_VIEWPORT& viewport = CGraphicBase::GetViewport();
+	float fAspect = viewport.Height > 0 ? viewport.Width / viewport.Height : 1.33333f;
 
-	D3DXMATRIX matProjCloud;
-	D3DXMatrixPerspectiveFovRH(&matProjCloud, D3DX_PI * 0.25f, 1.33333f, 50.0f, 999999.0f);
-	STATEMANAGER.SetTransform(D3DTS_WORLD, &m_matWorldCloud);
-	STATEMANAGER.SaveTransform(D3DTS_PROJECTION, &matProjCloud);
-	STATEMANAGER.SetTexture(0, pCloudGraphicImageInstance->GetTexturePointer()->GetD3DTexture());
+	MatrixPerspectiveFovRH(&matProjCloud, MATH_PI * 0.25f, fAspect, 1.0f, 999999.0f);
+
+	SHADERMANAGER.SetMatrix(MATRIX_WORLD, &m_matWorldCloud);
+	SHADERMANAGER.SetMatrix(MATRIX_PROJECTION, &matProjCloud);
+
+	CGraphicTexture* pCloudTexture = pCloudGraphicImageInstance->GetTexturePointer();
+
+	if (!pCloudTexture)
+	{
+		SHADERMANAGER.PopState();
+		return;
+	}
+
+	SHADERMANAGER.SetShaderResource(0, pCloudTexture->GetD3DTexture());
+
+	if (SHADERMANAGER.IsInitialized())
+	{
+		SHADERMANAGER.BeginSky();
+		SHADERMANAGER.SetWorldMatrix(&m_matWorldCloud);
+		SHADERMANAGER.SetDiffuseColor(1.0f, 1.0f, 1.0f, 1.0f);
+		SHADERMANAGER.SetSkyTint(0xFFFFFFFF);
+		SHADERMANAGER.SetMaterialParams(0.0f, 0.0f, 0.0f, 1.0f);
+		SHADERMANAGER.CommitChanges();
+	}
+
 	m_FaceCloud.Render();
-	STATEMANAGER.RestoreTransform(D3DTS_PROJECTION);
 
-	STATEMANAGER.RestoreTransform(D3DTS_TEXTURE0);
-	STATEMANAGER.RestoreTextureStageState(0, D3DTSS_TEXTURETRANSFORMFLAGS);
-
-	STATEMANAGER.RestoreRenderState(D3DRS_LIGHTING);
-	STATEMANAGER.RestoreRenderState(D3DRS_ZENABLE);
-	STATEMANAGER.RestoreRenderState(D3DRS_ZWRITEENABLE);
-	STATEMANAGER.RestoreRenderState(D3DRS_FOGENABLE);
-	STATEMANAGER.RestoreRenderState(D3DRS_ALPHABLENDENABLE);
-	STATEMANAGER.RestoreRenderState(D3DRS_SRCBLEND);
-	STATEMANAGER.RestoreRenderState(D3DRS_DESTBLEND);
+	SHADERMANAGER.PopState();
 }
 
+#ifdef ENABLE_CELESTIAL_BODY
+void CSkyBox::SetCelestialBodyTexture(const char* szSunTexture, const char* szMoonTexture)
+{
+	if (m_pSunTextureInstance)
+	{
+		DeleteTexture(m_pSunTextureInstance);
+		m_pSunTextureInstance = nullptr;
+	}
+
+	if (m_pMoonTextureInstance)
+	{
+		DeleteTexture(m_pMoonTextureInstance);
+		m_pMoonTextureInstance = nullptr;
+	}
+
+	m_bCelestialReady = false;
+
+	if (szSunTexture && strlen(szSunTexture) > 0)
+		m_pSunTextureInstance = GenerateTexture(szSunTexture);
+
+	if (szMoonTexture && strlen(szMoonTexture) > 0)
+		m_pMoonTextureInstance = GenerateTexture(szMoonTexture);
+
+	m_bCelestialReady =
+		m_pSunTextureInstance != nullptr ||
+		m_pMoonTextureInstance != nullptr;
+}
+
+void CSkyBox::SetLightDirection(const Vector3& vLightDir, bool bIsNight)
+{
+	m_vLightDirection = vLightDir;
+	m_bIsNight = bIsNight;
+}
+#endif
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

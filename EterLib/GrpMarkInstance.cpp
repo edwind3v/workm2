@@ -1,6 +1,6 @@
 #include "StdAfx.h"
 #include "GrpMarkInstance.h"
-#include "StateManager.h"
+#include "ShaderManager.h"
 #include "ResourceManager.h"
 
 #include "../eterBase/CRC32.h"
@@ -38,6 +38,7 @@ void CGraphicMarkInstance::Delete(CGraphicMarkInstance* pkImgInst)
 	ms_kPool.Free(pkImgInst);
 }
 
+
 #if defined(__BL_CLIP_MASK__)
 void CGraphicMarkInstance::Render(RECT* rMask)
 #else
@@ -49,7 +50,7 @@ void CGraphicMarkInstance::Render()
 
 	assert(!IsEmpty());
 
-#if defined(__BL_CLIP_MASK__)
+	#if defined(__BL_CLIP_MASK__)
 	OnRender(rMask);
 #else
 	OnRender();
@@ -90,10 +91,10 @@ void CGraphicMarkInstance::OnRender()
 	const float fRenderHeight=MARK_HEIGHT*m_fScale;
 
 #if defined(__BL_CLIP_MASK__)
-	float v1 = m_v2Position.x - 0.5f;
-	float v2 = m_v2Position.y - 0.5f;
-	float v3 = m_v2Position.x + fRenderWidth - 0.5f;
-	float v4 = m_v2Position.y + fRenderHeight - 0.5f;
+	float v1 = m_v2Position.x;
+	float v2 = m_v2Position.y;
+	float v3 = m_v2Position.x + fRenderWidth;
+	float v4 = m_v2Position.y + fRenderHeight;
 
 	if (rMask)
 	{
@@ -169,26 +170,26 @@ void CGraphicMarkInstance::OnRender()
 	vertices[3].diffuse = m_DiffuseColor;
 #else
 	TPDTVertex vertices[4];
-	vertices[0].position.x = m_v2Position.x - 0.5f;
-	vertices[0].position.y = m_v2Position.y - 0.5f;
+	vertices[0].position.x = m_v2Position.x;
+	vertices[0].position.y = m_v2Position.y;
 	vertices[0].position.z = 0.0f;
 	vertices[0].texCoord = TTextureCoordinate(su, sv);
 	vertices[0].diffuse = m_DiffuseColor;
 
-	vertices[1].position.x = m_v2Position.x + fRenderWidth - 0.5f;
-	vertices[1].position.y = m_v2Position.y - 0.5f;
+	vertices[1].position.x = m_v2Position.x + fRenderWidth;
+	vertices[1].position.y = m_v2Position.y;
 	vertices[1].position.z = 0.0f;
 	vertices[1].texCoord = TTextureCoordinate(eu, sv);
 	vertices[1].diffuse = m_DiffuseColor;
 
-	vertices[2].position.x = m_v2Position.x - 0.5f;
-	vertices[2].position.y = m_v2Position.y + fRenderHeight - 0.5f;
+	vertices[2].position.x = m_v2Position.x;
+	vertices[2].position.y = m_v2Position.y + fRenderHeight;
 	vertices[2].position.z = 0.0f;
 	vertices[2].texCoord = TTextureCoordinate(su, ev);
 	vertices[2].diffuse = m_DiffuseColor;
 
-	vertices[3].position.x = m_v2Position.x + fRenderWidth - 0.5f;
-	vertices[3].position.y = m_v2Position.y + fRenderHeight - 0.5f;
+	vertices[3].position.x = m_v2Position.x + fRenderWidth;
+	vertices[3].position.y = m_v2Position.y + fRenderHeight;
 	vertices[3].position.z = 0.0f;
 	vertices[3].texCoord = TTextureCoordinate(eu, ev);
 	vertices[3].diffuse = m_DiffuseColor;
@@ -198,11 +199,15 @@ void CGraphicMarkInstance::OnRender()
 	{
 		CGraphicBase::SetDefaultIndexBuffer(CGraphicBase::DEFAULT_IB_FILL_RECT);
 
-		STATEMANAGER.SetTexture(0, pTexture->GetD3DTexture());
-		STATEMANAGER.SetTexture(1, nullptr);
-		STATEMANAGER.SetFVF(D3DFVF_XYZ|D3DFVF_DIFFUSE|D3DFVF_TEX1);
-		STATEMANAGER.DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 4, 0, 2, 0);
-		//OLD: STATEMANAGER.DrawIndexedPrimitiveUP(D3DPT_TRIANGLELIST, 0, 4, 2, c_FillRectIndices, D3DFMT_INDEX16, vertices, sizeof(TPDTVertex));
+		if (SHADERMANAGER.IsInitialized())
+		{
+			SHADERMANAGER.BeginUI();
+			SHADERMANAGER.CommitChanges();
+		}
+
+		SHADERMANAGER.SetShaderResource(0, pTexture->GetD3DTexture());
+		SHADERMANAGER.SetShaderResource(1, NULL);
+		SHADERMANAGER.DrawIndexed(TOPOLOGY_TRIANGLELIST, 0, 4, 0, 2);
 	}
 }
 
@@ -333,7 +338,7 @@ void CGraphicMarkInstance::Initialize()
 
 void CGraphicMarkInstance::Destroy()
 {
-	m_roImage.SetPointer(nullptr);
+	m_roImage.SetPointer(NULL);
 	Initialize();
 }
 
@@ -346,4 +351,4 @@ CGraphicMarkInstance::~CGraphicMarkInstance()
 {
 	Destroy();
 }
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

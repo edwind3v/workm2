@@ -17,14 +17,14 @@
 
 struct HardwareTransformPatch_SSourceVertex
 {
-	D3DXVECTOR3 kPosition;
-	D3DXVECTOR3 kNormal;
+	Vector3 kPosition;
+	Vector3 kNormal;
 };
 
 struct SoftwareTransformPatch_SSourceVertex
 {
-	D3DXVECTOR3 kPosition;
-	D3DXVECTOR3 kNormal;
+	Vector3 kPosition;
+	Vector3 kNormal;
 	DWORD		dwDiffuse;
 };
 
@@ -61,41 +61,41 @@ public:
 	void ClearID()											{ SetID(0xFFFFFFFF); }
 
 	void SetMinX(float fMinX)								{ m_fMinX = fMinX; }
-	float GetMinX() const { return m_fMinX; }
+	float GetMinX()											{ return m_fMinX; }
 
 	void SetMaxX(float fMaxX)								{ m_fMaxX = fMaxX; }
-	float GetMaxX() const { return m_fMaxX; }
+	float GetMaxX()											{ return m_fMaxX; }
 
 	void SetMinY(float fMinY)								{ m_fMinY = fMinY; }
-	float GetMinY() const { return m_fMinY; }
+	float GetMinY()											{ return m_fMinY; }
 
 	void SetMaxY(float fMaxY)								{ m_fMaxY = fMaxY; }
-	float GetMaxY() const { return m_fMaxY; }
+	float GetMaxY()											{ return m_fMaxY; }
 
 	void SetMinZ(float fMinZ)								{ m_fMinZ = fMinZ; }
-	float GetMinZ() const { return m_fMinZ; }
+	float GetMinZ()											{ return m_fMinZ; }
 
 	void SetMaxZ(float fMaxZ)								{ m_fMaxZ = fMaxZ; }
-	float GetMaxZ() const { return m_fMaxZ; }
+	float GetMaxZ()											{ return m_fMaxZ; }
 
-	bool IsUse() const { return m_bUse; }
+	bool IsUse()											{ return m_bUse; }
 	void SetUse(bool bUse)									{ m_bUse = bUse; }
 
-	bool IsWaterExist() const { return m_bWaterExist; }
+	bool IsWaterExist()										{ return m_bWaterExist; }
 	void SetWaterExist(bool bWaterExist)					{ m_bWaterExist = bWaterExist; }
 
-	DWORD GetID() const { return m_dwID; }
+	DWORD GetID()											{ return m_dwID; }
 	void SetID(DWORD dwID)									{ m_dwID = dwID; }
 
 	void SetType(BYTE byType)								{ m_byType = byType; }
-	BYTE GetType() const { return m_byType; }
+	BYTE GetType()											{ return m_byType; }
 
 	void NeedUpdate(bool bNeedUpdate)						{ m_bNeedUpdate = bNeedUpdate;}
-	bool NeedUpdate() const { return m_bNeedUpdate; }
+	bool NeedUpdate()										{ return m_bNeedUpdate; }
 
-	UINT GetWaterFaceCount() const;
+	UINT GetWaterFaceCount();
 
-	void SoftwareTransformPatch_UpdateTerrainLighting(DWORD dwVersion, const D3DLIGHT9& c_rkLight, const D3DMATERIAL9& c_rkMtrl);
+	void SoftwareTransformPatch_UpdateTerrainLighting(DWORD dwVersion, const TLight& c_rkLight, const TGraphicMaterial& c_rkMtrl);
 
 	void BuildTerrainVertexBuffer(HardwareTransformPatch_SSourceVertex* akSrcVertex);
 	void BuildWaterVertexBuffer(SWaterVertex* akSrcVertex, UINT uWaterVertexCount);
@@ -135,7 +135,7 @@ protected:
 	} m_kHT;
 
 public:
-	SoftwareTransformPatch_SSourceVertex* SoftwareTransformPatch_GetTerrainVertexDataPtr() const
+	SoftwareTransformPatch_SSourceVertex* SoftwareTransformPatch_GetTerrainVertexDataPtr()
 	{return m_kST.m_akTerrainVertex;}
 
 protected:
@@ -161,38 +161,38 @@ public:
 
 	void Clear();
 
-	void SetCenterPosition(const D3DXVECTOR3& c_rv3Center);
+	void SetCenterPosition(const Vector3& c_rv3Center);
 
-	bool IsIn(const D3DXVECTOR3& c_rv3Target, float fRadius) const;
+	bool IsIn(const Vector3& c_rv3Target, float fRadius);
 
-	bool isUsed() const { return m_bUsed; }
+	bool isUsed()																	{ return m_bUsed; }
 	void SetUsed(bool bUsed)														{ m_bUsed = bUsed; }
 
-	short GetPatchNum() const { return m_sPatchNum; }
+	short GetPatchNum()																{ return m_sPatchNum; }
 	void SetPatchNum(short sPatchNum)												{ m_sPatchNum = sPatchNum; }
 
-	BYTE GetTerrainNum() const { return m_byTerrainNum; }
+	BYTE GetTerrainNum()															{ return m_byTerrainNum; }
 	void SetTerrainNum(BYTE byTerrainNum)											{ m_byTerrainNum = byTerrainNum; }
 
 	void SetTerrainPatch(CTerrainPatch * pTerrainPatch)								{ m_pTerrainPatch = pTerrainPatch;}
 
-	bool isWaterExists() const;
+	bool isWaterExists();
 
-	UINT GetWaterFaceCount() const;
+	UINT GetWaterFaceCount();
 
-	float GetMinX() const;
-	float GetMaxX() const;
-	float GetMinY() const;
-	float GetMaxY() const;
-	float GetMinZ() const;
-	float GetMaxZ() const;
+	float GetMinX();
+	float GetMaxX();
+	float GetMinY();
+	float GetMaxY();
+	float GetMinZ();
+	float GetMaxZ();
 
 	// Vertex Buffer
-	CGraphicVertexBuffer * GetWaterVertexBufferPointer() const;
-	SoftwareTransformPatch_SSourceVertex* SoftwareTransformPatch_GetTerrainVertexDataPtr() const;
-	CGraphicVertexBuffer* HardwareTransformPatch_GetVertexBufferPtr() const;
+	CGraphicVertexBuffer * GetWaterVertexBufferPointer();
+	SoftwareTransformPatch_SSourceVertex* SoftwareTransformPatch_GetTerrainVertexDataPtr();
+	CGraphicVertexBuffer* HardwareTransformPatch_GetVertexBufferPtr();
 
-	void SoftwareTransformPatch_UpdateTerrainLighting(DWORD dwVersion, const D3DLIGHT9& c_rkLight, const D3DMATERIAL9& c_rkMtrl) const;
+	void SoftwareTransformPatch_UpdateTerrainLighting(DWORD dwVersion, const TLight& c_rkLight, const TGraphicMaterial& c_rkMtrl);
 
 protected:
 	bool					m_bUsed;
@@ -202,48 +202,48 @@ protected:
 
 	CTerrainPatch *			m_pTerrainPatch;
 
-	D3DXVECTOR3				m_v3Center;
+	Vector3				m_v3Center;
 };
 
-inline bool CTerrainPatchProxy::isWaterExists() const
+inline bool CTerrainPatchProxy::isWaterExists()
 {
 	return m_pTerrainPatch->IsWaterExist();
 }
 
-inline float CTerrainPatchProxy::GetMinX() const
+inline float CTerrainPatchProxy::GetMinX()
 {
 	return m_pTerrainPatch->GetMinX();
 }
 
-inline float CTerrainPatchProxy::GetMaxX() const
+inline float CTerrainPatchProxy::GetMaxX()
 {
 	return m_pTerrainPatch->GetMaxX();
 }
 
-inline float CTerrainPatchProxy::GetMinY() const
+inline float CTerrainPatchProxy::GetMinY()
 {
 	return m_pTerrainPatch->GetMinY();
 }
 
-inline float CTerrainPatchProxy::GetMaxY() const
+inline float CTerrainPatchProxy::GetMaxY()
 {
 	return m_pTerrainPatch->GetMaxY();
 }
 
-inline float CTerrainPatchProxy::GetMinZ() const
+inline float CTerrainPatchProxy::GetMinZ()
 {
 	return m_pTerrainPatch->GetMinZ();
 }
 
-inline float CTerrainPatchProxy::GetMaxZ() const
+inline float CTerrainPatchProxy::GetMaxZ()
 {
 	return m_pTerrainPatch->GetMaxZ();
 }
 
-inline CGraphicVertexBuffer * CTerrainPatchProxy::GetWaterVertexBufferPointer() const
+inline CGraphicVertexBuffer * CTerrainPatchProxy::GetWaterVertexBufferPointer()
 {
 	return m_pTerrainPatch->GetWaterVertexBufferPointer();
 }
 
 #endif // !defined(AFX_TERRAINPATCH_H__CDD52438_D542_433C_8748_3A15C910A65E__INCLUDED_)
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

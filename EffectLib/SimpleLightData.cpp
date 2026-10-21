@@ -143,9 +143,9 @@ float CLightData::GetDuration() const
 {
 	return m_fDuration;
 }
-void CLightData::InitializeLight(D3DLIGHT9& light)
+void CLightData::InitializeLight(TLight& light)
 {
-	light.Type = D3DLIGHT_POINT;
+	light.Type = LIGHT_POINT;
 
 	light.Ambient = m_cAmbient;
 	light.Diffuse = m_cDiffuse;
@@ -153,7 +153,7 @@ void CLightData::InitializeLight(D3DLIGHT9& light)
 	light.Attenuation1 = m_fAttenuation1;
 	light.Attenuation2 = m_fAttenuation2;
 
-	D3DXVECTOR3 position;
+	Vector3 position;
 	GetPosition( 0.0f, position);
 	light.Position = position;
 

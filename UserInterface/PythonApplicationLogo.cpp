@@ -1,215 +1,276 @@
 #include "StdAfx.h"
 #include "PythonApplication.h"
+#include "../eterLib/ShaderManager.h"
+
+/*
+ * PythonApplicationLogo.cpp
+ * DX11 Native Logo/Video Playback using Media Foundation Source Reader
+ *
+ * Replaces legacy DirectShow SampleGrabber implementation with modern
+ * Media Foundation IMFSourceReader for frame-by-frame video capture.
+ */
 
 static bool bInitializedLogo = false;
 
 int CPythonApplication::OnLogoOpen(char* szName)
 {
-	m_pLogoTex = nullptr;
-	m_pLogoTex = new CGraphicImageTexture();
-	m_pCaptureBuffer = nullptr;
-	m_lBufferSize = 0;
-	m_bLogoError = true;
-	m_bLogoPlay = false;
+    m_pLogoTex = nullptr;
+    m_pLogoTex = new CGraphicImageTexture();
+    m_pCaptureBuffer = nullptr;
+    m_lBufferSize = 0;
+    m_bLogoError = true;
+    m_bLogoPlay = false;
+    m_pSourceReader = nullptr;
+    m_nVideoWidth = 0;
+    m_nVideoHeight = 0;
 
-	m_pGraphBuilder = nullptr;
-	m_pFilterSG = nullptr;
-	m_pSampleGrabber = nullptr;
-	m_pMediaCtrl = nullptr;
-	m_pMediaEvent = nullptr;
-	m_pVideoWnd = nullptr;
-	m_pBasicVideo = nullptr;
+    m_nLeft = 0; m_nRight = 0; m_nTop = 0; m_nBottom = 0;
 
-	m_nLeft = 0; m_nRight = 0; m_nTop = 0; m_nBottom = 0;
+    // Create initial 1x1 texture
+    if (!m_pLogoTex->Create(1, 1, DXGI_FORMAT_B8G8R8A8_UNORM))
+    {
+        return 0;
+    }
 
-	if(!m_pLogoTex->Create(1, 1, D3DFMT_A8R8G8B8)) { return 0; }
+    // Initialize Media Foundation (if not already done)
+    HRESULT hr = MFStartup(MF_VERSION);
+    if (FAILED(hr))
+    {
+        TraceError("OnLogoOpen: MFStartup failed (hr=0x%08X)", hr);
+        return 0;
+    }
 
-	// Set GraphBuilder / SampleGrabber
-	if(FAILED(CoCreateInstance(CLSID_FilterGraph, nullptr, CLSCTX_INPROC_SERVER, IID_IGraphBuilder, (VOID**)(&m_pGraphBuilder)))) { return 0; }
-	if(FAILED(CoCreateInstance(CLSID_SampleGrabber, nullptr, CLSCTX_INPROC_SERVER, IID_IBaseFilter, (VOID**)&m_pFilterSG))) { return 0; }
-	if(FAILED(m_pGraphBuilder->AddFilter(m_pFilterSG, L"SampleGrabber"))) { return 0; }
+    // Convert filename to wide string
+    WCHAR wFileName[MAX_PATH];
+    MultiByteToWideChar(CP_ACP, 0, szName, -1, wFileName, MAX_PATH);
 
-	// Create Media Type
-	AM_MEDIA_TYPE mediaType;
-	ZeroMemory(&mediaType, sizeof(mediaType));
-	mediaType.majortype = MEDIATYPE_Video;
-	mediaType.subtype = MEDIASUBTYPE_RGB32;
-	if(FAILED(m_pFilterSG->QueryInterface(IID_ISampleGrabber, (VOID**) &m_pSampleGrabber))) { return 0; }
-	if(FAILED(m_pSampleGrabber->SetMediaType( &mediaType))) { return 0; }
+    // Create source reader attributes
+    IMFAttributes* pAttributes = nullptr;
+    hr = MFCreateAttributes(&pAttributes, 1);
+    if (FAILED(hr))
+    {
+        TraceError("OnLogoOpen: MFCreateAttributes failed (hr=0x%08X)", hr);
+        return 0;
+    }
 
-	// Render File
-	WCHAR wFileName[ MAX_PATH ];
-	MultiByteToWideChar(CP_ACP, 0, szName, -1, wFileName, MAX_PATH);
-	if(FAILED(m_pGraphBuilder->RenderFile(wFileName, nullptr))) { return 0; }
+    // Enable video processing for format conversion
+    pAttributes->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
 
-	IBaseFilter* pSrc;
-	m_pGraphBuilder->AddSourceFilter(wFileName, L"Source", &pSrc);
+    // Create source reader
+    hr = MFCreateSourceReaderFromURL(wFileName, pAttributes, &m_pSourceReader);
+    pAttributes->Release();
 
-	// Media Control
-	if(FAILED(m_pGraphBuilder->QueryInterface(IID_IMediaControl, (VOID**) &m_pMediaCtrl))) { return 0; }
+    if (FAILED(hr))
+    {
+        TraceError("OnLogoOpen: MFCreateSourceReaderFromURL failed (hr=0x%08X)", hr);
+        return 0;
+    }
 
-	// Video Window
-	if(FAILED(m_pGraphBuilder->QueryInterface(IID_IVideoWindow, (VOID**) &m_pVideoWnd))) { return 0; }
-	if(FAILED(m_pVideoWnd->put_MessageDrain((OAHWND)this->m_hWnd))) { return 0; }
+    // Configure output format to RGB32
+    IMFMediaType* pMediaType = nullptr;
+    hr = MFCreateMediaType(&pMediaType);
+    if (FAILED(hr))
+    {
+        TraceError("OnLogoOpen: MFCreateMediaType failed (hr=0x%08X)", hr);
+        return 0;
+    }
 
-	// Basic Video
-	if(FAILED(m_pGraphBuilder->QueryInterface(IID_IBasicVideo, (VOID**)&m_pBasicVideo))) { return 0; }
+    pMediaType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+    pMediaType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
 
-	// Media Event
-	if(FAILED(m_pGraphBuilder->QueryInterface(IID_IMediaEventEx, (VOID**) &m_pMediaEvent))) { return 0; }
+    hr = m_pSourceReader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, pMediaType);
+    pMediaType->Release();
 
-	m_pVideoWnd->SetWindowPosition( 3000, 3000, 0, 0 );
-	m_pVideoWnd->put_Visible(0);
-	m_pSampleGrabber->SetBufferSamples(TRUE);
+    if (FAILED(hr))
+    {
+        TraceError("OnLogoOpen: SetCurrentMediaType failed (hr=0x%08X)", hr);
+        return 0;
+    }
 
-	m_pVideoWnd->put_Owner((OAHWND)m_hWnd);
-	m_pMediaEvent->SetNotifyWindow((OAHWND)m_hWnd, WM_APP + 1, 0);
+    // Get actual output format to retrieve video dimensions
+    IMFMediaType* pOutputType = nullptr;
+    hr = m_pSourceReader->GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, &pOutputType);
+    if (SUCCEEDED(hr))
+    {
+        MFGetAttributeSize(pOutputType, MF_MT_FRAME_SIZE, &m_nVideoWidth, &m_nVideoHeight);
+        pOutputType->Release();
+    }
 
-	bInitializedLogo = true;
+    if (m_nVideoWidth == 0 || m_nVideoHeight == 0)
+    {
+        m_nVideoWidth = 640;
+        m_nVideoHeight = 480;
+    }
 
-	return 1;
+    bInitializedLogo = true;
+    return 1;
 }
 
 int CPythonApplication::OnLogoUpdate()
 {
-	if(m_pGraphBuilder == nullptr || m_pFilterSG == nullptr || m_pSampleGrabber == nullptr || m_pMediaCtrl == nullptr || m_pMediaEvent == nullptr || m_pVideoWnd == nullptr || false == bInitializedLogo)
-	{
-		return 0;
-	}
+    if (m_pSourceReader == nullptr || !bInitializedLogo)
+    {
+        return 0;
+    }
 
-	BYTE* pBuffer = m_pCaptureBuffer; LONG lBufferSize = m_lBufferSize;
+    m_bLogoPlay = true;
 
-	if(!m_bLogoPlay) { m_pMediaCtrl->Run(); m_bLogoPlay = true; }
+    // Read next video frame
+    DWORD dwStreamIndex, dwFlags;
+    LONGLONG llTimestamp;
+    IMFSample* pSample = nullptr;
 
-	if( lBufferSize == 0  ) {
-		m_pSampleGrabber->GetCurrentBuffer(&m_lBufferSize, nullptr);
+    HRESULT hr = m_pSourceReader->ReadSample(
+        MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+        0,
+        &dwStreamIndex,
+        &dwFlags,
+        &llTimestamp,
+        &pSample);
 
-		SAFE_DELETE_ARRAY(m_pCaptureBuffer);
-		m_pCaptureBuffer = new BYTE[ m_lBufferSize ];
-		pBuffer = m_pCaptureBuffer;
-		lBufferSize = m_lBufferSize;
-	}
+    if (FAILED(hr))
+    {
+        m_bLogoError = true;
+        return 1;
+    }
 
-	if(FAILED(m_pSampleGrabber->GetCurrentBuffer(&m_lBufferSize,  (LONG*)m_pCaptureBuffer)))
-	{
-		m_bLogoError = true;
+    // Check for end of stream
+    if (dwFlags & MF_SOURCE_READERF_ENDOFSTREAM)
+    {
+        if (pSample) pSample->Release();
+        return 0;
+    }
 
-		const LPDIRECT3DTEXTURE9 tex = m_pLogoTex->GetD3DTexture();
-		D3DLOCKED_RECT rt;
-		ZeroMemory(&rt, sizeof(rt));
+    // Check for format change
+    if (dwFlags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED)
+    {
+        IMFMediaType* pOutputType = nullptr;
+        hr = m_pSourceReader->GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, &pOutputType);
+        if (SUCCEEDED(hr))
+        {
+            MFGetAttributeSize(pOutputType, MF_MT_FRAME_SIZE, &m_nVideoWidth, &m_nVideoHeight);
+            pOutputType->Release();
+        }
+    }
 
-		tex->LockRect(0, &rt, nullptr, 0);
-		BYTE* destb = static_cast<unsigned char*>(rt.pBits);
-		for(int a = 0; a < 4; a+= 4)
-		{
-			BYTE* dest = &destb[a];
-			dest[0] = 0; dest[1] = 0; dest[2] = 0; dest[3] = 0xff;
-		}
-		tex->UnlockRect(0);
+    if (!pSample)
+    {
+        // No sample available yet
+        return 1;
+    }
 
-		return 1;
-	}
+    m_bLogoError = false;
 
-	m_bLogoError = false;
+    // Calculate display rect
+    long lWidth = m_nVideoWidth;
+    long lHeight = m_nVideoHeight;
 
-	long lWidth, lHeight;
-	m_pBasicVideo->GetVideoSize(&lWidth, &lHeight);
+    if (lWidth >= lHeight)
+    {
+        m_nLeft = 0;
+        m_nRight = this->GetWidth();
+        m_nTop = (this->GetHeight() >> 1) - ((this->GetWidth() * lHeight / lWidth) >> 1);
+        m_nBottom = (this->GetHeight() >> 1) + ((this->GetWidth() * lHeight / lWidth) >> 1);
+    }
+    else
+    {
+        m_nTop = 0;
+        m_nBottom = this->GetHeight();
+        m_nLeft = (this->GetWidth() >> 1) - ((this->GetHeight() * lWidth / lHeight) >> 1);
+        m_nRight = (this->GetWidth() >> 1) + ((this->GetHeight() * lWidth / lHeight) >> 1);
+    }
 
-	if(lWidth >= lHeight)
-	{
-		m_nLeft = 0; m_nRight = this->GetWidth();
-		m_nTop = (this->GetHeight() >> 1) - ((this->GetWidth() * lHeight / lWidth) >> 1);
-		m_nBottom = (this->GetHeight() >> 1) + ((this->GetWidth() * lHeight / lWidth) >> 1);
-	}
-	else
-	{
-		m_nTop = 0; m_nBottom = this->GetHeight();
-		m_nLeft = (this->GetWidth() >> 1) - ((this->GetHeight() * lWidth / lHeight) >> 1);
-		m_nRight = (this->GetWidth() >> 1) - ((this->GetHeight() * lWidth / lHeight) >> 1);
-	}
+    // Resize texture if needed
+    if (m_pLogoTex->GetWidth() != lWidth || m_pLogoTex->GetHeight() != lHeight)
+    {
+        m_pLogoTex->Destroy();
+        m_pLogoTex->Create(lWidth, lHeight, DXGI_FORMAT_B8G8R8A8_UNORM);
+    }
 
-	if(m_pLogoTex->GetWidth() == 1)
-	{
-		m_pLogoTex->Destroy(); m_pLogoTex->Create(lWidth, lHeight, D3DFMT_A8R8G8B8);
+    // Get buffer from sample
+    IMFMediaBuffer* pBuffer = nullptr;
+    hr = pSample->ConvertToContiguousBuffer(&pBuffer);
+    if (SUCCEEDED(hr))
+    {
+        BYTE* pData = nullptr;
+        DWORD dwMaxLength, dwCurrentLength;
 
-	}
+        hr = pBuffer->Lock(&pData, &dwMaxLength, &dwCurrentLength);
+        if (SUCCEEDED(hr))
+        {
+            // Copy frame to texture
+            int pitch = 0;
+            void* pPixels = nullptr;
+            if (m_pLogoTex->Lock(&pitch, &pPixels))
+            {
+                BYTE* destb = static_cast<BYTE*>(pPixels);
+                LONG copySize = min((LONG)dwCurrentLength, lWidth * lHeight * 4);
 
-	const LPDIRECT3DTEXTURE9 tex = m_pLogoTex->GetD3DTexture();
-	D3DLOCKED_RECT rt;
-	ZeroMemory(&rt, sizeof(rt));
+                // RGB32 data - copy directly, set alpha to opaque
+                for (LONG a = 0; a < copySize; a += 4)
+                {
+                    BYTE* src = &pData[a];
+                    BYTE* dest = &destb[a];
+                    dest[0] = src[0];  // B
+                    dest[1] = src[1];  // G
+                    dest[2] = src[2];  // R
+                    dest[3] = 0xff;    // A
+                }
 
-	tex->LockRect(0, &rt, nullptr, 0);
-	BYTE* destb = static_cast<unsigned char*>(rt.pBits);
-	for(int a = 0; a < lBufferSize; a+= 4)
-	{
-		BYTE* src = &m_pCaptureBuffer[a]; BYTE* dest = &destb[a];
-		dest[0] = src[0]; dest[1] = src[1]; dest[2] = src[2]; dest[3] = 0xff;
-	}
-	tex->UnlockRect(0);
+                m_pLogoTex->Unlock();
+            }
 
-	long evCode, param1, param2;
-	while(SUCCEEDED(m_pMediaEvent->GetEvent(&evCode, &param1, &param2, 0)))
-	{
-		switch(evCode)
-		{
-		case EC_COMPLETE:
-			return 0;
-		case EC_USERABORT:
-			return 0;
-		case EC_ERRORABORT:
-			return 0;
-		}
+            pBuffer->Unlock();
+        }
+        pBuffer->Release();
+    }
 
-		m_pMediaEvent->FreeEventParams(evCode, param1, param2);
-	}
+    pSample->Release();
 
-	if(GetAsyncKeyState(VK_ESCAPE) & 0x8000) { return 0; }
+    // Check for skip
+    if (GetAsyncKeyState(VK_ESCAPE) & 0x8000)
+    {
+        return 0;
+    }
 
-	return 1;
+    return 1;
 }
 
-void CPythonApplication::OnLogoRender() const
+void CPythonApplication::OnLogoRender()
 {
-	if(!m_pLogoTex->IsEmpty() && !m_bLogoError && true == bInitializedLogo)
-	{
-		STATEMANAGER.SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
-		STATEMANAGER.SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
-		m_pLogoTex->SetTextureStage(0);
-		CPythonGraphic::instance().RenderTextureBox(m_nLeft, m_nTop, m_nRight, m_nBottom, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f);
-	}
+    if (!m_pLogoTex->IsEmpty() && !m_bLogoError && bInitializedLogo)
+    {
+        SHADERMANAGER.SetSamplerState(0, SAMPLER_MINFILTER, FILTER_LINEAR);
+        SHADERMANAGER.SetSamplerState(0, SAMPLER_MAGFILTER, FILTER_LINEAR);
+        m_pLogoTex->SetTextureStage(0);
+        CPythonGraphic::instance().RenderTextureBox(m_nLeft, m_nTop, m_nRight, m_nBottom, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f);
+    }
 }
 
 void CPythonApplication::OnLogoClose()
 {
-	if (false == bInitializedLogo)
-		return;
+    if (!bInitializedLogo)
+        return;
 
-	if(m_pCaptureBuffer != nullptr)
-	{
-		delete[] m_pCaptureBuffer;
-		m_pCaptureBuffer = nullptr;
-	}
-	if(m_pLogoTex != nullptr)
-	{
-		m_pLogoTex->Destroy();
-		delete m_pLogoTex;
-		m_pLogoTex = nullptr;
-	}
+    SAFE_DELETE_ARRAY(m_pCaptureBuffer);
 
-	if(m_pMediaEvent != nullptr)
-	{
-		m_pMediaEvent->SetNotifyWindow(0, 0, 0);
-		m_pMediaEvent->Release();
-		m_pMediaEvent = nullptr;
-	}
-	if(m_pBasicVideo != nullptr) m_pBasicVideo->Release(); m_pBasicVideo = nullptr;
-	if(m_pVideoWnd != nullptr) m_pVideoWnd->Release(); m_pVideoWnd = nullptr;
-	if(m_pMediaCtrl != nullptr) m_pMediaCtrl->Release(); m_pMediaCtrl = nullptr;
-	if(m_pSampleGrabber != nullptr) m_pSampleGrabber->Release(); m_pSampleGrabber = nullptr;
-	if(m_pFilterSG != nullptr) m_pFilterSG->Release(); m_pFilterSG = nullptr;
-	if(m_pGraphBuilder != nullptr) m_pGraphBuilder->Release(); m_pGraphBuilder = nullptr;
+    if (m_pLogoTex != nullptr)
+    {
+        m_pLogoTex->Destroy();
+        delete m_pLogoTex;
+        m_pLogoTex = nullptr;
+    }
 
-	STATEMANAGER.SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT);
-	STATEMANAGER.SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+    if (m_pSourceReader != nullptr)
+    {
+        m_pSourceReader->Release();
+        m_pSourceReader = nullptr;
+    }
+
+    MFShutdown();
+
+    SHADERMANAGER.SetSamplerState(0, SAMPLER_MINFILTER, FILTER_POINT);
+    SHADERMANAGER.SetSamplerState(0, SAMPLER_MAGFILTER, FILTER_POINT);
+
+    bInitializedLogo = false;
 }
-

@@ -8,6 +8,7 @@
 #include "../eterBase/Utils.h"
 #include "../eterBase/Debug.h"
 #include "../eterBase/Stl.h"
+#include "../EterLib/GrpStateEnum.h"
 
 #include "Util.h"
 

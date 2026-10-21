@@ -7,7 +7,7 @@ public:
 	IFlyTargetableObject() {}
 	virtual ~IFlyTargetableObject() {}
 
-	virtual D3DXVECTOR3 OnGetFlyTargetPosition() = 0;
+	virtual Vector3 OnGetFlyTargetPosition() = 0;
 	virtual void OnShootDamage() = 0;
 
 protected:
@@ -39,7 +39,7 @@ public:
 public:
 	CFlyTarget();
 	CFlyTarget(IFlyTargetableObject * pFlyTarget);
-	CFlyTarget(const D3DXVECTOR3& v3FlyTargetPosition);
+	CFlyTarget(const Vector3& v3FlyTargetPosition);
 	CFlyTarget(const CFlyTarget& rhs);
 	virtual ~CFlyTarget();
 
@@ -49,7 +49,7 @@ public:
 	bool IsValidTarget() const;
 	void NotifyTargetClear();
 
-	const D3DXVECTOR3 & GetFlyTargetPosition() const;
+	const Vector3 & GetFlyTargetPosition() const;
 	EType GetType() const;
 
 	IFlyTargetableObject * GetFlyTarget() const;
@@ -61,7 +61,7 @@ private:
 	void __Initialize();
 
 private:
-	mutable D3DXVECTOR3 m_v3FlyTargetPosition;
+	mutable Vector3 m_v3FlyTargetPosition;
 	IFlyTargetableObject * m_pFlyTarget;
 
 	EType m_eType;

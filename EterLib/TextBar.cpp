@@ -4,7 +4,7 @@
 
 void CTextBar::__SetFont(int fontSize, bool isBold)
 {
-	const int iCodePage = GetDefaultCodePage();
+	int iCodePage = GetDefaultCodePage();
 
 	LOGFONT logFont;
 
@@ -30,20 +30,20 @@ void CTextBar::__SetFont(int fontSize, bool isBold)
 	strcpy(logFont.lfFaceName, GetFontFaceFromCodePage(iCodePage));
 	m_hFont = CreateFontIndirect(&logFont);
 
-	const HDC hdc = m_dib.GetDCHandle();
+	HDC hdc = m_dib.GetDCHandle();
 	m_hOldFont = (HFONT)SelectObject(hdc, m_hFont);
 }
 
 void CTextBar::SetTextColor(int r, int g, int b) const
 {
-	const HDC hDC = m_dib.GetDCHandle();
+	HDC hDC = m_dib.GetDCHandle();
 	::SetTextColor(hDC, RGB(r, g, b));
 }
 
 void CTextBar::GetTextExtent(const char * c_szText, SIZE* p_size) const
 {
-	const HDC hDC = m_dib.GetDCHandle();
-	GetTextExtentPoint32(hDC, c_szText, strlen(c_szText), p_size);
+	HDC hDC = m_dib.GetDCHandle();
+	GetTextExtentPoint32(hDC, c_szText, (int)(strlen(c_szText)), p_size);
 }
 
 void CTextBar::TextOut(int ix, int iy, const char * c_szText)
@@ -61,14 +61,14 @@ void CTextBar::OnCreate()
 
 CTextBar::CTextBar(int fontSize, bool isBold)
 {
-	m_hOldFont = nullptr;
+	m_hOldFont = NULL;
 	m_fontSize = fontSize;
 	m_isBold = isBold;
 }
 
 CTextBar::~CTextBar()
 {
-	const HDC hdc = m_dib.GetDCHandle();
+	HDC hdc = m_dib.GetDCHandle();
 	SelectObject(hdc, m_hOldFont);
 }
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

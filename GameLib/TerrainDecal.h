@@ -24,7 +24,7 @@ public:
 	CTerrainDecal(CMapOutdoor * pMapOutdoor = nullptr);
 	virtual ~CTerrainDecal();
 
-	virtual void Make(D3DXVECTOR3 v3Center, D3DXVECTOR3 v3Normal, D3DXVECTOR3 v3Tangent, float fWidth, float fHeight, float fDepth);
+	virtual void Make(Vector3 v3Center, Vector3 v3Normal, Vector3 v3Tangent, float fWidth, float fHeight, float fDepth);
 // 	virtual void Update();
 	virtual void Render();
 
@@ -37,8 +37,8 @@ protected:
 		float fMinY,
 		float fMaxY,
 		DWORD * pdwAffectedPrimitiveCount,
-		D3DXVECTOR3 * pv3AffectedVertex,
-		D3DXVECTOR3 * pv3AffectedNormal) const;
+		Vector3 * pv3AffectedVertex,
+		Vector3 * pv3AffectedNormal) const;
 
 	CMapOutdoor * m_pMapOutdoor;
 };

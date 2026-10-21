@@ -1,77 +1,67 @@
 #pragma once
 
-#define		MOVIEMAN_FADE_DURATION		1300
-#define		MOVIEMAN_SKIPPABLE_YES		true
-#define		MOVIEMAN_POSTEFFECT_FADEOUT	1
+/*
+ * MovieMan.h
+ * DX11 Native Video Playback System
+ *
+ * Uses Media Foundation Source Reader (Windows 7+) for video decoding.
+ * Renders video frames directly via D3D11 (DYNAMIC texture + fullscreen quad).
+ *
+ * Replaces legacy DirectDraw/DirectShow Multimedia Streaming implementation.
+ */
 
-struct IDirectDraw;
-struct IDirectDrawSurface;
-struct IDirectDrawMediaStream;
-struct IGraphBuilder;
-struct IBasicAudio;
-struct IMultiMediaStream;
-struct IAMMultiMediaStream;
+#include <d3d11.h>
+#include <mfapi.h>
+#include <mfidl.h>
+#include <mfreadwrite.h>
+#include <mferror.h>
+#include "../eterBase/Singleton.h"
 
-const GUID CLSID_MP43DMOCodec = { 0xcba9e78b, 0x49a3, 0x49ea, 0x93, 0xd4, 0x6b, 0xcb, 0xa8, 0xc4, 0xde, 0x07 };
-const GUID CLSID_MP4VideoCodec = { 0x82ccd3e0, 0xf71a, 0x11d0, 0x9f, 0xe5, 0x0, 0x60, 0x97, 0x78, 0xea, 0x66 };
-const GUID CLSID_MP3AudioCodec = { 0x38be3000, 0xdbf4, 0x11d0, 0x86, 0x0e, 0x0, 0xa0, 0x24, 0xcf, 0xef, 0x6d };
-const GUID CLSID_DIrectSoundRenderer = { 0x79376820, 0x07D0, 0x11CF, 0xA2, 0x4D, 0x0, 0x20, 0xAF, 0xD7, 0x97, 0x67 };
+#pragma comment(lib, "mf.lib")
+#pragma comment(lib, "mfplat.lib")
+#pragma comment(lib, "mfreadwrite.lib")
+#pragma comment(lib, "mfuuid.lib")
+
+#define MOVIEMAN_FADE_DURATION      1300
+#define MOVIEMAN_SKIPPABLE_YES      true
+#define MOVIEMAN_POSTEFFECT_FADEOUT 1
 
 class CMovieMan : public CSingleton<CMovieMan>
 {
 public:
-	CMovieMan()
-		: m_movieWidth(0),
-		  m_movieHeight(0),
-		  m_usingRGB32(false),
-		  m_pPrimarySurface(nullptr),
-		  m_pBasicAudio(nullptr)
-	{
-		CoInitialize(nullptr);
-	};
+    CMovieMan();
+    virtual ~CMovieMan();
 
-	virtual ~CMovieMan()
-	{
-		CoUninitialize();
-	};
-
-	void				ClearToBlack() const;
-	void				PlayLogo(const char *pcszName);
-	void				PlayIntro();
-	BOOL                PlayTutorial(LONG nIdx);
+    // Public interface (unchanged from original)
+    void ClearToBlack();
+    void PlayLogo(const char* pcszName);
+    void PlayIntro();
+    BOOL PlayTutorial(LONG nIdx);
 
 private:
-	bool				m_usingRGB32;
-	int  				m_movieWidth;
-	int  				m_movieHeight;
-	RECT				m_movieRect;
-	IDirectDrawSurface*	m_pPrimarySurface;
-	IBasicAudio*		m_pBasicAudio;
+    // Initialization
+    bool InitializeMediaFoundation();
+    void ShutdownMediaFoundation();
 
-	void				FillRect(RECT& fillRect, DWORD fillColor) const;
-	inline void			GDIFillRect(RECT& fillRect, DWORD fillColor) const;
-	inline void			GDIBlt(IDirectDrawSurface *pSrcSurface, RECT *pDestRect) const;
+    // Playback
+    BOOL PlayMovie(const char* cpFileName, bool bSkipAllowed = false, int nPostEffectID = 0, DWORD dwPostEffectData = 0);
+    void RenderPostEffectFadeOut(int fadeOutDuration, DWORD fadeOutColor);
 
-	void				GetWindowRect(RECT& windowRect) const;
-	void				CalcMovieRect(int srcWidth, int srcHeight, RECT& movieRect);
-	void				CalcBackgroundRect(const RECT& movieRect, RECT& upperRect, RECT& lowerRect);
+    // D3D11 rendering
+    bool CreateVideoTexture();
+    void DestroyVideoTexture();
+    void CalcMovieRect(int srcWidth, int srcHeight, RECT& movieRect);
+    void RenderVideoFrame(BYTE* pFrameData, UINT stride, const RECT& movieRect);
+    void PresentClear(float r, float g, float b);
 
-	BOOL				PlayMovie(const char *cpFileName, const bool bSkipAllowed = FALSE, const int nPostEffectID = 0, const DWORD dwPostEffectData = 0);
+    // Media Foundation state
+    bool m_bMFInitialized;
 
-	HRESULT				BuildFilterGraphManually(
-							WCHAR* wpFilename,
-							IAMMultiMediaStream *pAMStream,
-							const GUID FAR clsidSplitter,
-							const GUID FAR clsidVideoCodec,
-							const GUID FAR clsidAudioCodec);
+    // Video state
+    UINT m_videoWidth;
+    UINT m_videoHeight;
 
-	HRESULT				RenderFileToMMStream(const char *cpFilename, IMultiMediaStream **ppMMStream, IDirectDraw *pDD);
-	HRESULT				RenderStreamToSurface(IDirectDrawSurface *pSurface, IDirectDrawMediaStream *pDDStream, IMultiMediaStream *pMMStream, bool bSkipAllowed, int nPostEffectID, DWORD dwPostEffectData);
-	HRESULT				RenderPostEffectFadeOut(IDirectDrawSurface *pSurface, int fadeOutDuration, DWORD fadeOutColor);
-
-//#ifdef _DEBUG
-//	HRESULT				AddToRot(IGraphBuilder* pGraphBuilder, DWORD *pdwRegister);
-//	void				RemoveFromRot(DWORD pdwRegister);
-//#endif
+    // D3D11 video texture
+    ID3D11Texture2D* m_pVideoTexture;
+    ID3D11ShaderResourceView* m_pVideoSRV;
 };
-

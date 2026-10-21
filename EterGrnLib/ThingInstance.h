@@ -6,14 +6,9 @@
 
 #include "LODController.h"
 #include <memory>
+struct SSharedMotionLibrary { std::map<DWORD, CGraphicThing::TRef> motions; };
 
-// Shared immutable lookup/reference ownership; animation clocks remain per actor.
-struct SSharedMotionLibrary
-{
-	std::map<DWORD, CGraphicThing::TRef> motions;
-};
-
-constexpr int DONTUSEVALUE = -1;
+const int DONTUSEVALUE = -1;
 class CGraphicThingInstance : public CGraphicObjectInstance
 {
 	public:
@@ -43,9 +38,9 @@ class CGraphicThingInstance : public CGraphicObjectInstance
 		void		UpdateTime();
 		void		DeformAll();
 
-		bool		LessRenderOrder(CGraphicThingInstance* pkThingInst) const;
+		bool		LessRenderOrder(CGraphicThingInstance* pkThingInst);
 
-		bool		Picking(const D3DXVECTOR3 & v, const D3DXVECTOR3 & dir, float & out_x, float & out_y) const;
+		bool		Picking(const Vector3 & v, const Vector3 & dir, float & out_x, float & out_y);
 
 		void		OnInitialize();
 
@@ -55,8 +50,8 @@ class CGraphicThingInstance : public CGraphicObjectInstance
 		void		ReserveModelInstance(int iCount);
 		void		ReserveModelThing(int iCount);
 
-		bool		CheckModelInstanceIndex(int iModelInstance) const;
-		bool		CheckModelThingIndex(int iModelThing) const;
+		bool		CheckModelInstanceIndex(int iModelInstance);
+		bool		CheckModelThingIndex(int iModelThing);
 		bool		CheckMotionThingIndex(DWORD dwMotionKey);
 		bool		GetMotionThingPointer(DWORD dwKey, CGraphicThing ** ppMotion);
 		bool		IsMotionThing() const;
@@ -64,38 +59,40 @@ class CGraphicThingInstance : public CGraphicObjectInstance
 		void		RegisterModelThing(int iModelThing, CGraphicThing * pModelThing);
 		void		RegisterLODThing(int iModelThing, CGraphicThing * pModelThing);
 		void		RegisterMotionThing(DWORD dwMotionKey, CGraphicThing * pMotionThing);
-		void SetSharedMotionLibrary(std::shared_ptr<const SSharedMotionLibrary> library);
+        void SetSharedMotionLibrary(std::shared_ptr<const SSharedMotionLibrary> library);
 
-		bool		SetModelInstance(int iDstModelInstance, int iSrcModelThing, int iSrcModel,int iSkelInstance = DONTUSEVALUE) const;
+		bool		SetModelInstance(int iDstModelInstance, int iSrcModelThing, int iSrcModel,int iSkelInstance = DONTUSEVALUE);
 		void		SetEndStopMotion();
 		void		SetMotionAtEnd();
 
-		void		AttachModelInstance(int iDstModelInstance, const char * c_szBoneName, int iSrcModelInstance) const;
-		void		AttachModelInstance(int iDstModelInstance, const char * c_szBoneName, CGraphicThingInstance & rsrcInstance, int iSrcModelInstance) const;
-		void		DetachModelInstance(int iDstModelInstance, CGraphicThingInstance & rSrcInstance, int SrcModelInstance) const;
-		bool		FindBoneIndex(int iModelInstance, const char* c_szBoneName, int * iRetBone) const;
-		bool		GetBonePosition(int iModelIndex, int iBoneIndex, float * pfx, float * pfy, float * pfz) const;
+		void		AttachModelInstance(int iDstModelInstance, const char * c_szBoneName, int iSrcModelInstance);
+		void		AttachModelInstance(int iDstModelInstance, const char * c_szBoneName, CGraphicThingInstance & rsrcInstance, int iSrcModelInstance);
+		void		DetachModelInstance(int iDstModelInstance, CGraphicThingInstance & rSrcInstance, int SrcModelInstance);
+		bool		FindBoneIndex(int iModelInstance, const char* c_szBoneName, int * iRetBone);
+		bool		GetBonePosition(int iModelIndex, int iBoneIndex, float * pfx, float * pfy, float * pfz);
 
 		void		ResetLocalTime();
 		void		InsertDelay(float fDelay);
 
-		void		SetMaterialImagePointer(UINT ePart, const char* c_szImageName, CGraphicImage* pImage) const;
-		void		SetMaterialData(UINT ePart, const char* c_szImageName, SMaterialData kMaterialData) const;
-		void		SetSpecularInfo(UINT ePart, const char* c_szMtrlName, BOOL bEnable, float fPower) const;
+		void		SetMaterialImagePointer(UINT ePart, const char* c_szImageName, CGraphicImage* pImage);
+		void		SetMaterialData(UINT ePart, const char* c_szImageName, SMaterialData kMaterialData);
+		void		SetSpecularInfo(UINT ePart, const char* c_szMtrlName, BOOL bEnable, float fPower);
 
 		void		__SetLocalTime(float fLocalTime); // Only Used by Tools
-		float		GetLastLocalTime() const;
-		float		GetLocalTime() const;
-		float		GetSecondElapsed() const;
-		float		GetAverageSecondElapsed() const;
+		float		GetLastLocalTime();
+		float		GetLocalTime();
+		float		GetSecondElapsed();
+		float		GetAverageSecondElapsed();
 
-		BYTE		GetLODLevel(DWORD dwModelInstance) const;
-		float		GetHeight() const;
+		BYTE		GetLODLevel(DWORD dwModelInstance);
+		float		GetHeight();
 
 		void		RenderWithOneTexture();
 		void		RenderWithTwoTexture();
 		void		BlendRenderWithOneTexture();
 		void		BlendRenderWithTwoTexture();
+
+		void		RenderWithOneTexture_SkinnedOnly();
 
 		DWORD		GetLODControllerCount() const;
 		CGrannyLODController * GetLODControllerPointer(DWORD dwModelIndex) const;
@@ -109,24 +106,24 @@ class CGraphicThingInstance : public CGraphicObjectInstance
 #endif
 
 	public:
-		CGraphicThing* GetBaseThingPtr() const;
+		CGraphicThing* GetBaseThingPtr();
 
 		bool		SetMotion(DWORD dwMotionKey, float blendTime = 0.0f, int loopCount = 0, float speedRatio=1.0f);
 		bool		ChangeMotion(DWORD dwMotionKey, int loopCount = 0, float speedRatio=1.0f);
 		bool		Intersect(float * pu, float * pv, float * pt);
-		void		GetBoundBox(D3DXVECTOR3 * vtMin, D3DXVECTOR3 * vtMax);
-		BOOL		GetBoundBox(DWORD dwModelInstanceIndex, D3DXVECTOR3 * vtMin, D3DXVECTOR3 * vtMax) const;
-		BOOL		GetBoneMatrix(DWORD dwModelInstanceIndex, DWORD dwBoneIndex, D3DXMATRIX ** ppMatrix) const;
-		BOOL		GetCompositeBoneMatrix(DWORD dwModelInstanceIndex, DWORD dwBoneIndex, D3DXMATRIX ** ppMatrix) const;
-		void		UpdateTransform(D3DXMATRIX * pMatrix, float fSecondsElapsed = 0.0f, int iModelInstanceIndex = 0) const;
+		void		GetBoundBox(Vector3 * vtMin, Vector3 * vtMax);
+		BOOL		GetBoundBox(DWORD dwModelInstanceIndex, Vector3 * vtMin, Vector3 * vtMax);
+		BOOL		GetBoneMatrix(DWORD dwModelInstanceIndex, DWORD dwBoneIndex, Matrix ** ppMatrix);
+		BOOL		GetCompositeBoneMatrix(DWORD dwModelInstanceIndex, DWORD dwBoneIndex, Matrix ** ppMatrix);
+		void		UpdateTransform(Matrix * pMatrix, float fSecondsElapsed = 0.0f, int iModelInstanceIndex = 0);
 		void		ProjectShadow(const CGraphicShadowTexture & c_rShadowTexture);
 
 	public:
 		void			BuildBoundingSphere();
 		void			BuildBoundingAABB();
 		virtual void	CalculateBBox();
-		virtual bool	GetBoundingSphere(D3DXVECTOR3 & v3Center, float & fRadius);
-		virtual bool	GetBoundingAABB(D3DXVECTOR3 & v3Min, D3DXVECTOR3 & v3Max);
+		virtual bool	GetBoundingSphere(Vector3 & v3Center, float & fRadius);
+		virtual bool	GetBoundingAABB(Vector3 & v3Min, Vector3 & v3Max);
 
 	protected:
 		void		OnClear();
@@ -146,13 +143,13 @@ class CGraphicThingInstance : public CGraphicObjectInstance
 		float									m_fSecondElapsed;
 		float									m_fAverageSecondElapsed;
 		float									m_fRadius;
-		D3DXVECTOR3								m_v3Center;
-		D3DXVECTOR3								m_v3Min, m_v3Max;
+		Vector3								m_v3Center;
+		Vector3								m_v3Min, m_v3Max;
 
 		std::vector<CGrannyLODController *>		m_LODControllerVector;
 		std::vector<TModelThingSet>				m_modelThingSetVector;
 		std::map<DWORD, CGraphicThing::TRef *>	m_roMotionThingMap;
-		std::shared_ptr<const SSharedMotionLibrary> m_sharedMotionLibrary;
+        std::shared_ptr<const SSharedMotionLibrary> m_sharedMotionLibrary;
 
 	protected:
 		virtual void		OnUpdateCollisionData(const CStaticCollisionDataVector * pscdVector);
@@ -168,6 +165,6 @@ class CGraphicThingInstance : public CGraphicObjectInstance
 
 		static CDynamicPool<CGraphicThingInstance>		ms_kPool;
 
-		bool	HaveBlendThing() const;
+		bool	HaveBlendThing();
 };
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

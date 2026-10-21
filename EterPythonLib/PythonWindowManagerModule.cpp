@@ -1151,11 +1151,11 @@ PyObject * wndMgrSetSlot(PyObject * poSelf, PyObject * poArgs)
 	if (!PyTuple_GetInteger(poArgs, 5, &iImageHandle))
 		return Py_BuildException();
 
-	D3DXCOLOR diffuseColor;
+	Color diffuseColor;
 	PyObject* pTuple;
 	if (!PyTuple_GetObject(poArgs, 6, &pTuple))
 	{
-		diffuseColor = D3DXCOLOR(1.0, 1.0, 1.0, 1.0);
+		diffuseColor = Color(1.0, 1.0, 1.0, 1.0);
 		//return Py_BuildException();
 	}
 	else
@@ -1277,7 +1277,7 @@ PyObject * wndMgrActivateSlot(PyObject * poSelf, PyObject * poArgs)
 	if (!pWin->IsType(UI::CSlotWindow::Type()))
 		return Py_BuildException();
 
-	D3DXCOLOR color = {1.f, 1.f, 1.f, 1.f};
+	Color color = {1.f, 1.f, 1.f, 1.f};
 	PyTuple_GetFloat(poArgs, 2, &color.r);
 	PyTuple_GetFloat(poArgs, 3, &color.g);
 	PyTuple_GetFloat(poArgs, 4, &color.b);

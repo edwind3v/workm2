@@ -334,7 +334,7 @@ void CPythonNetworkStream::ServerCommand(const char * c_szCommand)
 		}
 
 		TPixelPosition PixelPosition;
-		const D3DXVECTOR3 v3Rotation(0.0f, 0.0f, fAngle);
+		const Vector3 v3Rotation(0.0f, 0.0f, fAngle);
 		pInstance->NEW_GetPixelPosition(&PixelPosition);
 
 		PixelPosition.y *= -1.0f;

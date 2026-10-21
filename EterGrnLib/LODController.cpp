@@ -77,9 +77,8 @@ static CGraphicVertexBuffer* __AllocDeformVertexBuffer(unsigned deformableVertex
 
 	if (!pkNewVB->Create(
 		capacity,
-		D3DFVF_XYZ|D3DFVF_NORMAL|D3DFVF_TEX1,
-		D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC,
-		D3DPOOL_DEFAULT))
+		INPUT_LAYOUT_PNT,
+		D3D11_USAGE_DYNAMIC))
 	{
 		TraceError("NEW_ERROR %8d: %d(%d)", time(nullptr) - base, capacity, deformableVertexCount);
 		delete pkNewVB;
@@ -127,8 +126,8 @@ void __ReserveSharedVertexBuffers(unsigned index, unsigned count)
         const size_t budget = (IsWorldMemoryPressure() ? 2u : 8u) * 1024u * 1024u;
         const size_t bytes = static_cast<size_t>(capacity) * sizeof(TPNTVertex);
         if (bytes > budget || gs_idleDeformBytes > budget - bytes ||
-            !pkNewVB->Create(capacity, D3DFVF_XYZ|D3DFVF_NORMAL|D3DFVF_TEX1,
-                D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC, D3DPOOL_DEFAULT))
+            !pkNewVB->Create(capacity, INPUT_LAYOUT_PNT,
+                D3D11_USAGE_DYNAMIC))
         {
             delete pkNewVB;
             break;
@@ -297,7 +296,7 @@ void CGrannyLODController::AddModel(CGraphicThing * pThing, int iSrcModel, CGran
 		m_pCurrentModelInstance = pModelInstance;
 		pModelInstance->DeformNoSkin(&ms_matIdentity);
 
-		D3DXVECTOR3 vtMin, vtMax;
+		Vector3 vtMin, vtMax;
 		pModelInstance->GetBoundBox(&vtMin, &vtMax);
 
 		float fSize = 0.0f;
@@ -616,13 +615,13 @@ void CGrannyLODController::RefreshAttachedModelInstance()
 	}
 }
 
-void CGrannyLODController::UpdateSkeleton(const D3DXMATRIX * c_pWorldMatrix, float fElapsedTime) const
+void CGrannyLODController::UpdateSkeleton(const Matrix * c_pWorldMatrix, float fElapsedTime) const
 {
 	if (m_pCurrentModelInstance)
 		m_pCurrentModelInstance->UpdateSkeleton(c_pWorldMatrix, fElapsedTime);
 }
 
-void CGrannyLODController::DeformAll(const D3DXMATRIX * c_pWorldMatrix)
+void CGrannyLODController::DeformAll(const Matrix * c_pWorldMatrix)
 {
 	std::deque<CGrannyModelInstance *>::iterator i;
 	for (i=m_que_pkModelInst.begin(); i!=m_que_pkModelInst.end(); ++i)
@@ -632,13 +631,13 @@ void CGrannyLODController::DeformAll(const D3DXMATRIX * c_pWorldMatrix)
 	}
 }
 
-void CGrannyLODController::DeformNoSkin(const D3DXMATRIX * c_pWorldMatrix) const
+void CGrannyLODController::DeformNoSkin(const Matrix * c_pWorldMatrix) const
 {
 	if (m_pCurrentModelInstance)
 		m_pCurrentModelInstance->DeformNoSkin(c_pWorldMatrix);
 }
 
-void CGrannyLODController::Deform(const D3DXMATRIX * c_pWorldMatrix) const
+void CGrannyLODController::Deform(const Matrix * c_pWorldMatrix) const
 {
 	if (m_pCurrentModelInstance)
 		m_pCurrentModelInstance->Deform(c_pWorldMatrix);
@@ -662,13 +661,13 @@ void CGrannyLODController::ReloadTexture() const
 		m_pCurrentModelInstance->ReloadTexture();
 }
 
-void CGrannyLODController::GetBoundBox(D3DXVECTOR3 * vtMin, D3DXVECTOR3 * vtMax) const
+void CGrannyLODController::GetBoundBox(Vector3 * vtMin, Vector3 * vtMax) const
 {
 	if (m_pCurrentModelInstance)
 		m_pCurrentModelInstance->GetBoundBox(vtMin, vtMax);
 }
 
-bool CGrannyLODController::Intersect(const D3DXMATRIX * c_pMatrix, float * u, float * v, float * t) const
+bool CGrannyLODController::Intersect(const Matrix * c_pMatrix, float * u, float * v, float * t) const
 {
 	if (!m_pCurrentModelInstance)
 		return false;

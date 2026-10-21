@@ -581,7 +581,7 @@ void CItemData::SetItemTableScaleData(BYTE bJob, BYTE bSex, float fScaleX, float
 	m_ItemScaleTable.fScaleParticle[bSex][bJob] = fScaleParticle;
 }
 
-D3DXVECTOR3& CItemData::GetItemScaleVector(BYTE bJob, BYTE bSex)
+Vector3& CItemData::GetItemScaleVector(BYTE bJob, BYTE bSex)
 {
 	return m_ItemScaleTable.v3Scale[bSex][bJob];
 }

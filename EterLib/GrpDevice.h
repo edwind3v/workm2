@@ -2,17 +2,16 @@
 
 #include "GrpBase.h"
 #include "GrpDetector.h"
-#include "StateManager.h"
+#include "../eterBase/Singleton.h"
 
-class CGraphicDevice : public CGraphicBase
+class CGraphicDevice : public CGraphicBase, public CSingleton<CGraphicDevice>
 {
 public:
 	enum EDeviceState
 	{
-		DEVICESTATE_OK,
-		DEVICESTATE_BROKEN,
-		DEVICESTATE_NEEDS_RESET,
-		DEVICESTATE_NULL
+		DEVICESTATE_OK,           // Device is operational
+		DEVICESTATE_BROKEN,       // Device creation failed
+		DEVICESTATE_NULL          // Device not created
 	};
 
 	enum ECreateReturnValues
@@ -25,9 +24,11 @@ public:
 		CREATE_REFRESHRATE		= (1 << 5),
 		CREATE_ENUM				= (1 << 6),
 		CREATE_DETECT			= (1 << 7),
-		CREATE_NO_TNL			= (1 << 8),
 		CREATE_BAD_DRIVER		= (1 << 9),
 		CREATE_FORMAT			= (1 << 10),
+		CREATE_SWAPCHAIN		= (1 << 11),
+		CREATE_RENDERTARGET		= (1 << 12),
+		CREATE_DEPTHSTENCIL		= (1 << 13),
 	};
 
 	CGraphicDevice();
@@ -36,48 +37,79 @@ public:
 	void			InitBackBufferCount(UINT uBackBufferCount);
 
 	void			Destroy();
-	int				Create(HWND hWnd, int hres, int vres, bool Windowed = true, int bit = 32, int ReflashRate = 0, int Antialiasing = 0);
+	int				Create(HWND hWnd, int hres, int vres, bool Windowed = true, int bit = 32, int RefreshRate = 0);
 
-	EDeviceState	GetDeviceState() const;
-	bool			Reset() const;
-	void 			ResetDevice();
-	void 			LostDevice();
-	LPDIRECT3D9EX		GetDirectx9();
-	LPDIRECT3DDEVICE9EX GetDevice();
+	EDeviceState	GetDeviceState();
 
-	void			EnableWebBrowserMode(const RECT& c_rcWebPage) const;
-	void			DisableWebBrowserMode() const;
-	void			MoveWebBrowserRect(const RECT& c_rcWebPage) const;
+	void			EnableWebBrowserMode(const RECT& c_rcWebPage);
+	void			DisableWebBrowserMode();
+	void			MoveWebBrowserRect(const RECT& c_rcWebPage);
 
-	bool			ResizeBackBuffer(UINT uWidth, UINT uHeight) const;
+	bool			ResizeBuffers(UINT uWidth, UINT uHeight);
+	void SetRequestedMSAASamples(UINT count) { m_requestedMSAASamples = count >= 8 ? 8 : count >= 4 ? 4 : count >= 2 ? 2 : 1; }
+	bool			ResizeBackBuffer(UINT uWidth, UINT uHeight) { return ResizeBuffers(uWidth, uHeight); }  // Legacy alias
+	bool			Reset() { return ms_pDevice && SUCCEEDED(ms_pDevice->GetDeviceRemovedReason()) && ms_pRenderTargetView && ms_pDepthStencilView; }
 	void			RegisterWarningString(UINT uiMsg, const char * c_szString);
+
+	// DX11 specific accessors
+	ID3D11Device*			GetD3D11Device() const { return ms_pDevice; }
+	ID3D11DeviceContext*	GetD3D11Context() const { return ms_pContext; }
+	IDXGISwapChain*			GetSwapChain() const { return ms_pSwapChain; }
+	ID3D11RenderTargetView*	GetRenderTargetView() const { return CGraphicBase::GetRenderTargetView(); }
+	ID3D11DepthStencilView*	GetDepthStencilView() const { return CGraphicBase::GetDepthStencilView(); }
+	IDXGIFactory*			GetDXGIFactory() const { return ms_pDXGIFactory; }
+
+	// World post processing finishes before the interface is drawn.
+	void BeginFrame();
+	void FinishWorldRendering();
+
+	// Present the back buffer
+	void			Present(bool bVSync = true);
+
+	// Clear render target and depth buffer
+	void			Clear(const float color[4], float depth = 1.0f, UINT8 stencil = 0);
 
 protected:
 	void __Initialize();
-	bool __IsInDriverBlackList(D3D_CAdapterInfo& rkD3DAdapterInfo) const;
+	bool __IsInDriverBlackList(D3D_CAdapterInfo& rkD3DAdapterInfo);
 	void __WarningMessage(HWND hWnd, UINT uiMsg);
 
-	void __InitializeDefaultIndexBufferList() const;
-	void __DestroyDefaultIndexBufferList() const;
+	void __InitializeDefaultIndexBufferList();
+	void __DestroyDefaultIndexBufferList();
 	bool __CreateDefaultIndexBufferList();
-	bool __CreateDefaultIndexBuffer(UINT eDefIB, UINT uIdxCount, const WORD* c_awIndices) const;
+	bool __CreateDefaultIndexBuffer(UINT eDefIB, UINT uIdxCount, const WORD* c_awIndices);
 
-	void __InitializePDTVertexBufferList() const;
-	void __DestroyPDTVertexBufferList() const;
-	bool __CreatePDTVertexBufferList() const;
-#ifdef ENABLE_FIX_MOBS_LAG
-	bool __ResetDeviceWithPDTBuffers() const;
+	void __InitializePDTVertexBufferList();
+	void __DestroyPDTVertexBufferList();
+	bool __CreatePDTVertexBufferList();
+
+	// DX11 specific helpers
+	bool __CreateRenderTargetView();
+	bool __CreateDepthStencilView(int width, int height);
+	void __ReleaseBackBufferResources();
+
+#ifdef ENABLE_MSAA
+	bool __CreateMSAARenderTarget(int width, int height);
+	void __ReleaseMSAAResources();
 #endif
 
-	DWORD CreatePNTStreamVertexShader() const;
-	DWORD CreatePNT2StreamVertexShader() const;
+#ifdef ENABLE_BLOOM
+	bool __CreateBloomResources(int width, int height);
+	void __ReleaseBloomResources();
+#endif
+
+#ifdef ENABLE_SSAO
+	bool __CreateSSAOResources(int width, int height);
+	void __ReleaseSSAOResources();
+#endif
+
 
 protected:
 	DWORD						m_uBackBufferCount;
+	UINT m_requestedMSAASamples = MSAA_DEFAULT_SAMPLE_COUNT;
 	std::map<UINT, std::string>	m_kMap_strWarningMessage;
-	CStateManager*				m_pStateManager;
-#ifdef ENABLE_FIX_MOBS_LAG
-	mutable bool m_isPDTResetPending;
-#endif
-};
 
+	// Swap chain description for resize
+	DXGI_SWAP_CHAIN_DESC		m_SwapChainDesc;
+	bool						m_bWindowed;
+};

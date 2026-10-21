@@ -98,8 +98,8 @@ bool CTerrain::Initialize()
 
 void CTerrain::LoadMiniMapTexture(const char * c_pchMiniMapFileName)
 {
-	const DWORD dwStart = ELTimer_GetMSec();
-	const auto pImage = (CGraphicImage *) CResourceManager::Instance().GetResourcePointer(c_pchMiniMapFileName);
+	DWORD dwStart = ELTimer_GetMSec();
+	CGraphicImage * pImage = (CGraphicImage *) CResourceManager::Instance().GetResourcePointer(c_pchMiniMapFileName);
 	m_MiniMapGraphicImageInstance.SetImagePointer(pImage);
 
 	if (!m_MiniMapGraphicImageInstance.GetTexturePointer()->IsEmpty())
@@ -110,7 +110,7 @@ void CTerrain::LoadMiniMapTexture(const char * c_pchMiniMapFileName)
 	else
 	{
 		Tracef(" CTerrain::LoadMiniMapTexture - MiniMapTexture Error");
-		m_lpMiniMapTexture = nullptr;
+		m_lpMiniMapTexture = NULL;
 	}
 }
 
@@ -367,7 +367,7 @@ WORD CTerrain::WE_GetHeightMapValue(short sX, short sY) const
 	}
 }
 
-bool CTerrain::GetNormal(int ix, int iy, D3DXVECTOR3 * pv3Normal)
+bool CTerrain::GetNormal(int ix, int iy, Vector3 * pv3Normal)
 {
 	const long lMapWidth = XSIZE * CELLSCALE;
 	const long lMapHeight = YSIZE * CELLSCALE;
@@ -386,7 +386,7 @@ bool CTerrain::GetNormal(int ix, int iy, D3DXVECTOR3 * pv3Normal)
 	ix /= CELLSCALE;
 	iy /= CELLSCALE;
 
-	D3DXVECTOR3 v3Noraml;
+	Vector3 v3Noraml;
 	auto n = (char*) &m_acNormalMap[(iy * NORMALMAP_XSIZE + ix)*3];
 	pv3Normal->x = -((float)*n++) * 0.007874016f;
 	pv3Normal->y = ((float)*n++) * 0.007874016f;
@@ -466,13 +466,13 @@ float CTerrain::GetHeight(int x, int y) const
 
 void CTerrain::CalculateNormal(long x, long y)
 {
-	D3DXVECTOR3 normal;
+	Vector3 normal;
 
 	normal.x = -m_fHeightScale * ((float)GetHeightMapValue((x-1),y)-(float)GetHeightMapValue((x+1),y));
 	normal.y = -m_fHeightScale * ((float)GetHeightMapValue(x,(y-1))-(float)GetHeightMapValue(x,(y+1)));
 
 	normal.z = 2.0f * CELLSCALE;
-	normal *= 127.0f / D3DXVec3Length(&normal);
+	normal *= 127.0f / Vec3Length(&normal);
 
 	int ix, iy, iz;
 	PR_FLOAT_TO_INT(normal.x, ix);
@@ -786,38 +786,35 @@ void CTerrain::RAW_GenerateSplat(bool bBGLoading, DWORD first, DWORD end)
 	}
 }
 
-LPDIRECT3DTEXTURE9 CTerrain::AddTexture32(BYTE byImageNum, BYTE * pbyImage, long lTextureWidth, long lTextureHeight)
+ID3D11ShaderResourceView* CTerrain::AddTexture32(BYTE byImageNum, BYTE * pbyImage, long lTextureWidth, long lTextureHeight)
 {
-	assert(nullptr==m_lpAlphaTexture[byImageNum]);
+	if (!ms_pDevice)
+		return NULL;
+
+	assert(NULL==m_lpAlphaTexture[byImageNum]);
 
 	if (m_lpAlphaTexture[byImageNum])
 		m_lpAlphaTexture[byImageNum]->Release();
 
-	m_lpAlphaTexture[byImageNum]= nullptr;
+	m_lpAlphaTexture[byImageNum]=NULL;
 
 	HRESULT hr;
-	D3DFORMAT format;
+	DXGI_FORMAT format;
 
-	if(ms_bSupportDXT)
-		format = D3DFMT_A8R8G8B8;
-	else
-		format = D3DFMT_A4R4G4B4;
+	// B8G8R8A8 is universally supported in DX11
+	// B4G4R4A4 is optional and may not work on all hardware
+	format = DXGI_FORMAT_B8G8R8A8_UNORM;
 
-	const bool bResizedAndSuccess = false;
+	bool bResizedAndSuccess = false;
+	const UINT numMipLevels = 5;
+	UINT uiNewWidth = 256;
+	UINT uiNewHeight = 256;
 
-	IDirect3DTexture9* pkTex= nullptr;
+	// Prepare mipmap data in system memory
+	std::vector<std::vector<BYTE>> mipData(numMipLevels);
+	std::vector<D3D11_SUBRESOURCE_DATA> initData(numMipLevels);
 
-	const UINT uiNewWidth = 256;
-	const UINT uiNewHeight = 256;
-	hr = ms_lpd3dDevice->CreateTexture(
-		uiNewWidth, uiNewHeight, 5, D3DUSAGE_DYNAMIC,
-		format, D3DPOOL_DEFAULT, &pkTex, nullptr);
-	if (FAILED(hr))
-	{
-		TraceError("CTerrain::AddTexture32 - CreateTexture Error");
-		return nullptr;
-	}
-
+	// Generate base mip level (256x256)
 	BYTE abResizeImage[256*256];
 	{
 		BYTE* pbDstPixel=abResizeImage;
@@ -836,32 +833,25 @@ LPDIRECT3DTEXTURE9 CTerrain::AddTexture32(BYTE byImageNum, BYTE * pbyImage, long
 			}
 		}
 
-		D3DLOCKED_RECT  d3dlr;
-		hr = pkTex->LockRect(0, &d3dlr, nullptr, 0);
-		if (FAILED(hr))
-		{
-			pkTex->Release();
-			return nullptr;
-		}
+		// Convert to texture format (always 32-bit B8G8R8A8)
+		UINT bytesPerPixel = 4;
+		mipData[0].resize(256 * 256 * bytesPerPixel);
+		PutImage32(abResizeImage, mipData[0].data(), 256, 256 * 4, 256, 256, bResizedAndSuccess);
 
-		if(ms_bSupportDXT)
-			PutImage32(abResizeImage, (BYTE*) d3dlr.pBits, 256, d3dlr.Pitch, 256, 256, bResizedAndSuccess);
-		else
-			PutImage16(abResizeImage, (BYTE*) d3dlr.pBits, 256, d3dlr.Pitch, 256, 256, bResizedAndSuccess);
-
-		pkTex->UnlockRect(0);
+		initData[0].pSysMem = mipData[0].data();
+		initData[0].SysMemPitch = 256 * bytesPerPixel;
+		initData[0].SysMemSlicePitch = 0;
 	}
 
+	// Generate remaining mip levels
 	BYTE abResizeImage2[128*128];
-
 	BYTE* pbSrcBuffer=abResizeImage;
 	BYTE* pbDstBuffer=abResizeImage2;
-
 	UINT uSrcSize=256;
 
-	for (UINT uMipMapLevel=1; uMipMapLevel!=pkTex->GetLevelCount(); ++uMipMapLevel)
+	for (UINT uMipMapLevel=1; uMipMapLevel<numMipLevels; ++uMipMapLevel)
 	{
-		const UINT uDstSize=uSrcSize>>1;
+		UINT uDstSize=uSrcSize>>1;
 
 		BYTE* pbDstPixel=pbDstBuffer;
 		BYTE* pbSrcPixel;
@@ -875,26 +865,52 @@ LPDIRECT3DTEXTURE9 CTerrain::AddTexture32(BYTE byImageNum, BYTE * pbyImage, long
 			}
 		}
 
-		D3DLOCKED_RECT  d3dlr;
+		// Always use 32-bit format (B8G8R8A8)
+		UINT bytesPerPixel = 4;
+		mipData[uMipMapLevel].resize(uDstSize * uDstSize * bytesPerPixel);
+		PutImage32(pbDstBuffer, mipData[uMipMapLevel].data(), uDstSize, uDstSize * 4, uDstSize, uDstSize, bResizedAndSuccess);
 
-		hr = pkTex->LockRect(uMipMapLevel, &d3dlr, nullptr, 0);
-		if (FAILED(hr))
-			continue;
-
-		if(ms_bSupportDXT)
-			PutImage32(pbDstBuffer, (BYTE*) d3dlr.pBits, uDstSize, d3dlr.Pitch, uDstSize, uDstSize, bResizedAndSuccess);
-		else
-			PutImage16(pbDstBuffer, (BYTE*) d3dlr.pBits, uDstSize, d3dlr.Pitch, uDstSize, uDstSize, bResizedAndSuccess);
-
-		hr = pkTex->UnlockRect(uMipMapLevel);
+		initData[uMipMapLevel].pSysMem = mipData[uMipMapLevel].data();
+		initData[uMipMapLevel].SysMemPitch = uDstSize * bytesPerPixel;
+		initData[uMipMapLevel].SysMemSlicePitch = 0;
 
 		std::swap(pbSrcBuffer, pbDstBuffer);
 		uSrcSize=uDstSize;
 	}
 
-	m_lpAlphaTexture[byImageNum]=pkTex;
+	ID3D11Texture2D* pkTex = nullptr;
+	D3D11_TEXTURE2D_DESC texDesc = {};
+	texDesc.Width = uiNewWidth;
+	texDesc.Height = uiNewHeight;
+	texDesc.MipLevels = numMipLevels;
+	texDesc.ArraySize = 1;
+	texDesc.Format = format;
+	texDesc.SampleDesc.Count = 1;
+	texDesc.SampleDesc.Quality = 0;
+	texDesc.Usage = D3D11_USAGE_DEFAULT;
+	texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	texDesc.CPUAccessFlags = 0;
 
-	return pkTex;
+	hr = ms_pDevice->CreateTexture2D(&texDesc, initData.data(), &pkTex);
+	if (FAILED(hr))
+	{
+		TraceError("CTerrain::AddTexture32 - CreateTexture2D Error");
+		return NULL;
+	}
+
+	// Create shader resource view
+	ID3D11ShaderResourceView* pSRV = nullptr;
+	hr = ms_pDevice->CreateShaderResourceView(pkTex, nullptr, &pSRV);
+	pkTex->Release();
+
+	if (FAILED(hr))
+	{
+		TraceError("CTerrain::AddTexture32 - CreateShaderResourceView Error");
+		return NULL;
+	}
+
+	m_lpAlphaTexture[byImageNum] = pSRV;
+	return pSRV;
 }
 
 void CTerrain::PutImage32(BYTE *src, BYTE *dst, long src_pitch, long dst_pitch, long texturewidth, long textureheight, bool bResize) const
@@ -1025,8 +1041,8 @@ void CTerrain::_CalculateTerrainPatch(BYTE byPatchNumX, BYTE byPatchNumY)
 	HardwareTransformPatch_SSourceVertex*	lpTerrainVertex=akSrcTerrainVertex;
 	UINT uTerrainVertexCount=0;
 
-	D3DXVECTOR3 kNormal;
-	D3DXVECTOR3 kPosition;
+	Vector3 kNormal;
+	Vector3 kPosition;
 	for (DWORD dwY = dwStartY; dwY <= dwStartY + PATCH_YSIZE; ++dwY)
     {
 		WORD * pwRawHeight	= wOrigRawHeightPtr;
@@ -1187,35 +1203,55 @@ void CTerrain::_CalculateTerrainPatch(BYTE byPatchNumX, BYTE byPatchNumY)
 
 void CTerrain::AllocateMarkedSplats(BYTE * pbyAlphaMap)
 {
+	if (!ms_pDevice)
+		return;
+
 	TTerainSplat & rAttrSplat = m_MarkedSplatPatch.Splats[0];
 	HRESULT hr;
 
 	if (m_lpMarkedTexture)
 	{
-		ULONG ulRef;
-		do
-		{
-			ulRef = m_lpMarkedTexture->Release();
-		} while(ulRef > 0);
+		m_lpMarkedTexture->Release();
+		m_lpMarkedTexture = nullptr;
 	}
 
-	do
-	{
-		hr = ms_lpd3dDevice->CreateTexture(ATTRMAP_XSIZE, ATTRMAP_YSIZE, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &m_lpMarkedTexture, nullptr);
-	} while(FAILED(hr));
+	// Prepare texture data in system memory
+	std::vector<BYTE> texData(ATTRMAP_XSIZE * ATTRMAP_YSIZE * 4);
+	PutImage32(pbyAlphaMap, texData.data(), ATTRMAP_XSIZE, ATTRMAP_XSIZE * 4, ATTRMAP_XSIZE, ATTRMAP_YSIZE);
 
-	D3DLOCKED_RECT d3dlr;
-	do
-	{
-		hr = m_lpMarkedTexture->LockRect(0, &d3dlr, nullptr, 0);
-	} while(FAILED(hr));
+	ID3D11Texture2D* pTex = nullptr;
+	D3D11_TEXTURE2D_DESC texDesc = {};
+	texDesc.Width = ATTRMAP_XSIZE;
+	texDesc.Height = ATTRMAP_YSIZE;
+	texDesc.MipLevels = 1;
+	texDesc.ArraySize = 1;
+	texDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+	texDesc.SampleDesc.Count = 1;
+	texDesc.SampleDesc.Quality = 0;
+	texDesc.Usage = D3D11_USAGE_DEFAULT;
+	texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	texDesc.CPUAccessFlags = 0;
 
-	PutImage32(pbyAlphaMap, (BYTE*) d3dlr.pBits, ATTRMAP_XSIZE, d3dlr.Pitch, ATTRMAP_XSIZE, ATTRMAP_YSIZE);
+	D3D11_SUBRESOURCE_DATA initData = {};
+	initData.pSysMem = texData.data();
+	initData.SysMemPitch = ATTRMAP_XSIZE * 4;
 
-	do
+	hr = ms_pDevice->CreateTexture2D(&texDesc, &initData, &pTex);
+	if (FAILED(hr))
 	{
-		hr = m_lpMarkedTexture->UnlockRect(0);
-	} while(FAILED(hr));
+		TraceError("CTerrain::AllocateMarkedSplats - CreateTexture2D Error");
+		return;
+	}
+
+	// Create shader resource view
+	hr = ms_pDevice->CreateShaderResourceView(pTex, nullptr, &m_lpMarkedTexture);
+	pTex->Release();
+
+	if (FAILED(hr))
+	{
+		TraceError("CTerrain::AllocateMarkedSplats - CreateShaderResourceView Error");
+		return;
+	}
 
 	rAttrSplat.pd3dTexture = m_lpMarkedTexture;
 	m_bMarked = true;
@@ -1233,8 +1269,8 @@ void CTerrain::DeallocateMarkedSplats()
 		} while(ulRef > 0);
 	}
 
-	rSplat.pd3dTexture = nullptr;
-	m_lpMarkedTexture = nullptr;
+	rSplat.pd3dTexture = NULL;
+	m_lpMarkedTexture = NULL;
 	m_bMarked = FALSE;
 
 	memset(&m_MarkedSplatPatch, 0, sizeof(m_MarkedSplatPatch));

@@ -924,13 +924,13 @@ PyObject * grpSetOmniLight(PyObject * poSelf, PyObject * poArgs)
 
 PyObject * grpGetCameraPosition(PyObject * poSelf, PyObject * poArgs)
 {
-	const D3DXVECTOR3 v3Eye = CCameraManager::Instance().GetCurrentCamera()->GetEye();
+	const Vector3 v3Eye = CCameraManager::Instance().GetCurrentCamera()->GetEye();
 	return Py_BuildValue("fff", v3Eye.x, v3Eye.y, v3Eye.z);
 }
 
 PyObject * grpGetTargetPosition(PyObject * poSelf, PyObject * poArgs)
 {
-	const D3DXVECTOR3 v3Target = CCameraManager::Instance().GetCurrentCamera()->GetTarget();
+	const Vector3 v3Target = CCameraManager::Instance().GetCurrentCamera()->GetTarget();
 	return Py_BuildValue("fff", v3Target.x, v3Target.y, v3Target.z);
 }
 

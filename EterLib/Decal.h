@@ -25,22 +25,22 @@ public:
 
 	void Clear();
 
-	virtual void Make(D3DXVECTOR3 v3Center, D3DXVECTOR3 v3Normal, D3DXVECTOR3 v3Tangent, float fWidth, float fHeight, float fDepth) = 0;
+	virtual void Make(Vector3 v3Center, Vector3 v3Normal, Vector3 v3Tangent, float fWidth, float fHeight, float fDepth) = 0;
 // 	virtual void Update();
 	virtual void Render();
 
 protected:
 
-	D3DXVECTOR3		m_v3Center;
-	D3DXVECTOR3		m_v3Normal;
+	Vector3		m_v3Center;
+	Vector3		m_v3Normal;
 
 	// Clip Plane
-	D3DXPLANE		m_v4LeftPlane;
-	D3DXPLANE		m_v4RightPlane;
-	D3DXPLANE		m_v4BottomPlane;
-	D3DXPLANE		m_v4TopPlane;
-	D3DXPLANE		m_v4FrontPlane;
-	D3DXPLANE		m_v4BackPlane;
+	Plane		m_v4LeftPlane;
+	Plane		m_v4RightPlane;
+	Plane		m_v4BottomPlane;
+	Plane		m_v4TopPlane;
+	Plane		m_v4FrontPlane;
+	Plane		m_v4BackPlane;
 
 	DWORD			m_dwVertexCount;
 	DWORD			m_dwPrimitiveCount;
@@ -64,19 +64,19 @@ protected:
 	const float m_cfDecalEpsilon;
 
 protected:
-	bool AddPolygon(DWORD dwAddCount, const D3DXVECTOR3 *c_pv3Vertex, const D3DXVECTOR3 *c_pv3Normal);
-	void ClipMesh(DWORD dwPrimitiveCount, const D3DXVECTOR3 *c_pv3Vertex, const D3DXVECTOR3 *c_pv3Normal);
+	bool AddPolygon(DWORD dwAddCount, const Vector3 *c_pv3Vertex, const Vector3 *c_pv3Normal);
+	void ClipMesh(DWORD dwPrimitiveCount, const Vector3 *c_pv3Vertex, const Vector3 *c_pv3Normal);
 	DWORD ClipPolygon(DWORD dwVertexCount,
-		const D3DXVECTOR3 *c_pv3Vertex,
-		const D3DXVECTOR3 *c_pv3Normal,
-		D3DXVECTOR3 *c_pv3NewVertex,
-		D3DXVECTOR3 *c_pv3NewNormal) const;
-	static DWORD ClipPolygonAgainstPlane(const D3DXPLANE& v4Plane,
+		const Vector3 *c_pv3Vertex,
+		const Vector3 *c_pv3Normal,
+		Vector3 *c_pv3NewVertex,
+		Vector3 *c_pv3NewNormal) const;
+	static DWORD ClipPolygonAgainstPlane(const Plane& v4Plane,
 		DWORD dwVertexCount,
-		const D3DXVECTOR3 *c_pv3Vertex,
-		const D3DXVECTOR3 *c_pv3Normal,
-		D3DXVECTOR3 *c_pv3NewVertex,
-		D3DXVECTOR3 *c_pv3NewNormal);
+		const Vector3 *c_pv3Vertex,
+		const Vector3 *c_pv3Normal,
+		Vector3 *c_pv3NewVertex,
+		Vector3 *c_pv3NewNormal);
 };
 /*
 

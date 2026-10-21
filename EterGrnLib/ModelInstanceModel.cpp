@@ -1,11 +1,9 @@
 #include "StdAfx.h"
-#include "../EterBase/MapPerformance.h"
 #include "ModelInstance.h"
 #include "Model.h"
+#include "../EterBase/MapPerformance.h"
 #include "../EterBase/FrameWorkBudget.h"
 #include <array>
-
-
 namespace
 {
 struct CachedWorldPose { granny_world_pose* pose = nullptr; size_t bytes = 0; int bones = 0; };
@@ -48,12 +46,22 @@ void CGrannyModelInstance::DestroyWorldPoseCache()
     cachedWorldPoseBytes = 0;
 }
 
+
+#include "../EterLib/VTFInstanceManager.h"
+
 void CGrannyModelInstance::Clear()
 {
+	// This instance may still be sitting in the VTF deferred-rigid/shadow batches as a raw pointer.
+	// Those are only cleared inside CPythonCharacterManager::Render(), so anything torn down on a
+	// different screen would otherwise be drawn again at its last transform — and because these
+	// instances come from a CDynamicPool, the recycled address can later belong to a live instance.
+	VTFMANAGER.InvalidateModelInstance(this);
+
 	m_kMtrlPal.Clear();
 
 	DestroyDeviceObjects();
 	// WORK
+	__DestroyLocalSkinnedVertexBuffer();
 	__DestroyMeshBindingVector();
 	// END_OF_WORK
 	__DestroyMeshMatrices();
@@ -65,12 +73,11 @@ void CGrannyModelInstance::Clear()
 
 void CGrannyModelInstance::SetMainModelPointer(CGrannyModel* pModel, CGraphicVertexBuffer* pkSharedDeformableVertexBuffer)
 {
-	SetLinkedModelPointer(pModel, pkSharedDeformableVertexBuffer, nullptr);
+	SetLinkedModelPointer(pModel, pkSharedDeformableVertexBuffer, NULL);
 }
 
 void CGrannyModelInstance::SetLinkedModelPointer(CGrannyModel* pkModel, CGraphicVertexBuffer* pkSharedDeformableVertexBuffer, CGrannyModelInstance** ppkSkeletonInst)
 {
-	MapPerformance::Scope profile("actor.model_skeleton_material_bind");
 	Clear();
 
 	if (m_pModel)
@@ -93,11 +100,12 @@ void CGrannyModelInstance::SetLinkedModelPointer(CGrannyModel* pkModel, CGraphic
 		m_ppkSkeletonInst = ppkSkeletonInst;
 		__CreateWorldPose(*ppkSkeletonInst);
 		__CreateMeshBindingVector(*ppkSkeletonInst);
+		__CreateLocalSkinnedVertexBuffer();
 	}
 	else
 	{
-		__CreateWorldPose(nullptr);
-		__CreateMeshBindingVector(nullptr);
+		__CreateWorldPose(NULL);
+		__CreateMeshBindingVector(NULL);
 	}
 	// END_OF_WORK
 
@@ -117,8 +125,8 @@ granny_world_pose* CGrannyModelInstance::__GetWorldPosePtr() const
 	if (m_ppkSkeletonInst && *m_ppkSkeletonInst)
 		return (*m_ppkSkeletonInst)->m_pgrnWorldPoseReal;
 
-	assert(m_ppkSkeletonInst!=nullptr && "__GetWorldPosePtr - NO HAVE SKELETON");
-	return nullptr;
+	assert(m_ppkSkeletonInst!=NULL && "__GetWorldPosePtr - NO HAVE SKELETON");
+	return NULL;
 }
 
 #if GrannyProductMinorVersion==4
@@ -226,8 +234,8 @@ void CGrannyModelInstance::__DestroyWorldPose()
 
 void CGrannyModelInstance::__CreateModelInstance()
 {
-	assert(m_pModel != nullptr);
-	assert(m_pgrnModelInstance == nullptr);
+	assert(m_pModel != NULL);
+	assert(m_pgrnModelInstance == NULL);
 
 	const granny_model * pgrnModel = m_pModel->GetGrannyModelPointer();
 	m_pgrnModelInstance = GrannyInstantiateModel(pgrnModel);
@@ -239,18 +247,18 @@ void CGrannyModelInstance::__DestroyModelInstance()
 		return;
 
 	GrannyFreeModelInstance(m_pgrnModelInstance);
-	m_pgrnModelInstance = nullptr;
+	m_pgrnModelInstance = NULL;
 }
 
 void CGrannyModelInstance::__CreateMeshMatrices()
 {
-	assert(m_pModel != nullptr);
+	assert(m_pModel != NULL);
 
 	if (m_pModel->GetMeshCount() <= 0)
 		return;
 
-	const int meshCount = m_pModel->GetMeshCount();
-	m_meshMatrices = new D3DXMATRIX[meshCount];
+	int meshCount = m_pModel->GetMeshCount();
+	m_meshMatrices = new Matrix[meshCount];
 }
 
 void CGrannyModelInstance::__DestroyMeshMatrices()
@@ -259,10 +267,10 @@ void CGrannyModelInstance::__DestroyMeshMatrices()
 		return;
 
 	delete [] m_meshMatrices;
-	m_meshMatrices = nullptr;
+	m_meshMatrices = NULL;
 }
 
-DWORD CGrannyModelInstance::GetDeformableVertexCount() const
+DWORD CGrannyModelInstance::GetDeformableVertexCount()
 {
 	if (!m_pModel)
 		return 0;
@@ -270,7 +278,7 @@ DWORD CGrannyModelInstance::GetDeformableVertexCount() const
 	return m_pModel->GetDeformVertexCount();
 }
 
-DWORD CGrannyModelInstance::GetVertexCount() const
+DWORD CGrannyModelInstance::GetVertexCount()
 {
 	if (!m_pModel)
 		return 0;
@@ -285,7 +293,7 @@ void CGrannyModelInstance::__SetSharedDeformableVertexBuffer(CGraphicVertexBuffe
 	m_pkSharedDeformableVertexBuffer = pkSharedDeformableVertexBuffer;
 }
 
-bool CGrannyModelInstance::__IsDeformableVertexBuffer() const
+bool CGrannyModelInstance::__IsDeformableVertexBuffer()
 {
 	if (m_pkSharedDeformableVertexBuffer)
 		return true;
@@ -293,9 +301,9 @@ bool CGrannyModelInstance::__IsDeformableVertexBuffer() const
 	return m_kLocalDeformableVertexBuffer.IsEmpty();
 }
 
-IDirect3DVertexBuffer9* CGrannyModelInstance::__GetDeformableD3DVertexBufferPtr()
+ID3D11Buffer* CGrannyModelInstance::__GetDeformableD3DVertexBufferPtr()
 {
-	return __GetDeformableVertexBufferRef().GetD3DVertexBuffer();
+	return __GetDeformableVertexBufferRef().GetBuffer();
 }
 
 CGraphicVertexBuffer& CGrannyModelInstance::__GetDeformableVertexBufferRef()
@@ -306,22 +314,94 @@ CGraphicVertexBuffer& CGrannyModelInstance::__GetDeformableVertexBufferRef()
 	return m_kLocalDeformableVertexBuffer;
 }
 
+bool CGrannyModelInstance::__CreateLocalSkinnedVertexBuffer()
+{
+	assert(!m_bHasLocalSkinnedVB);
+
+	if (!m_pModel)
+		return false;
+
+	int deformVtxCount = m_pModel->GetDeformVertexCount();
+	if (deformVtxCount <= 0)
+		return true;
+
+	if (m_vct_pgrnMeshBinding.empty())
+		return false;
+
+	size_t bufferSize = (size_t)deformVtxCount * sizeof(TSkinnedVertex);
+	void* tempVertices = malloc(bufferSize);
+	if (!tempVertices)
+	{
+		TraceError("CGrannyModelInstance::__CreateLocalSkinnedVertexBuffer - alloc failed (%u bytes)", (unsigned)bufferSize);
+		return false;
+	}
+	memset(tempVertices, 0, bufferSize);
+
+	int maxBone = 0;
+	int meshCount = m_pModel->GetMeshCount();
+	for (int m = 0; m < meshCount; ++m)
+	{
+		if ((size_t)m >= m_vct_pgrnMeshBinding.size())
+			break;
+
+		CGrannyMesh* pMesh = m_pModel->GetMeshPointer(m);
+		granny_mesh_binding* pBinding = m_vct_pgrnMeshBinding[m];
+		if (!pBinding)
+			continue;
+
+		int meshMax = 0;
+		pMesh->LoadSkinnedVerticesWithBinding(tempVertices, pBinding, meshMax);
+		if (meshMax > maxBone)
+			maxBone = meshMax;
+	}
+
+	bool success = m_kLocalSkinnedVertexBuffer.Create(deformVtxCount, INPUT_LAYOUT_SKINNED, D3D11_USAGE_IMMUTABLE, tempVertices);
+	free(tempVertices);
+
+	if (!success)
+	{
+		TraceError("CGrannyModelInstance::__CreateLocalSkinnedVertexBuffer - VB create failed");
+		return false;
+	}
+
+	m_nLocalMaxBoneIndex = maxBone;
+	m_bHasLocalSkinnedVB = true;
+	return true;
+}
+
+void CGrannyModelInstance::__DestroyLocalSkinnedVertexBuffer()
+{
+	m_kLocalSkinnedVertexBuffer.Destroy();
+	m_bHasLocalSkinnedVB = false;
+	m_nLocalMaxBoneIndex = 0;
+}
+
+ID3D11Buffer* CGrannyModelInstance::__GetSkinnedD3DVertexBuffer() const
+{
+	if (m_bHasLocalSkinnedVB)
+		return m_kLocalSkinnedVertexBuffer.GetBuffer();
+	return m_pModel ? m_pModel->GetSkinnedD3DVertexBuffer() : nullptr;
+}
+
+int CGrannyModelInstance::__GetMaxBoneIndex() const
+{
+	if (m_bHasLocalSkinnedVB)
+		return m_nLocalMaxBoneIndex;
+	return m_pModel ? m_pModel->GetMaxBoneIndex() : 0;
+}
+
 void CGrannyModelInstance::__CreateDynamicVertexBuffer()
 {
-	assert(m_pModel != nullptr);
-	// Shared buffers already provide storage; a local fallback starts empty.
-	if (m_pkSharedDeformableVertexBuffer || m_kLocalDeformableVertexBuffer.GetD3DVertexBuffer()) return;
+	assert(m_pModel != NULL);
+	assert(m_kLocalDeformableVertexBuffer.IsEmpty());
 
-	const int vtxCount = m_pModel->GetDeformVertexCount();
+	int vtxCount = m_pModel->GetDeformVertexCount();
 
 	if (0 != vtxCount)
 	{
 		if (!m_kLocalDeformableVertexBuffer.Create(vtxCount,
-									   D3DFVF_XYZ|D3DFVF_NORMAL|D3DFVF_TEX1,
-									   //D3DUSAGE_DYNAMIC, D3DPOOL_SYSTEMMEM
-
-									   D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC, D3DPOOL_DEFAULT
-		))
+			INPUT_LAYOUT_PNT,
+			D3D11_USAGE_DEFAULT))
 			return;
 	}
 }
@@ -329,16 +409,16 @@ void CGrannyModelInstance::__CreateDynamicVertexBuffer()
 void CGrannyModelInstance::__DestroyDynamicVertexBuffer()
 {
 	m_kLocalDeformableVertexBuffer.Destroy();
-	m_pkSharedDeformableVertexBuffer = nullptr;
+	m_pkSharedDeformableVertexBuffer = NULL;
 }
 
 // END_OF_WORK
 
 bool CGrannyModelInstance::GetBoneIndexByName(const char * c_szBoneName, int * pBoneIndex) const
 {
-	assert(m_pgrnModelInstance != nullptr);
+	assert(m_pgrnModelInstance != NULL);
 
-	const granny_skeleton * pgrnSkeleton = GrannyGetSourceSkeleton(m_pgrnModelInstance);
+	granny_skeleton * pgrnSkeleton = GrannyGetSourceSkeleton(m_pgrnModelInstance);
 
 	if (!GrannyFindBoneByName(pgrnSkeleton, c_szBoneName, pBoneIndex))
 		return false;
@@ -353,7 +433,7 @@ const float * CGrannyModelInstance::GetBoneMatrixPointer(int iBone) const
 	{
 		granny_model* pModel = m_pModel->GetGrannyModelPointer();
 		//TraceError("GrannyModelInstance(%s).GetBoneMatrixPointer(boneIndex(%d)).NOT_FOUND_BONE", pModel->Name, iBone);
-		return nullptr;
+		return NULL;
 	}
 	return bones;
 }
@@ -363,8 +443,23 @@ const float * CGrannyModelInstance::GetCompositeBoneMatrixPointer(int iBone) con
 	return GrannyGetWorldPoseComposite4x4(__GetWorldPosePtr(), iBone);
 }
 
-void CGrannyModelInstance::ReloadTexture() const
+void CGrannyModelInstance::ReloadTexture()
 {
 	assert("Not currently used - CGrannyModelInstance::ReloadTexture()");
+/*
+	assert(m_pModel != NULL);
+	const CGrannyMaterialPalette & c_rGrannyMaterialPalette = m_pModel->GetMaterialPalette();
+	DWORD dwMaterialCount = c_rGrannyMaterialPalette.GetMaterialCount();
+	for (DWORD dwMtrIndex = 0; dwMtrIndex < dwMaterialCount; ++dwMtrIndex)
+	{
+		const CGrannyMaterial & c_rGrannyMaterial = c_rGrannyMaterialPalette.GetMaterialRef(dwMtrIndex);
+		CGraphicImage * pImageStage0 = c_rGrannyMaterial.GetImagePointer(0);
+		if (pImageStage0)
+			pImageStage0->Reload();
+		CGraphicImage * pImageStage1 = c_rGrannyMaterial.GetImagePointer(1);
+		if (pImageStage1)
+			pImageStage1->Reload();
+	}
+*/
 }
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

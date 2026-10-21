@@ -28,6 +28,11 @@ class CEffectManager : public CScreen, public CSingleton<CEffectManager>
 		void UpdateSound();
 		void Update();
 		void Render();
+#ifdef ENABLE_EFFECT_LIMIT
+		static void SetEffectLimit(int limit) { ms_iEffectLimit = max(0, limit); }
+		static int GetEffectLimit() { return ms_iEffectLimit; }
+		static void SetMainPlayerPosition(const Vector3& position) { ms_v3PlayerPosition = position; }
+#endif
 
 		void GetInfo(std::string* pstInfo) const;
 
@@ -40,8 +45,8 @@ class CEffectManager : public CScreen, public CSingleton<CEffectManager>
 		void DeleteAllInstances();
 
 		// Usage
-		int CreateEffect(DWORD dwID, const D3DXVECTOR3 & c_rv3Position, const D3DXVECTOR3 & c_rv3Rotation);
-		int CreateEffect(const char * c_szFileName, const D3DXVECTOR3 & c_rv3Position, const D3DXVECTOR3 & c_rv3Rotation);
+		int CreateEffect(DWORD dwID, const Vector3 & c_rv3Position, const Vector3 & c_rv3Rotation);
+		int CreateEffect(const char * c_szFileName, const Vector3 & c_rv3Position, const Vector3 & c_rv3Rotation);
 
 		void CreateEffectInstance(DWORD dwInstanceIndex, DWORD dwID);
 		BOOL SelectEffectInstance(DWORD dwInstanceIndex);
@@ -49,9 +54,9 @@ class CEffectManager : public CScreen, public CSingleton<CEffectManager>
 		void DeactiveEffectInstance(DWORD dwInstanceIndex);
 
 		void SetEffectTextures(DWORD dwID,std::vector<string> textures);
-		void SetEffectInstancePosition(const D3DXVECTOR3 & c_rv3Position) const;
-		void SetEffectInstanceRotation(const D3DXVECTOR3 & c_rv3Rotation) const;
-		void SetEffectInstanceGlobalMatrix(const D3DXMATRIX & c_rmatGlobal) const;
+		void SetEffectInstancePosition(const Vector3 & c_rv3Position) const;
+		void SetEffectInstanceRotation(const Vector3 & c_rv3Rotation) const;
+		void SetEffectInstanceGlobalMatrix(const Matrix & c_rmatGlobal) const;
 
 		void ShowEffect() const;
 		void HideEffect() const;
@@ -84,6 +89,10 @@ class CEffectManager : public CScreen, public CSingleton<CEffectManager>
 		std::vector<CEffectInstance*> m_renderOrder;
 		bool m_renderOrderDirty = true;
 		bool m_isDisableSortRendering;
+#ifdef ENABLE_EFFECT_LIMIT
+		static int ms_iEffectLimit;
+		static Vector3 ms_v3PlayerPosition;
+#endif
 		TEffectDataMap					m_kEftDataMap;
 		TEffectInstanceMap				m_kEftInstMap;
 		TEffectInstanceMap				m_kEftCacheMap;

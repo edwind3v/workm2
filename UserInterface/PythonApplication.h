@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../EterBase/StepTimer.h"
 #include "../eterLib/MSApplication.h"
 #include "../eterLib/Input.h"
 #include "../eterLib/Profiler.h"
@@ -253,7 +254,7 @@ class CPythonApplication : public CMSApplication, public CInputKeyboard, public 
 	public:
 		int OnLogoOpen(char* szName);
 		int OnLogoUpdate();
-		void OnLogoRender() const;
+		void OnLogoRender();
 		void OnLogoClose();
 
 	protected:
@@ -267,6 +268,8 @@ class CPythonApplication : public CMSApplication, public CInputKeyboard, public 
 		BYTE*					m_pCaptureBuffer;
 		LONG					m_lBufferSize;
 		CGraphicImageTexture*	m_pLogoTex;
+		IMFSourceReader* m_pSourceReader = nullptr;
+		UINT m_nVideoWidth = 0, m_nVideoHeight = 0;
 		bool					m_bLogoError;
 		bool					m_bLogoPlay;
 
@@ -311,6 +314,8 @@ class CPythonApplication : public CMSApplication, public CInputKeyboard, public 
 
 	protected:
 		CTimer m_timer;
+		// Construct before world/effect managers; destroy after their teardown.
+		DX::StepTimer m_renderTimer;
 
 		CLightManager				m_LightManager;
 		CSoundManager				m_SoundManager;
@@ -356,11 +361,6 @@ class CPythonApplication : public CMSApplication, public CInputKeyboard, public 
 		CAccountConnector			m_kAccountConnector;
 
 		CGraphicDevice				m_grpDevice;
-		// Optional diagnostic: DX11-produced texture presented by DX9Ex UI.
-		// Released before D3D9 device reset or application destruction.
-		IDirect3DTexture9*			m_dx11SharedPreviewTexture;
-		IDirect3DTexture9*			m_dx11ModelPreviewTexture;
-		bool						m_dx11ModelPreviewAttempted;
 		CNetworkDevice				m_netDevice;
 
 		CPythonSystem				m_pySystem;
@@ -369,7 +369,7 @@ class CPythonApplication : public CMSApplication, public CInputKeyboard, public 
 #endif
 
 		PyObject *					m_poMouseHandler;
-		D3DXVECTOR3					m_v3CenterPosition;
+		Vector3					m_v3CenterPosition;
 
 		unsigned int				m_iFPS;
 		float						m_fAveRenderTime;

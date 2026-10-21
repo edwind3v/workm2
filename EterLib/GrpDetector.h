@@ -1,16 +1,9 @@
 #pragma once
 
-#include <d3d9.h>
+#include <d3d11.h>
+#include <dxgi.h>
 #include <string>
 
-typedef BOOL (*PFNCONFIRMDEVICE) (D3DCAPS9& rkD3DCaps, UINT uBehavior, D3DFORMAT eD3DFmt);
-
-enum
-{
-	D3DDEVICETYPE_HAL,
-	D3DDEVICETYPE_REF,
-	D3DDEVICETYPE_NUM,
-};
 
 struct D3D_SModeInfo
 {
@@ -18,121 +11,99 @@ struct D3D_SModeInfo
 	UINT m_uScrHeight;
 	UINT m_uScrDepthBit;
  	UINT m_dwD3DBehavior;
-	D3DFORMAT m_eD3DFmtPixel;
-	D3DFORMAT m_eD3DFmtDepthStencil;
+	DXGI_FORMAT m_eD3DFmtPixel;
+	DXGI_FORMAT m_eD3DFmtDepthStencil;
 
-	VOID GetString(std::string* pstEnumList) const;
+	VOID GetString(std::string* pstEnumList);
 };
 
 class D3D_CAdapterDisplayModeList
 {
 	public:
-		D3D_CAdapterDisplayModeList() {}
+		D3D_CAdapterDisplayModeList() : m_uModeNum(0) {}
 		~D3D_CAdapterDisplayModeList() {}
-		VOID Build(IDirect3D9Ex& rkD3D, D3DFORMAT eD3DFmtDefault, UINT iAdapter);
+		VOID Build(IDXGIAdapter* pAdapter, DXGI_FORMAT eDefaultFormat);
 
-		UINT GetDisplayModeNum() const;
-		UINT GetPixelFormatNum() const;
+		UINT GetDisplayModeNum() { return m_uModeNum; }
+		UINT GetPixelFormatNum() { return m_uFmtNum; }
 
-		const D3DDISPLAYMODEEX&	GetDisplayModer(UINT iD3DDM) const;
-		const D3DFORMAT&		GetPixelFormatr(UINT iD3DFmt) const;
+		const DXGI_MODE_DESC& GetDisplayModer(UINT iMode) { return m_akModes[iMode]; }
+		const DXGI_FORMAT& GetPixelFormatr(UINT iFmt) { return m_aeFormats[iFmt]; }
 
 	protected:
 		enum
 		{
-			D3DDISPLAYMODE_MAX = 100,
-			D3DFORMAT_MAX = 20,
-
-			FILTEROUT_LOWRESOLUTION_WIDTH = 640,
-			FILTEROUT_LOWRESOLUTION_HEIGHT = 480,
+			MODE_MAX = 100,
+			FORMAT_MAX = 20,
 		};
 
 	protected:
-		D3DDISPLAYMODEEX m_akD3DDM[D3DDISPLAYMODE_MAX];
-		D3DFORMAT m_aeD3DFmt[D3DFORMAT_MAX];
+		DXGI_MODE_DESC m_akModes[MODE_MAX];
+		DXGI_FORMAT m_aeFormats[FORMAT_MAX];
 
-		UINT m_uD3DDMNum;
-		UINT m_uD3DFmtNum;
+		UINT m_uModeNum;
+		UINT m_uFmtNum;
 };
 
 class D3D_CDeviceInfo
 {
 	public:
-		D3D_CDeviceInfo() {}
+		D3D_CDeviceInfo() : m_uModeInfoNum(0) {}
 		~D3D_CDeviceInfo() {}
-		BOOL Build(IDirect3D9Ex& rkD3D, UINT iAdapter, UINT iDevType, D3D_CAdapterDisplayModeList& rkD3DADMList, PFNCONFIRMDEVICE pfnConfirmDevice);
-		BOOL Find(UINT uScrWidth, UINT uScrHeight, UINT uScrDepthBits, BOOL isWindowed, UINT* piD3DModeInfo) const;
+		BOOL Build(IDXGIAdapter* pAdapter, D3D_CAdapterDisplayModeList& rkModeList);
+		BOOL Find(UINT uScrWidth, UINT uScrHeight, UINT uScrDepthBits, BOOL isWindowed, UINT* piModeInfo);
 
-		UINT GetD3DModeInfoNum() const;
+		UINT GetD3DModeInfoNum() { return m_uModeInfoNum; }
 
 		VOID GetString(std::string* pstEnumList);
 
-		BOOL FindDepthStencilFormat(IDirect3D9Ex& rkD3D, UINT iAdapter, D3DDEVTYPE DeviceType, D3DFORMAT TargetFormat, D3DFORMAT* pDepthStencilFormat) const;
-
-		D3D_SModeInfo& GetD3DModeInfor(UINT iD3DModeInfo);
-		D3D_SModeInfo* GetD3DModeInfop(UINT iD3DModeInfo);
+		D3D_SModeInfo& GetD3DModeInfor(UINT iModeInfo) { return m_akModeInfo[iModeInfo]; }
+		D3D_SModeInfo* GetD3DModeInfop(UINT iModeInfo) { return &m_akModeInfo[iModeInfo]; }
 
 	protected:
 		enum
 		{
-			D3DMODEINFO_NUM = 150,
+			MODEINFO_NUM = 150,
 		};
 
 	protected:
 		const TCHAR* m_szDevDesc;
+		D3D_FEATURE_LEVEL m_FeatureLevel;
 
-		D3DDEVTYPE	m_eD3DDevType;
-		D3DCAPS9	m_kD3DCaps;
-		BOOL		m_canDoWindowed;
-
-		UINT		m_iCurD3DModeInfo;
-		UINT		m_uD3DModeInfoNum;
-		D3D_SModeInfo	m_akD3DModeInfo[D3DMODEINFO_NUM];
-
-		BOOL		m_isWindowed;
-
-		D3DMULTISAMPLE_TYPE m_eD3DMSTWindowed;
-		D3DMULTISAMPLE_TYPE m_eD3DMSTFullscreen;
-
-	protected:
-		static const CHAR*		msc_aszD3DDevDesc[D3DDEVICETYPE_NUM];
-		static const D3DDEVTYPE msc_aeD3DDevType[D3DDEVICETYPE_NUM];
+		UINT m_uModeInfoNum;
+		D3D_SModeInfo m_akModeInfo[MODEINFO_NUM];
 };
 
 class D3D_CAdapterInfo
 {
 	public:
-		D3D_CAdapterInfo() {}
+		D3D_CAdapterInfo() : m_uDevInfoNum(0) {}
 		~D3D_CAdapterInfo() {}
-		BOOL Find(UINT uScrWidth, UINT uScrHeight, UINT uScrDepthBits, BOOL isWindowed, UINT* piD3DModeInfo, UINT* piD3DDevInfo);
+		BOOL Find(UINT uScrWidth, UINT uScrHeight, UINT uScrDepthBits, BOOL isWindowed, UINT* piModeInfo, UINT* piDevInfo);
 
-		BOOL Build(IDirect3D9Ex& rkD3D, UINT iAdapter, PFNCONFIRMDEVICE pfnConfirmDevice);
+		BOOL Build(IDXGIAdapter* pAdapter);
 		VOID GetString(std::string* pstEnumList);
 
-		D3DADAPTER_IDENTIFIER9& GetIdentifier()
-		{
-			return m_kD3DAdapterIdentifier;
-		}
+		DXGI_ADAPTER_DESC& GetIdentifier() { return m_kAdapterDesc; }
 
-		D3DDISPLAYMODEEX&	GetDesktopD3DDisplayModer();
-		D3DDISPLAYMODEEX*	GetDesktopD3DDisplayModep();
+		DXGI_MODE_DESC& GetDesktopD3DDisplayModer() { return m_kDesktopMode; }
+		DXGI_MODE_DESC* GetDesktopD3DDisplayModep() { return &m_kDesktopMode; }
 
-		D3D_CDeviceInfo*	GetD3DDeviceInfop(UINT iD3DDevInfo);
-		D3D_SModeInfo*		GetD3DModeInfop(UINT iD3DDevInfo, UINT iD3DModeInfo);
+		D3D_CDeviceInfo* GetD3DDeviceInfop(UINT iDevInfo) { return &m_akDevInfo[iDevInfo]; }
+		D3D_SModeInfo* GetD3DModeInfop(UINT iDevInfo, UINT iModeInfo);
 
 	protected:
 		enum
 		{
-			D3DDEVICEINFO_NUM = 5,
+			DEVINFO_NUM = 5,
 		};
 
 	protected:
-		D3DADAPTER_IDENTIFIER9	m_kD3DAdapterIdentifier;
-		D3DDISPLAYMODEEX		m_kD3DDMDesktop;
+		DXGI_ADAPTER_DESC m_kAdapterDesc;
+		DXGI_MODE_DESC m_kDesktopMode;
 
-		UINT			m_iCurD3DDevInfo;
-		UINT			m_uD3DDevInfoNum;
-		D3D_CDeviceInfo	m_akD3DDevInfo[D3DDEVICEINFO_NUM];
+		UINT m_uDevInfoNum;
+		D3D_CDeviceInfo m_akDevInfo[DEVINFO_NUM];
 };
 
 class D3D_CDisplayModeAutoDetector
@@ -141,22 +112,21 @@ class D3D_CDisplayModeAutoDetector
 		D3D_CDisplayModeAutoDetector();
 		~D3D_CDisplayModeAutoDetector();
 
-		BOOL Find(UINT uScrWidth, UINT uScrHeight, UINT uScrDepthBits, BOOL isWindowed, UINT* piD3DModeInfo, UINT* piD3DDevInfo, UINT* piD3DAdapterInfo);
-		BOOL Build(IDirect3D9Ex& rkD3D, PFNCONFIRMDEVICE pfnConfirmDevice);
+		BOOL Find(UINT uScrWidth, UINT uScrHeight, UINT uScrDepthBits, BOOL isWindowed, UINT* piModeInfo, UINT* piDevInfo, UINT* piAdapterInfo);
+		BOOL Build(IDXGIFactory* pFactory);
 
-		D3D_CAdapterInfo*	GetD3DAdapterInfop(UINT iD3DAdapterInfo);
-		D3D_SModeInfo*		GetD3DModeInfop(UINT iD3DAdapterInfo, UINT iD3DDevInfo, UINT iD3DModeInfo);
+		D3D_CAdapterInfo* GetD3DAdapterInfop(UINT iAdapterInfo) { return &m_akAdapterInfo[iAdapterInfo]; }
+		D3D_SModeInfo* GetD3DModeInfop(UINT iAdapterInfo, UINT iDevInfo, UINT iModeInfo);
 
 		VOID GetString(std::string* pstEnumList);
 
 	protected:
 		enum
 		{
-			D3DADAPTERINFO_NUM = 10,
+			ADAPTERINFO_NUM = 10,
 		};
 
 	protected:
-		D3D_CAdapterInfo	m_akD3DAdapterInfo[D3DADAPTERINFO_NUM];
-		UINT				m_uD3DAdapterInfoCount;
+		D3D_CAdapterInfo m_akAdapterInfo[ADAPTERINFO_NUM];
+		UINT m_uAdapterInfoCount;
 };
-

@@ -18,8 +18,8 @@ bool DetectCollisionDynamicZCylinderVSDynamicZCylinder(const CDynamicSphereInsta
 	const float rsq = r*r;
 
 	// AABB check
-	D3DXVECTOR3 mi1=c_rCylinder1.v3LastPosition, mi2 = c_rCylinder1.v3Position;
-	D3DXVECTOR3 mi3=c_rCylinder2.v3LastPosition, mi4 = c_rCylinder2.v3Position;
+	Vector3 mi1=c_rCylinder1.v3LastPosition, mi2 = c_rCylinder1.v3Position;
+	Vector3 mi3=c_rCylinder2.v3LastPosition, mi4 = c_rCylinder2.v3Position;
 	if (mi1.x>mi2.x) std::swap(mi1.x,mi2.x);
 	if (mi1.y>mi2.y) std::swap(mi1.y,mi2.y);
 	if (mi1.z>mi2.z) std::swap(mi1.z,mi2.z);
@@ -34,12 +34,12 @@ bool DetectCollisionDynamicZCylinderVSDynamicZCylinder(const CDynamicSphereInsta
 	if (mi4.y<mi1.y || mi2.y<mi3.y) return false;
 	if (mi4.z<mi1.z || mi2.z<mi3.z) return false;
 
-	D3DXVECTOR3 vA, vB;
+	Vector3 vA, vB;
 	IntersectLineSegments(c_rCylinder1.v3LastPosition, c_rCylinder1.v3Position,
 		c_rCylinder2.v3LastPosition, c_rCylinder2.v3Position,
 		vA, vB);
 	const auto val = (vA-vB);
-	return (D3DXVec3LengthSq(&val)<=rsq);
+	return (Vec3LengthSq(&val)<=rsq);
 }
 
 bool DetectCollisionDynamicSphereVSDynamicSphere(const CDynamicSphereInstance & c_rSphere1, const CDynamicSphereInstance & c_rSphere2)
@@ -51,8 +51,8 @@ bool DetectCollisionDynamicSphereVSDynamicSphere(const CDynamicSphereInstance & 
 
 	// AABB check
 
-	D3DXVECTOR3 mi1=c_rSphere1.v3LastPosition, mi2 = c_rSphere1.v3Position;
-	D3DXVECTOR3 mi3=c_rSphere2.v3LastPosition, mi4 = c_rSphere2.v3Position;
+	Vector3 mi1=c_rSphere1.v3LastPosition, mi2 = c_rSphere1.v3Position;
+	Vector3 mi3=c_rSphere2.v3LastPosition, mi4 = c_rSphere2.v3Position;
 	if (mi1.x>mi2.x) std::swap(mi1.x,mi2.x);
 	if (mi1.y>mi2.y) std::swap(mi1.y,mi2.y);
 	if (mi1.z>mi2.z) std::swap(mi1.z,mi2.z);
@@ -67,12 +67,12 @@ bool DetectCollisionDynamicSphereVSDynamicSphere(const CDynamicSphereInstance & 
 	if (mi4.y<mi1.y || mi2.y<mi3.y) return false;
 	if (mi4.z<mi1.z || mi2.z<mi3.z) return false;
 
-	D3DXVECTOR3 vA, vB;
+	Vector3 vA, vB;
 	IntersectLineSegments(c_rSphere1.v3LastPosition, c_rSphere1.v3Position,
 		c_rSphere2.v3LastPosition, c_rSphere2.v3Position,
 		vA, vB);
 	const auto val = (vA-vB);
-	return (D3DXVec3LengthSq(&val)<=rsq);
+	return (Vec3LengthSq(&val)<=rsq);
 }
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -119,11 +119,11 @@ float GetInterpolatedRotation(float begin, float end, float curRate)
 
 float GetDegreeFromPosition(float x, float y)
 {
-	D3DXVECTOR3 vtDir(floor(x), floor(y), 0.0f);
-	D3DXVec3Normalize(&vtDir, &vtDir);
+	Vector3 vtDir(floor(x), floor(y), 0.0f);
+	Vec3Normalize(&vtDir, &vtDir);
 
-	const D3DXVECTOR3 vtStan(0, -1, 0);
-	float ret = D3DXToDegree(acosf(D3DXVec3Dot(&vtDir, &vtStan)));
+	const Vector3 vtStan(0, -1, 0);
+	float ret = ToDegree(acosf(Vec3Dot(&vtDir, &vtStan)));
 
 	if (vtDir.x < 0.0f)
 		ret = 360.0f - ret;

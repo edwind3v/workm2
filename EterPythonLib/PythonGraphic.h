@@ -13,43 +13,43 @@ class CPythonGraphic : public CScreen, public CSingleton<CPythonGraphic>
 		CPythonGraphic();
 		virtual ~CPythonGraphic();
 
-		void Destroy() const;
+		void Destroy();
 
 		void PushState();
 		void PopState();
 
-		LPDIRECT3D9EX GetD3D() const;
+		IDXGIFactory* GetDXGIFactory();
 
-		float GetOrthoDepth() const;
-		void SetInterfaceRenderState() const;
-		void SetGameRenderState() const;
+		float GetOrthoDepth();
+		void SetInterfaceRenderState();
+		void SetGameRenderState();
 
-		void SetCursorPosition(int x, int y) const;
+		void SetCursorPosition(int x, int y);
 
-		void SetOmniLight() const;
+		void SetOmniLight();
 
 		void SetViewport(float fx, float fy, float fWidth, float fHeight);
-		void RestoreViewport() const;
+		void RestoreViewport();
 
-		long GenerateColor(float r, float g, float b, float a) const;
-		void RenderDownButton(float sx, float sy, float ex, float ey) const;
-		void RenderUpButton(float sx, float sy, float ex, float ey) const;
+		long GenerateColor(float r, float g, float b, float a);
+		void RenderDownButton(float sx, float sy, float ex, float ey);
+		void RenderUpButton(float sx, float sy, float ex, float ey);
 
-		void RenderImage(CGraphicImageInstance* pImageInstance, float x, float y) const;
-		void RenderAlphaImage(CGraphicImageInstance* pImageInstance, float x, float y, float aLeft, float aRight) const;
-		void RenderCoolTimeBox(float fxCenter, float fyCenter, float fRadius, float fTime) const;
+		void RenderImage(CGraphicImageInstance* pImageInstance, float x, float y);
+		void RenderAlphaImage(CGraphicImageInstance* pImageInstance, float x, float y, float aLeft, float aRight);
+		void RenderCoolTimeBox(float fxCenter, float fyCenter, float fRadius, float fTime);
 
-		bool SaveJPEG(const char * pszFileName, LPBYTE pbyBuffer, UINT uWidth, UINT uHeight) const;
-		bool SaveScreenShot(const char *szFileName) const;
+		bool SaveJPEG(const char * pszFileName, LPBYTE pbyBuffer, UINT uWidth, UINT uHeight);
+		bool SaveScreenShot(const char *szFileName);
 
-		DWORD GetAvailableMemory() const;
-		void SetGamma(float fGammaFactor = 1.0f) const;
+		DWORD GetAvailableMemory();
+		void SetGamma(float fGammaFactor = 1.0f);
 
 	protected:
 		typedef struct SState
 		{
-			D3DXMATRIX matView;
-			D3DXMATRIX matProj;
+			Matrix matView;
+			Matrix matProj;
 		} TState;
 
 		DWORD		m_lightColor;
@@ -58,12 +58,12 @@ class CPythonGraphic : public CScreen, public CSingleton<CPythonGraphic>
 	protected:
 		std::stack<TState>						m_stateStack;
 
-		D3DXMATRIX								m_SaveWorldMatrix;
+		Matrix								m_SaveWorldMatrix;
 
 		CCullingManager							m_CullingManager;
 
-		D3DVIEWPORT9							m_backupViewport;
+		D3D11_VIEWPORT							m_backupViewport;
 
 		float									m_fOrthoDepth;
 };
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

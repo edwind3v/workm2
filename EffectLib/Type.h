@@ -1,7 +1,7 @@
 #pragma once
 
 #define Clamp(x, min, max)  x = (x<min  ? min : x<max ? x : max);
-#define GRAVITY			D3DXVECTOR3(0.0f, 0.0f, -9.8f)
+#define GRAVITY			Vector3(0.0f, 0.0f, -9.8f)
 
 #define	MAX_FRAME		20
 #define MAX_TEXTURE		20
@@ -86,11 +86,11 @@ typedef struct SEffectPosition
 {
 	float m_fTime;
 
-	D3DXVECTOR3 m_vecPosition;
+	Vector3 m_vecPosition;
 
 	// For Bezier Curve
 	int m_iMovingType;
-	D3DXVECTOR3 m_vecControlPoint;
+	Vector3 m_vecControlPoint;
 } TEffectPosition;
 
 inline bool operator < (const SEffectPosition & lhs, const SEffectPosition & rhs)
@@ -198,8 +198,8 @@ typedef CTimeEvent<float>						TTimeEventTypeFloat;
 typedef CTimeEvent<WORD>						TTimeEventTypeWord;
 typedef CTimeEvent<DWORD>						TTimeEventTypeDoubleWord;
 typedef CTimeEvent<DWORDCOLOR>					TTimeEventTypeColor;
-typedef CTimeEvent<D3DXVECTOR2>					TTimeEventTypeVector2;
-typedef CTimeEvent<D3DXVECTOR3>					TTimeEventTypeVector3;
+typedef CTimeEvent<Vector2>					TTimeEventTypeVector2;
+typedef CTimeEvent<Vector3>					TTimeEventTypeVector3;
 
 typedef std::vector<float>						TTimeEventTable;
 typedef std::vector<TEffectPosition>			TTimeEventTablePosition;

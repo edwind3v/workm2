@@ -2,83 +2,25 @@
 #include "Mesh.h"
 #include "Model.h"
 #include "Material.h"
-#include "../eterLib/DX11GrannyProbe.h"
-
-namespace
-{
-// Only enabled for an explicitly requested, temporary DX11 preview.
-// This cap is shared by loaded Granny meshes to avoid doubling large models.
-constexpr size_t kDX11PreviewIndexBudget = 32u * 1024u * 1024u;
-size_t s_dx11PreviewIndexBytes = 0;
-constexpr size_t kDX11PreviewRigidVertexBudget = 64u * 1024u * 1024u;
-size_t s_dx11PreviewRigidVertexBytes = 0;
-}
 
 granny_data_type_definition GrannyPNT3322VertexType[5] =
 {
-	{GrannyReal32Member, GrannyVertexPositionName, nullptr, 3},
-	{GrannyReal32Member, GrannyVertexNormalName, nullptr, 3},
-	{GrannyReal32Member, GrannyVertexTextureCoordinatesName"0", nullptr, 2},
-	{GrannyReal32Member, GrannyVertexTextureCoordinatesName"1", nullptr, 2},
+	{GrannyReal32Member, GrannyVertexPositionName, 0, 3},
+	{GrannyReal32Member, GrannyVertexNormalName, 0, 3},
+	{GrannyReal32Member, GrannyVertexTextureCoordinatesName"0", 0, 2},
+	{GrannyReal32Member, GrannyVertexTextureCoordinatesName"1", 0, 2},
 	{GrannyEndMember}
 };
 
-void CGrannyMesh::LoadIndices(void * dstBaseIndices) const
+void CGrannyMesh::LoadIndices(void * dstBaseIndices)
 {
 	const granny_mesh * pgrnMesh = GetGrannyMeshPointer();
 
 	TIndex * dstIndices = ((TIndex *)dstBaseIndices) + m_idxBasePos;
-	// Preserve the same indices used for the working DX9Ex model while they
-	// are available at asset-load time. Calling GrannyCopyMeshIndices again
-	// during character animation can yield invalid debug-heap values such as
-	// 0xCDCD / 0xDDDD after the source topology's lifetime has ended.
-	const char* mode = graphics::GetDX11GrannyCaptureMode();
-	const bool characterMode = strcmp(mode, "character") == 0;
-	const int vertexCount = GrannyGetMeshVertexCount(pgrnMesh);
-	const int indexCount = GrannyGetMeshIndexCount(pgrnMesh);
-	// Full-character capture must retain small costume detail meshes too.
-	// Keep the original larger minimum for the single-mesh diagnostic.
-	const int minVertices = characterMode ? 3 : 12;
-	const int minIndices = characterMode ? 3 : 36;
-	const int maxVertices = characterMode ? 60000 : 30000;
-	const int maxIndices = characterMode ? 180000 : 90000;
-	if (indexCount > 0 && m_dx11PreviewIndices.size() == static_cast<size_t>(indexCount))
-	{
-		memcpy(dstIndices, m_dx11PreviewIndices.data(),
-			static_cast<size_t>(indexCount) * sizeof(TIndex));
-		return;
-	}
-	if (strcmp(mode, "off") != 0 &&
-		(strcmp(mode, "skinned") != 0 || !GrannyMeshIsRigid(pgrnMesh)) &&
-		vertexCount >= minVertices && vertexCount <= maxVertices &&
-		indexCount >= minIndices && indexCount <= maxIndices && indexCount % 3 == 0)
-	{
-		const size_t bytes = static_cast<size_t>(indexCount) * sizeof(TIndex);
-		if (bytes <= kDX11PreviewIndexBudget - s_dx11PreviewIndexBytes)
-		{
-			m_dx11PreviewIndices.resize(indexCount);
-			GrannyCopyMeshIndices(pgrnMesh, sizeof(TIndex), m_dx11PreviewIndices.data());
-			// Populate the D3D9 write-only buffer from the very same CPU array;
-			// no attempt to read back a D3DUSAGE_WRITEONLY resource is needed.
-			memcpy(dstIndices, m_dx11PreviewIndices.data(), bytes);
-			s_dx11PreviewIndexBytes += bytes;
-			return;
-		}
-	}
 	GrannyCopyMeshIndices(pgrnMesh, sizeof(TIndex), dstIndices);
 }
 
-const std::vector<WORD>& CGrannyMesh::GetDX11PreviewIndices() const
-{
-	return m_dx11PreviewIndices;
-}
-
-const std::vector<TPNTVertex>& CGrannyMesh::GetDX11PreviewRigidVertices() const
-{
-	return m_dx11PreviewRigidVertices;
-}
-
-void CGrannyMesh::LoadPNTVertices(void * dstBaseVertices) const
+void CGrannyMesh::LoadPNTVertices(void * dstBaseVertices)
 {
 	const granny_mesh * pgrnMesh = GetGrannyMeshPointer();
 
@@ -87,25 +29,9 @@ void CGrannyMesh::LoadPNTVertices(void * dstBaseVertices) const
 
 	TPNTVertex * dstVertices = ((TPNTVertex *)dstBaseVertices) + m_vtxBasePos;
 	GrannyCopyMeshVertices(pgrnMesh, m_pgrnMeshType, dstVertices);
-	// Mirror the vertices while the model is being loaded and Granny's source
-	// is known to be valid. This is opt-in and globally bounded; it never
-	// reads back the write-only DX9Ex GPU vertex buffer.
-	if (strcmp(graphics::GetDX11GrannyCaptureMode(), "character") == 0)
-	{
-		const int count = GrannyGetMeshVertexCount(pgrnMesh);
-		if (count >= 3 && count <= 60000 && m_dx11PreviewRigidVertices.empty())
-		{
-			const size_t bytes = static_cast<size_t>(count) * sizeof(TPNTVertex);
-			if (bytes <= kDX11PreviewRigidVertexBudget - s_dx11PreviewRigidVertexBytes)
-			{
-				m_dx11PreviewRigidVertices.assign(dstVertices, dstVertices + count);
-				s_dx11PreviewRigidVertexBytes += bytes;
-			}
-		}
-	}
 }
 
-void CGrannyMesh::NEW_LoadVertices(void * dstBaseVertices) const
+void CGrannyMesh::NEW_LoadVertices(void * dstBaseVertices)
 {
 	const granny_mesh * pgrnMesh = GetGrannyMeshPointer();
 
@@ -114,59 +40,203 @@ void CGrannyMesh::NEW_LoadVertices(void * dstBaseVertices) const
 
 	TPNTVertex * dstVertices = ((TPNTVertex *)dstBaseVertices) + m_vtxBasePos;
 	GrannyCopyMeshVertices(pgrnMesh, m_pgrnMeshType, dstVertices);
-	// Modern model-loading paths use NEW_LoadVertices rather than
-	// LoadPNTVertices. Cache the exact DX9Ex upload bytes here as well,
-	// otherwise later GrannyCopyMeshVertices calls can return corrupt data.
-	if (strcmp(graphics::GetDX11GrannyCaptureMode(), "character") == 0)
-	{
-		const int count = GrannyGetMeshVertexCount(pgrnMesh);
-		if (count >= 3 && count <= 60000 && m_dx11PreviewRigidVertices.empty())
-		{
-			const size_t bytes = static_cast<size_t>(count) * sizeof(TPNTVertex);
-			if (bytes <= kDX11PreviewRigidVertexBudget - s_dx11PreviewRigidVertexBytes)
-			{
-				m_dx11PreviewRigidVertices.assign(dstVertices, dstVertices + count);
-				s_dx11PreviewRigidVertexBytes += bytes;
-			}
-		}
-	}
 }
 
-void CGrannyMesh::DeformPNTVertices(void * dstBaseVertices, D3DXMATRIX * boneMatrices, granny_mesh_binding* pgrnMeshBinding) const
+void CGrannyMesh::LoadSkinnedVertices(void * dstBaseVertices)
 {
-	assert(dstBaseVertices != nullptr);
-	assert(boneMatrices != nullptr);
-	assert(m_pgrnMeshDeformer != nullptr);
-
 	const granny_mesh * pgrnMesh = GetGrannyMeshPointer();
 
-	const auto srcVertices = (TPNTVertex *) GrannyGetMeshVertices(pgrnMesh);
-	TPNTVertex * dstVertices = ((TPNTVertex *) dstBaseVertices) + m_vtxBasePos;
+	// This function is only for deformable (skinned) meshes
+	if (GrannyMeshIsRigid(pgrnMesh))
+		return;
 
-	const int vtxCount = GrannyGetMeshVertexCount(pgrnMesh);
+	if (!m_pgrnMeshBindingTemp)
+	{
+		TraceError("CGrannyMesh::LoadSkinnedVertices - No mesh binding available for bone remapping");
+		return;
+	}
 
-	// WORK
 #if GrannyProductMinorVersion==4
-	int * boneIndices = GrannyGetMeshBindingToBoneIndices(pgrnMeshBinding);
+	int * boneIndexMapping = GrannyGetMeshBindingToBoneIndices(m_pgrnMeshBindingTemp);
 #elif GrannyProductMinorVersion==11 || GrannyProductMinorVersion==9 || GrannyProductMinorVersion==8 || GrannyProductMinorVersion==7
-	const granny_int32x * boneIndices = GrannyGetMeshBindingToBoneIndices(pgrnMeshBinding);
+	const granny_int32x * boneIndexMapping = GrannyGetMeshBindingToBoneIndices(m_pgrnMeshBindingTemp);
 #else
 #error "unknown granny version"
 #endif
-	// END_OF_WORK
 
-	GrannyDeformVertices(
-		m_pgrnMeshDeformer,
-		boneIndices,
-		(float *)boneMatrices,
-		vtxCount,
-		srcVertices,
-		dstVertices);
+	if (!boneIndexMapping)
+	{
+		TraceError("CGrannyMesh::LoadSkinnedVertices - Failed to get bone index mapping");
+		return;
+	}
+
+	// Exporters may use a different order or storage type for these attributes.
+    std::vector<granny_pwnt3432_vertex> converted;
+    const granny_pwnt3432_vertex* srcVertices = static_cast<const granny_pwnt3432_vertex*>(GrannyGetMeshVertices(pgrnMesh));
+    if (!GrannyDataTypesAreEqualWithNames(GrannyGetMeshVertexType(pgrnMesh), GrannyPWNT3432VertexType))
+    {
+        converted.resize(GrannyGetMeshVertexCount(pgrnMesh));
+        GrannyCopyMeshVertices(pgrnMesh, GrannyPWNT3432VertexType, converted.data());
+        srcVertices = converted.data();
+    }
+	TSkinnedVertex* dstVertices = ((TSkinnedVertex*)dstBaseVertices) + m_vtxBasePos;
+
+	int vtxCount = GrannyGetMeshVertexCount(pgrnMesh);
+	const float inv255 = 1.0f / 255.0f;
+	const int MAX_BONE_INDEX = 255;  // MAX_BONES - 1
+
+	// Track max bone index for selective upload optimization
+	int maxBoneIdx = 0;
+
+	for (int i = 0; i < vtxCount; ++i)
+	{
+		const granny_pwnt3432_vertex& src = srcVertices[i];
+		TSkinnedVertex& dst = dstVertices[i];
+
+		// Copy position
+		dst.position.x = src.Position[0];
+		dst.position.y = src.Position[1];
+		dst.position.z = src.Position[2];
+
+		// Copy normal
+		dst.normal.x = src.Normal[0];
+		dst.normal.y = src.Normal[1];
+		dst.normal.z = src.Normal[2];
+
+		// Copy texture coordinates
+		dst.texCoord.x = src.UV[0];
+		dst.texCoord.y = src.UV[1];
+
+		dst.blendWeights[0] = (float)src.BoneWeights[0] * inv255;
+		dst.blendWeights[1] = (float)src.BoneWeights[1] * inv255;
+		dst.blendWeights[2] = (float)src.BoneWeights[2] * inv255;
+		dst.blendWeights[3] = (float)src.BoneWeights[3] * inv255;
+
+		float weightSum = dst.blendWeights[0] + dst.blendWeights[1] + dst.blendWeights[2] + dst.blendWeights[3];
+		if (weightSum > 0.001f && (weightSum < 0.999f || weightSum > 1.001f))
+		{
+			float invSum = 1.0f / weightSum;
+			dst.blendWeights[0] *= invSum;
+			dst.blendWeights[1] *= invSum;
+			dst.blendWeights[2] *= invSum;
+			dst.blendWeights[3] *= invSum;
+		}
+
+		int boneIdx0 = dst.blendWeights[0] > 0.0f && src.BoneIndices[0] < pgrnMesh->BoneBindingCount ? boneIndexMapping[src.BoneIndices[0]] : 0;
+		int boneIdx1 = dst.blendWeights[1] > 0.0f && src.BoneIndices[1] < pgrnMesh->BoneBindingCount ? boneIndexMapping[src.BoneIndices[1]] : 0;
+		int boneIdx2 = dst.blendWeights[2] > 0.0f && src.BoneIndices[2] < pgrnMesh->BoneBindingCount ? boneIndexMapping[src.BoneIndices[2]] : 0;
+		int boneIdx3 = dst.blendWeights[3] > 0.0f && src.BoneIndices[3] < pgrnMesh->BoneBindingCount ? boneIndexMapping[src.BoneIndices[3]] : 0;
+
+		// Track max bone index for selective upload optimization
+		if (dst.blendWeights[0] > 0.001f && boneIdx0 > maxBoneIdx) maxBoneIdx = boneIdx0;
+		if (dst.blendWeights[1] > 0.001f && boneIdx1 > maxBoneIdx) maxBoneIdx = boneIdx1;
+		if (dst.blendWeights[2] > 0.001f && boneIdx2 > maxBoneIdx) maxBoneIdx = boneIdx2;
+		if (dst.blendWeights[3] > 0.001f && boneIdx3 > maxBoneIdx) maxBoneIdx = boneIdx3;
+
+		dst.blendIndices[0] = (BYTE)((boneIdx0 >= 0 && boneIdx0 <= MAX_BONE_INDEX) ? boneIdx0 : 0);
+		dst.blendIndices[1] = (BYTE)((boneIdx1 >= 0 && boneIdx1 <= MAX_BONE_INDEX) ? boneIdx1 : 0);
+		dst.blendIndices[2] = (BYTE)((boneIdx2 >= 0 && boneIdx2 <= MAX_BONE_INDEX) ? boneIdx2 : 0);
+		dst.blendIndices[3] = (BYTE)((boneIdx3 >= 0 && boneIdx3 <= MAX_BONE_INDEX) ? boneIdx3 : 0);
+	}
+
+	// Store max bone index for this mesh (add 1 to get count)
+	m_maxBoneIndex = maxBoneIdx;
 }
 
-bool CGrannyMesh::CanDeformPNTVertices() const
+void CGrannyMesh::LoadSkinnedVerticesWithBinding(void* dstBaseVertices, granny_mesh_binding* pBinding, int& maxBoneIndexOut)
 {
-	return m_canDeformPNTVertex;
+	maxBoneIndexOut = 0;
+
+	const granny_mesh* pgrnMesh = GetGrannyMeshPointer();
+
+	if (GrannyMeshIsRigid(pgrnMesh))
+		return;
+
+	if (!pBinding)
+	{
+		TraceError("CGrannyMesh::LoadSkinnedVerticesWithBinding - binding is NULL");
+		return;
+	}
+
+#if GrannyProductMinorVersion==4
+	int* boneIndexMapping = GrannyGetMeshBindingToBoneIndices(pBinding);
+#elif GrannyProductMinorVersion==11 || GrannyProductMinorVersion==9 || GrannyProductMinorVersion==8 || GrannyProductMinorVersion==7
+	const granny_int32x* boneIndexMapping = GrannyGetMeshBindingToBoneIndices(pBinding);
+#else
+#error "unknown granny version"
+#endif
+
+	if (!boneIndexMapping)
+	{
+		TraceError("CGrannyMesh::LoadSkinnedVerticesWithBinding - null bone index mapping");
+		return;
+	}
+
+	// Exporters may use a different order or storage type for these attributes.
+    std::vector<granny_pwnt3432_vertex> converted;
+    const granny_pwnt3432_vertex* srcVertices = static_cast<const granny_pwnt3432_vertex*>(GrannyGetMeshVertices(pgrnMesh));
+    if (!GrannyDataTypesAreEqualWithNames(GrannyGetMeshVertexType(pgrnMesh), GrannyPWNT3432VertexType))
+    {
+        converted.resize(GrannyGetMeshVertexCount(pgrnMesh));
+        GrannyCopyMeshVertices(pgrnMesh, GrannyPWNT3432VertexType, converted.data());
+        srcVertices = converted.data();
+    }
+	TSkinnedVertex* dstVertices = ((TSkinnedVertex*)dstBaseVertices) + m_vtxBasePos;
+
+	int vtxCount = GrannyGetMeshVertexCount(pgrnMesh);
+	const float inv255 = 1.0f / 255.0f;
+	const int MAX_BONE_INDEX = 255;
+
+	int maxBoneIdx = 0;
+
+	for (int i = 0; i < vtxCount; ++i)
+	{
+		const granny_pwnt3432_vertex& src = srcVertices[i];
+		TSkinnedVertex& dst = dstVertices[i];
+
+		dst.position.x = src.Position[0];
+		dst.position.y = src.Position[1];
+		dst.position.z = src.Position[2];
+
+		dst.normal.x = src.Normal[0];
+		dst.normal.y = src.Normal[1];
+		dst.normal.z = src.Normal[2];
+
+		dst.texCoord.x = src.UV[0];
+		dst.texCoord.y = src.UV[1];
+
+		dst.blendWeights[0] = (float)src.BoneWeights[0] * inv255;
+		dst.blendWeights[1] = (float)src.BoneWeights[1] * inv255;
+		dst.blendWeights[2] = (float)src.BoneWeights[2] * inv255;
+		dst.blendWeights[3] = (float)src.BoneWeights[3] * inv255;
+
+		float weightSum = dst.blendWeights[0] + dst.blendWeights[1] + dst.blendWeights[2] + dst.blendWeights[3];
+		if (weightSum > 0.001f && (weightSum < 0.999f || weightSum > 1.001f))
+		{
+			float invSum = 1.0f / weightSum;
+			dst.blendWeights[0] *= invSum;
+			dst.blendWeights[1] *= invSum;
+			dst.blendWeights[2] *= invSum;
+			dst.blendWeights[3] *= invSum;
+		}
+
+		int boneIdx0 = dst.blendWeights[0] > 0.0f && src.BoneIndices[0] < pgrnMesh->BoneBindingCount ? boneIndexMapping[src.BoneIndices[0]] : 0;
+		int boneIdx1 = dst.blendWeights[1] > 0.0f && src.BoneIndices[1] < pgrnMesh->BoneBindingCount ? boneIndexMapping[src.BoneIndices[1]] : 0;
+		int boneIdx2 = dst.blendWeights[2] > 0.0f && src.BoneIndices[2] < pgrnMesh->BoneBindingCount ? boneIndexMapping[src.BoneIndices[2]] : 0;
+		int boneIdx3 = dst.blendWeights[3] > 0.0f && src.BoneIndices[3] < pgrnMesh->BoneBindingCount ? boneIndexMapping[src.BoneIndices[3]] : 0;
+
+		if (boneIdx0 > maxBoneIdx) maxBoneIdx = boneIdx0;
+		if (boneIdx1 > maxBoneIdx) maxBoneIdx = boneIdx1;
+		if (boneIdx2 > maxBoneIdx) maxBoneIdx = boneIdx2;
+		if (boneIdx3 > maxBoneIdx) maxBoneIdx = boneIdx3;
+
+		dst.blendIndices[0] = (BYTE)((boneIdx0 >= 0 && boneIdx0 <= MAX_BONE_INDEX) ? boneIdx0 : 0);
+		dst.blendIndices[1] = (BYTE)((boneIdx1 >= 0 && boneIdx1 <= MAX_BONE_INDEX) ? boneIdx1 : 0);
+		dst.blendIndices[2] = (BYTE)((boneIdx2 >= 0 && boneIdx2 <= MAX_BONE_INDEX) ? boneIdx2 : 0);
+		dst.blendIndices[3] = (BYTE)((boneIdx3 >= 0 && boneIdx3 <= MAX_BONE_INDEX) ? boneIdx3 : 0);
+	}
+
+	maxBoneIndexOut = maxBoneIdx;
 }
 
 const granny_mesh * CGrannyMesh::GetGrannyMeshPointer() const
@@ -181,7 +251,7 @@ const CGrannyMesh::TTriGroupNode * CGrannyMesh::GetTriGroupNodeList(CGrannyMater
 
 int CGrannyMesh::GetVertexCount() const
 {
-	assert(m_pgrnMesh!=nullptr);
+	assert(m_pgrnMesh!=NULL);
 	return GrannyGetMeshVertexCount(m_pgrnMesh);
 }
 
@@ -231,23 +301,6 @@ bool CGrannyMesh::CreateFromGrannyMeshPointer(granny_skeleton * pgrnSkeleton, gr
 	m_pgrnMeshBindingTemp = GrannyNewMeshBinding(m_pgrnMesh, pgrnSkeleton, pgrnSkeleton);
 	// END_OF_WORK
 
-	if (!GrannyMeshIsRigid(m_pgrnMesh))
-	{
-		m_canDeformPNTVertex = true;
-
-		granny_data_type_definition * pgrnInputType = GrannyGetMeshVertexType(m_pgrnMesh);
-		granny_data_type_definition * pgrnOutputType = m_pgrnMeshType;
-
-#if GrannyProductMinorVersion==4
-		m_pgrnMeshDeformer = GrannyNewMeshDeformer(pgrnInputType, pgrnOutputType, GrannyDeformPositionNormal);
-#elif GrannyProductMinorVersion==11 || GrannyProductMinorVersion==9 || GrannyProductMinorVersion==8 || GrannyProductMinorVersion==7
-		m_pgrnMeshDeformer = GrannyNewMeshDeformer(pgrnInputType, pgrnOutputType, GrannyDeformPositionNormal, GrannyDontAllowUncopiedTail);
-#else
-#error "unknown granny version"
-#endif
-		assert(m_pgrnMeshDeformer != nullptr && "Cannot create mesh deformer");
-	}
-
 	// Two Side Mesh
 	if (!strncmp(m_pgrnMesh->Name, "2x", 2))
 		m_isTwoSide = true;
@@ -263,14 +316,14 @@ bool CGrannyMesh::CreateFromGrannyMeshPointer(granny_skeleton * pgrnSkeleton, gr
 
 bool CGrannyMesh::LoadTriGroupNodeList(CGrannyMaterialPalette& rkMtrlPal)
 {
-	assert(m_pgrnMesh != nullptr);
-	assert(m_triGroupNodes == nullptr);
+	assert(m_pgrnMesh != NULL);
+	assert(m_triGroupNodes == NULL);
 
-	const int mtrlCount		= m_pgrnMesh->MaterialBindingCount;
+	int mtrlCount		= m_pgrnMesh->MaterialBindingCount;
 	if (mtrlCount <= 0)
 		return true;
 
-	const int GroupNodeCount	= GrannyGetMeshTriangleGroupCount(m_pgrnMesh);
+	int GroupNodeCount	= GrannyGetMeshTriangleGroupCount(m_pgrnMesh);
 	if (GroupNodeCount <= 0)
 		return true;
 
@@ -286,7 +339,7 @@ bool CGrannyMesh::LoadTriGroupNodeList(CGrannyMaterialPalette& rkMtrlPal)
 		pTriGroupNode->idxPos = m_idxBasePos + c_rgrnTriGroup.TriFirst * 3;
 		pTriGroupNode->triCount = c_rgrnTriGroup.TriCount;
 
-		const int iMtrl = c_rgrnTriGroup.MaterialIndex;
+		int iMtrl = c_rgrnTriGroup.MaterialIndex;
 		if (iMtrl < 0 || iMtrl >= mtrlCount)
 		{
 			pTriGroupNode->mtrlIndex=0;//m_mtrlIndexVector[iMtrl];
@@ -305,19 +358,45 @@ bool CGrannyMesh::LoadTriGroupNodeList(CGrannyMaterialPalette& rkMtrlPal)
 	return true;
 }
 
-void CGrannyMesh::RebuildTriGroupNodeList() const
+void CGrannyMesh::RebuildTriGroupNodeList()
 {
 	assert(!"CGrannyMesh::RebuildTriGroupNodeList() - Why should you rebuild it -?");
+	/*
+	int mtrlCount = m_pgrnMesh->MaterialBindingCount;
+	int GroupNodeCount = GrannyGetMeshTriangleGroupCount(m_pgrnMesh);
+
+	if (GroupNodeCount <= 0)
+		return;
+
+	const granny_tri_material_group * c_pgrnTriGroups = GrannyGetMeshTriangleGroups(m_pgrnMesh);
+
+	for (int g = 0; g < GroupNodeCount; ++g)
+	{
+		const granny_tri_material_group& c_rgrnTriGroup = c_pgrnTriGroups[g];
+		TTriGroupNode * pTriGroupNode = m_triGroupNodes + g;
+
+		int iMtrl = c_rgrnTriGroup.MaterialIndex;
+
+		if (iMtrl >= 0 && iMtrl < mtrlCount)
+		{
+			CGrannyMaterial & rMtrl = m_mtrls[iMtrl];
+
+			pTriGroupNode->lpd3dTextures[0] = rMtrl.GetD3DTexture(0);
+			pTriGroupNode->lpd3dTextures[1] = rMtrl.GetD3DTexture(1);
+
+		}
+	}
+	*/
 }
 
 bool CGrannyMesh::LoadMaterials(CGrannyMaterialPalette& rkMtrlPal)
 {
-	assert(m_pgrnMesh != nullptr);
+	assert(m_pgrnMesh != NULL);
 
 	if (m_pgrnMesh->MaterialBindingCount <= 0)
 		return true;
 
-	const int mtrlCount = m_pgrnMesh->MaterialBindingCount;
+	int mtrlCount = m_pgrnMesh->MaterialBindingCount;
 	bool bHaveBlendThing = false;
 
 	for (int m = 0; m < mtrlCount; ++m)
@@ -344,18 +423,6 @@ void CGrannyMesh::SetPNT2Mesh()
 
 void CGrannyMesh::Destroy()
 {
-	const size_t rigidBytes = m_dx11PreviewRigidVertices.size() * sizeof(TPNTVertex);
-	if (rigidBytes)
-	{
-		s_dx11PreviewRigidVertexBytes -= rigidBytes;
-		std::vector<TPNTVertex>().swap(m_dx11PreviewRigidVertices);
-	}
-	const size_t cachedBytes = m_dx11PreviewIndices.size() * sizeof(WORD);
-	if (cachedBytes)
-	{
-		s_dx11PreviewIndexBytes -= cachedBytes;
-		std::vector<WORD>().swap(m_dx11PreviewIndices);
-	}
 	if (m_triGroupNodes)
 		delete [] m_triGroupNodes;
 
@@ -366,32 +433,28 @@ void CGrannyMesh::Destroy()
 		GrannyFreeMeshBinding(m_pgrnMeshBindingTemp);
 	// END_OF_WORK
 
-    if (m_pgrnMeshDeformer)
-		GrannyFreeMeshDeformer(m_pgrnMeshDeformer);
-
 	Initialize();
 }
 
 void CGrannyMesh::Initialize()
 {
 	for (int r = 0; r < CGrannyMaterial::TYPE_MAX_NUM; ++r)
-		m_triGroupNodeLists[r] = nullptr;
+		m_triGroupNodeLists[r] = NULL;
 
 	m_pgrnMeshType = GrannyPNT332VertexType;
-	m_pgrnMesh = nullptr;
+	m_pgrnMesh = NULL;
 	// WORK
-	m_pgrnMeshBindingTemp = nullptr;
+	m_pgrnMeshBindingTemp = NULL;
 	// END_OF_WORK
-	m_pgrnMeshDeformer = nullptr;
 
-	m_triGroupNodes = nullptr;
+	m_triGroupNodes = NULL;
 
 	m_vtxBasePos = 0;
 	m_idxBasePos = 0;
 
-	m_canDeformPNTVertex = false;
 	m_isTwoSide = false;
 	m_bHaveBlendThing = false;
+	m_maxBoneIndex = 0;
 }
 
 CGrannyMesh::CGrannyMesh()
@@ -403,4 +466,4 @@ CGrannyMesh::~CGrannyMesh()
 {
 	Destroy();
 }
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

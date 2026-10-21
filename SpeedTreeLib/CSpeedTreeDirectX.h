@@ -12,7 +12,7 @@ public:
 	void                        UploadWindMatrix(unsigned int uiLocation, const float* pMatrix) const;
 	bool						SetRenderingDevice();
 	void                        Render(unsigned long ulRenderBitVector = Forest_RenderAll);
-	void						UpdateCompundMatrix(const D3DXVECTOR3& c_rEyeVec, const D3DXMATRIX& c_rmatView, const D3DXMATRIX& c_rmatProj);
+	void						UpdateCompundMatrix(const Vector3& c_rEyeVec, const Matrix& c_rmatView, const Matrix& c_rmatProj);
 
 private:
 	bool                        InitVertexShaders();

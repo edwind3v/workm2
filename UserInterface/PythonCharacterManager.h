@@ -28,7 +28,7 @@ class CPythonCharacterManager : public CSingleton<CPythonCharacterManager>, publ
 
 		bool OLD_GetPickedInstanceVID(DWORD* pdwPickedActorID) const;
 		CInstanceBase* OLD_GetPickedInstancePtr() const;
-		D3DXVECTOR2& OLD_GetPickedInstPosReference();
+		Vector2& OLD_GetPickedInstPosReference();
 
 		CInstanceBase* FindClickableInstancePtr() const;
 
@@ -61,6 +61,8 @@ class CPythonCharacterManager : public CSingleton<CPythonCharacterManager>, publ
 		void								Render();
 		void								RenderShadowMainInstance() const;
 		void								RenderShadowAllInstances();
+		void CollectShadowCastersForFrame();
+		void EndShadowCastersForFrame();
 		void								RenderCollision();
 
 		// Create/Delete Instance
@@ -118,14 +120,94 @@ class CPythonCharacterManager : public CSingleton<CPythonCharacterManager>, publ
 		CInstanceBase *						m_pkInstMain;
 		CInstanceBase *						m_pkInstPick;
 		CInstanceBase *						m_pkInstBind;
-		D3DXVECTOR2							m_v2PickedInstProjPos;
+		Vector2							m_v2PickedInstProjPos;
 
 		TCharacterInstanceMap				m_kAliveInstMap;
 		TCharacterInstanceList				m_kDeadInstList;
+		std::vector<CInstanceBase*> m_kVct_pkShadowCasters;
 
 		std::vector<CInstanceBase*>			m_kVct_pkInstPicked;
 
 		DWORD								m_adwPointEffect[POINT_MAX_NUM];
+
+	// =====================================================
+	// OPTIMIZATION SYSTEMS - PUBLIC API
+	// =====================================================
+public:
+#ifdef ENABLE_FRUSTUM_CULLING
+	// Frustum Culling
+	static int GetCulledCount() { return ms_iCulledCount; }
+	static int GetRenderedCount() { return ms_iRenderedCount; }
+	static int GetTotalCount() { return ms_iTotalCount; }
+	void ResetCullingStats();
+#endif
+
+#ifdef ENABLE_CHAR_RENDER_LIMIT
+	// Character Render Limit
+	static void SetRenderLimit(int iLimit) { ms_iRenderLimit = iLimit; }
+	static int GetRenderLimit() { return ms_iRenderLimit; }
+
+
+	static constexpr float kDeadActorMaxDistance = 3000.0f;
+	static constexpr size_t kDeadActorMaxRender  = 32;
+	static int GetSkippedByLimit() { return ms_iSkippedByLimit; }
+#endif
+
+#ifdef ENABLE_RENDER_MODE_GROUPING
+	// Render Mode Grouping Stats
+	static int GetRenderModeNormalCount() { return ms_iRenderModeNormal; }
+	static int GetRenderModeBlendCount() { return ms_iRenderModeBlend; }
+	static int GetRenderModeAddCount() { return ms_iRenderModeAdd; }
+	static int GetRenderModeModulateCount() { return ms_iRenderModeModulate; }
+#endif
+
+#ifdef ENABLE_UPDATE_CULLING
+	// Update Culling Stats
+	static int GetUpdateSkippedCount() { return ms_iUpdateSkipped; }
+	static int GetUpdateFullCount() { return ms_iUpdateFull; }
+	static int GetUpdateReducedCount() { return ms_iUpdateReduced; }
+	static DWORD GetFrameCounter() { return ms_dwFrameCounter; }
+#endif
+
+#ifdef ENABLE_DEFORM_CULLING
+	// Deform Culling Stats
+	static int GetDeformSkippedCount() { return ms_iDeformSkipped; }
+	static int GetDeformRenderedCount() { return ms_iDeformRendered; }
+#endif
+
+private:
+#ifdef ENABLE_FRUSTUM_CULLING
+	static int ms_iCulledCount;
+	static int ms_iRenderedCount;
+	static int ms_iTotalCount;
+#endif
+
+#ifdef ENABLE_CHAR_RENDER_LIMIT
+	static int ms_iRenderLimit;
+	static int ms_iSkippedByLimit;
+#endif
+
+#ifdef ENABLE_RENDER_MODE_GROUPING
+	static int ms_iRenderModeNormal;
+	static int ms_iRenderModeBlend;
+	static int ms_iRenderModeAdd;
+	static int ms_iRenderModeModulate;
+#endif
+
+#ifdef ENABLE_UPDATE_CULLING
+	static int ms_iUpdateSkipped;
+	static int ms_iUpdateFull;
+	static int ms_iUpdateReduced;
+#endif
+
+#if defined(ENABLE_UPDATE_CULLING) || defined(ENABLE_ANIMATION_LOD) || defined(ENABLE_DEFORM_CULLING)
+	static DWORD ms_dwFrameCounter;
+#endif
+
+#ifdef ENABLE_DEFORM_CULLING
+	static int ms_iDeformSkipped;
+	static int ms_iDeformRendered;
+#endif
 
 	public:
 		class CharacterIterator

@@ -5,7 +5,10 @@
 #include <map>
 #include <vector>
 
-#include <d3dx9.h>
+#include <d3d11.h>
+#include <DirectXMath.h>
+#include "GrpMathType.h"
+#include "GrpMathFunc.h"
 
 template<typename T>
 class CTransitor
@@ -19,12 +22,12 @@ class CTransitor
 			m_bActivated = bActive;
 		}
 
-		BOOL isActive() const
+		BOOL isActive()
 		{
 			return m_bActivated;
 		}
 
-		BOOL isActiveTime(float fcurTime) const
+		BOOL isActiveTime(float fcurTime)
 		{
 			if (fcurTime >= m_fEndTime)
 				return FALSE;
@@ -32,7 +35,7 @@ class CTransitor
 			return TRUE;
 		}
 
-		DWORD GetID() const
+		DWORD GetID()
 		{
 			return m_dwID;
 		}
@@ -77,8 +80,8 @@ class CTransitor
 };
 
 typedef CTransitor<float>			TTransitorFloat;
-typedef CTransitor<D3DXVECTOR3>		TTransitorVector3;
-typedef CTransitor<D3DXCOLOR>		TTransitorColor;
+typedef CTransitor<Vector3>			TTransitorVector3;
+typedef CTransitor<Color>			TTransitorColor;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -89,8 +92,8 @@ void PrintfTabs(FILE * File, int iTabCount, const char * c_szString, ...);
 extern bool	LoadTextData(const char * c_szFileName, CTokenMap & rstTokenMap);
 extern bool	LoadMultipleTextData(const char * c_szFileName, CTokenVectorMap & rstTokenVectorMap);
 
-extern D3DXVECTOR3 TokenToVector(CTokenVector & rVector);
-extern D3DXCOLOR TokenToColor(CTokenVector & rVector);
+extern Vector3 TokenToVector(CTokenVector & rVector);
+extern Color TokenToColor(CTokenVector & rVector);
 
 #define GOTO_CHILD_NODE(TextFileLoader, Index) CTextFileLoader::CGotoChild Child(TextFileLoader, Index);
 
@@ -109,4 +112,4 @@ extern void base64_decode(const char * str,char * resultStr);
 
 extern DWORD GetMaxTextureWidth();
 extern DWORD GetMaxTextureHeight();
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

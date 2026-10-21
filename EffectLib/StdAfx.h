@@ -12,5 +12,30 @@
 #include "../eterLib/StdAfx.h"
 #include "../eterLib/TextFileLoader.h"
 
-#include "../milesLib/StdAfx.h"
+#include "../MilesLib/StdAfx.h"
 
+/*
+#include "FrameController.h"
+
+#include "EffectElementBase.h"
+#include "EffectElementBaseInstance.h"
+
+#include "ParticleProperty.h"
+#include "ParticleInstance.h"
+#include "EmitterProperty.h"
+
+#include "ParticleSystemData.h"
+#include "ParticleSystemInstance.h"
+
+#include "EffectMesh.h"
+#include "EffectMeshInstance.h"
+
+#include "SimpleLightData.h"
+#include "SimpleLightInstance.h"
+
+#include "EffectData.h"
+#include "EffectInstance.h"
+
+#include "EffectManager.h"
+*/
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

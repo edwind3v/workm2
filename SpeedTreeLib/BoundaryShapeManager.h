@@ -57,9 +57,9 @@ public:
 		std::string					GetCurrentError( )	{ return m_strCurrentError; }
 
 private:
-		bool						PointInShape(SBoundaryShape& sShape, float fX, float fY) const;
+		bool						PointInShape(SBoundaryShape& sShape, float fX, float fY);
 
 		std::vector<SBoundaryShape>	m_vBoundaries;
 		std::string					m_strCurrentError;
 };
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

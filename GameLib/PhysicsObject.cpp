@@ -15,7 +15,7 @@ void CPhysicsObject::Update(float fElapsedTime)
 		m_yPushingPosition.Interpolate(fElapsedTime);
 }
 
-void CPhysicsObject::Accumulate(D3DXVECTOR3 * pv3Position)
+void CPhysicsObject::Accumulate(Vector3 * pv3Position)
 {
 	// If object is moving, give minor power to object.
 	float fForce = 0.0f;
@@ -50,14 +50,14 @@ void CPhysicsObject::Accumulate(D3DXVECTOR3 * pv3Position)
 	pv3Position->z += m_v3Velocity.z;
 }
 
-void CPhysicsObject::IncreaseExternalForce(const D3DXVECTOR3 & c_rvBasePosition, float fForce)
+void CPhysicsObject::IncreaseExternalForce(const Vector3 & c_rvBasePosition, float fForce)
 {
 	// Accumulate Acceleration by External Force
 	m_v3Acceleration = m_v3Direction * (fForce / m_fMass);
 	m_v3Velocity = m_v3Acceleration;
 
 	constexpr int LoopValue = 100;
-	D3DXVECTOR3 v3Movement(0.0f, 0.0f, 0.0f);
+	Vector3 v3Movement(0.0f, 0.0f, 0.0f);
 
 	for(int i = 0; i < LoopValue; ++i)
 	{
@@ -106,7 +106,7 @@ void CPhysicsObject::GetLastPosition(TPixelPosition * pPosition) const
 	pPosition->z = (m_v3LastPosition.z);
 }
 
-void CPhysicsObject::SetDirection(const D3DXVECTOR3 & c_rv3Direction)
+void CPhysicsObject::SetDirection(const Vector3 & c_rv3Direction)
 {
 	m_v3Direction.x = c_rv3Direction.x;
 	m_v3Direction.y = c_rv3Direction.y;
@@ -125,7 +125,7 @@ float CPhysicsObject::GetYMovement()
 
 bool CPhysicsObject::isBlending()
 {
-	if (0.0f != D3DXVec3Length(&m_v3Velocity))
+	if (0.0f != Vec3Length(&m_v3Velocity))
 		return true;
 
 	if (m_xPushingPosition.isPlaying() ||
@@ -139,10 +139,10 @@ void CPhysicsObject::Initialize()
 {
 	m_fMass = 1.0f;
 	m_fFriction = 0.3f;
-	m_v3Direction = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
-	m_v3Acceleration = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
-	m_v3Velocity = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
-	m_v3LastPosition = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
+	m_v3Direction = Vector3(0.0f, 0.0f, 0.0f);
+	m_v3Acceleration = Vector3(0.0f, 0.0f, 0.0f);
+	m_v3Velocity = Vector3(0.0f, 0.0f, 0.0f);
+	m_v3LastPosition = Vector3(0.0f, 0.0f, 0.0f);
 
 	m_xPushingPosition.Initialize();
 	m_yPushingPosition.Initialize();

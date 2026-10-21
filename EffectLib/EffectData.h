@@ -33,7 +33,7 @@ class CEffectData
 		NSound::TSoundInstanceVector *	GetSoundInstanceVector();
 
 		float							GetBoundingSphereRadius() const;
-		D3DXVECTOR3						GetBoundingSpherePosition() const;
+		Vector3						GetBoundingSpherePosition() const;
 
 		const char *					GetFileName() const;
 
@@ -53,7 +53,7 @@ class CEffectData
 		NSound::TSoundInstanceVector	m_SoundInstanceVector;
 
 		float							m_fBoundingSphereRadius;
-		D3DXVECTOR3						m_v3BoundingSpherePosition;
+		Vector3						m_v3BoundingSpherePosition;
 
 		std::string						m_strFileName;
 

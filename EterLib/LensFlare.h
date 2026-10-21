@@ -36,9 +36,9 @@
 ///////////////////////////////////////////////////////////////////////
 //	Constants
 
-constexpr   float	c_fHalfMaxBright = 0.45f;
-constexpr   float	c_fDistanceScale = 1.0f;
-constexpr   int     c_nDepthTestDimension = 15;
+const   float	c_fHalfMaxBright = 0.45f;
+const   float	c_fDistanceScale = 1.0f;
+const   int     c_nDepthTestDimension = 15;
 
 ///////////////////////////////////////////////////////////////////////
 //	CFlare
@@ -46,7 +46,7 @@ constexpr   int     c_nDepthTestDimension = 15;
 class CFlare
 {
 public:
-	void Draw(float fBrightScale, int nWidth, int nHeight, int nX, int nY) const;
+	void Draw(float fBrightScale, int nWidth, int nHeight, int nX, int nY);
 	void Init(std::string strPath);
 
 	CFlare();
@@ -58,7 +58,7 @@ private:
 		SFlarePiece() :
 	m_fPosition(0.0f),
 		m_fWidth(0.0f),
-		m_pColor(nullptr)
+		m_pColor(NULL)
 	{
 	}
 	CGraphicImageInstance m_imageInstance;
@@ -78,7 +78,7 @@ public:
 	CLensFlare();
 	virtual ~CLensFlare();
 
-	void			Compute(const D3DXVECTOR3 & c_rv3LightDirection);
+	void			Compute(const Vector3 & c_rv3LightDirection);
 
 	void			DrawBeforeFlare();
 	void			DrawAfterFlare();
@@ -90,17 +90,17 @@ public:
 	void            SetFlareLocation(double dX, double dY);
 
 	void            SetVisible(bool bState)		{ m_bFlareVisible = bState; }
-	bool			IsVisible() const { return m_bFlareVisible; }
+	bool			IsVisible()					{ return m_bFlareVisible; }
 
 	void            SetBrightnesses(float fBeforeBright, float fAfterBright);
 
-	void            ReadControlPixels() const;
+	void            ReadControlPixels();
 	void            AdjustBrightness();
 
-	void			CharacterizeFlare(bool bEnabled, bool bShowMainFlare, float fMaxBrightness, const D3DXCOLOR & c_rColor);
+	void			CharacterizeFlare(bool bEnabled, bool bShowMainFlare, float fMaxBrightness, const Color & c_rColor);
 
 protected:
-	float			Interpolate(float fStart, float fEnd, float fPercent) const;
+	float			Interpolate(float fStart, float fEnd, float fPercent);
 
 private:
 	float	        m_afFlarePos[2], m_afFlareWinPos[2];
@@ -117,7 +117,18 @@ private:
 
 	CGraphicImageInstance m_SunFlareImageInstance;
 
-	void            ReadDepthPixels(float * pPixels) const;
+	// D3D11 staging texture for depth readback
+	ID3D11Texture2D*	m_pDepthStagingTexture;
+
+	// Saved render states for DrawBeforeFlare
+	bool			m_bSavedLighting;
+	bool			m_bSavedAlphaTest;
+
+	// Saved render states for DrawFlare
+	bool			m_bSavedLightingFlare;
+	bool			m_bSavedAlphaTestFlare;
+
+	void            ReadDepthPixels(float * pPixels);
 	void			ClampBrightness();
 };
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

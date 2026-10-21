@@ -1,6 +1,10 @@
 #pragma once
 
-#include <d3dx9.h>
+// DX11 includes
+#include <d3d11.h>
+#include <DirectXMath.h>
+#include "../eterLib/GrpMathType.h"
+#include "../eterLib/GrpMathFunc.h"
 
 #include "../eterlib/GrpScreen.h"
 #include "../eterlib/Resource.h"
@@ -50,15 +54,15 @@ class CEffectMesh : public CResource
 		CEffectMesh(const char * c_szFileName);
 		virtual ~CEffectMesh();
 
-		DWORD GetFrameCount() const;
-		DWORD GetMeshCount() const;
-		TEffectMeshData * GetMeshDataPointer(DWORD dwMeshIndex) const;
+		DWORD GetFrameCount();
+		DWORD GetMeshCount();
+		TEffectMeshData * GetMeshDataPointer(DWORD dwMeshIndex);
 
-		std::vector<CGraphicImage*>* GetTextureVectorPointer(DWORD dwMeshIndex) const;
-		std::vector<CGraphicImage*>& GetTextureVectorReference(DWORD dwMeshIndex) const;
+		std::vector<CGraphicImage*>* GetTextureVectorPointer(DWORD dwMeshIndex);
+		std::vector<CGraphicImage*>& GetTextureVectorReference(DWORD dwMeshIndex);
 
 		// Exceptional function for tool
-		BOOL GetMeshElementPointer(DWORD dwMeshIndex, TEffectMeshData ** ppMeshData) const;
+		BOOL GetMeshElementPointer(DWORD dwMeshIndex, TEffectMeshData ** ppMeshData);
 
 	protected:
 		bool OnLoad(int iSize, const void * c_pvBuf);
@@ -91,7 +95,7 @@ class CEffectMeshScript : public CEffectElementBase
 			BOOL bTextureAlphaEnable;
 
 			BYTE byColorOperationType;
-			D3DXCOLOR ColorFactor;
+			Color ColorFactor;
 
 			BOOL bTextureAnimationLoopEnable;
 			float fTextureAnimationFrameDelay;
@@ -111,28 +115,28 @@ class CEffectMeshScript : public CEffectElementBase
 		CEffectMeshScript();
 		virtual ~CEffectMeshScript();
 
-		const char * GetMeshFileName() const;
+		const char * GetMeshFileName();
 
 		void ReserveMeshData(DWORD dwMeshCount);
-		bool CheckMeshIndex(DWORD dwMeshIndex) const;
+		bool CheckMeshIndex(DWORD dwMeshIndex);
 		bool GetMeshDataPointer(DWORD dwMeshIndex, TMeshData ** ppMeshData);
-		int GetMeshDataCount() const;
+		int GetMeshDataCount();
 
-		int GetBillboardType(DWORD dwMeshIndex) const;
-		BOOL isBlendingEnable(DWORD dwMeshIndex) const;
-		BYTE GetBlendingSrcType(DWORD dwMeshIndex) const;
-		BYTE GetBlendingDestType(DWORD dwMeshIndex) const;
-		BOOL isTextureAlphaEnable(DWORD dwMeshIndex) const;
-		BOOL GetColorOperationType(DWORD dwMeshIndex, BYTE * pbyType) const;
-		BOOL GetColorFactor(DWORD dwMeshIndex, D3DXCOLOR * pColor) const;
+		int GetBillboardType(DWORD dwMeshIndex);
+		BOOL isBlendingEnable(DWORD dwMeshIndex);
+		BYTE GetBlendingSrcType(DWORD dwMeshIndex);
+		BYTE GetBlendingDestType(DWORD dwMeshIndex);
+		BOOL isTextureAlphaEnable(DWORD dwMeshIndex);
+		BOOL GetColorOperationType(DWORD dwMeshIndex, BYTE * pbyType);
+		BOOL GetColorFactor(DWORD dwMeshIndex, Color * pColor);
 		BOOL GetTimeTableAlphaPointer(DWORD dwMeshIndex, TTimeEventTableFloat ** pTimeEventAlpha);
 
-		BOOL isMeshAnimationLoop() const;
-		BOOL GetMeshAnimationLoopCount() const;
-		float GetMeshAnimationFrameDelay() const;
-		BOOL isTextureAnimationLoop(DWORD dwMeshIndex) const;
-		float GetTextureAnimationFrameDelay(DWORD dwMeshIndex) const;
-		DWORD GetTextureAnimationStartFrame(DWORD dwMeshIndex) const;
+		BOOL isMeshAnimationLoop();
+		BOOL GetMeshAnimationLoopCount();
+		float GetMeshAnimationFrameDelay();
+		BOOL isTextureAnimationLoop(DWORD dwMeshIndex);
+		float GetTextureAnimationFrameDelay(DWORD dwMeshIndex);
+		DWORD GetTextureAnimationStartFrame(DWORD dwMeshIndex);
 
 	protected:
 		void OnClear();
@@ -155,4 +159,3 @@ class CEffectMeshScript : public CEffectElementBase
 
 		static CDynamicPool<CEffectMeshScript> ms_kPool;
 };
-

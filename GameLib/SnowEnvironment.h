@@ -16,33 +16,29 @@ class CSnowEnvironment : public CScreen
 		void Enable();
 		void Disable();
 
-		void Update(const D3DXVECTOR3 & c_rv3Pos);
+		void Update(const Vector3 & c_rv3Pos);
 		void Deform();
 		void Render();
 
 	protected:
 		void __Initialize();
 		bool __CreateBlurTexture();
-		bool __CreateGeometry();
 		void __BeginBlur();
 		void __ApplyBlur();
 
 	protected:
-		LPDIRECT3DSURFACE9 m_lpOldSurface;
-		LPDIRECT3DSURFACE9 m_lpOldDepthStencilSurface;
+		ID3D11RenderTargetView* m_lpOldSurface;
+		ID3D11DepthStencilView* m_lpOldDepthStencilSurface;
 
-		LPDIRECT3DTEXTURE9 m_lpSnowTexture;
-		LPDIRECT3DSURFACE9 m_lpSnowRenderTargetSurface;
-		LPDIRECT3DSURFACE9 m_lpSnowDepthSurface;
+		ID3D11ShaderResourceView* m_lpSnowTexture;
+		ID3D11RenderTargetView* m_lpSnowRenderTargetSurface;
+		ID3D11DepthStencilView* m_lpSnowDepthSurface;
 
-		LPDIRECT3DTEXTURE9 m_lpAccumTexture;
-		LPDIRECT3DSURFACE9 m_lpAccumRenderTargetSurface;
-		LPDIRECT3DSURFACE9 m_lpAccumDepthSurface;
+		ID3D11ShaderResourceView* m_lpAccumTexture;
+		ID3D11RenderTargetView* m_lpAccumRenderTargetSurface;
+		ID3D11DepthStencilView* m_lpAccumDepthSurface;
 
-		LPDIRECT3DVERTEXBUFFER9 m_pVB;
-		LPDIRECT3DINDEXBUFFER9 m_pIB;
-
-		D3DXVECTOR3 m_v3Center;
+		Vector3 m_v3Center;
 
 		WORD m_wBlurTextureSize;
 		CGraphicImageInstance * m_pImageInstance;
@@ -53,4 +49,4 @@ class CSnowEnvironment : public CScreen
 
 		BOOL m_bSnowEnable;
 };
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

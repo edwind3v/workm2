@@ -134,14 +134,17 @@ bool CDXTCImage::LoadHeaderFromMemory(const BYTE* data, int size)
     DDSURFACEDESC2 header{};
     memcpy(&header, data + 4, sizeof(header));
     if (header.dwSize != 124 || header.ddpfPixelFormat.dwSize != 32 ||
-        !(header.ddpfPixelFormat.dwFlags & DDPF_FOURCC) ||
-        !header.dwWidth || !header.dwHeight || header.dwWidth > 32768 || header.dwHeight > 32768 ||
+        
+        !header.dwWidth || !header.dwHeight || header.dwWidth > 16384 || header.dwHeight > 16384 ||
         (header.ddsCaps.dwCaps2 & DDSCAPS2_CUBEMAP) ||
         ((header.ddsCaps.dwCaps2 & DDSCAPS2_VOLUME) && header.dwDepth > 1)) return false;
     m_xddPixelFormat = {};
     memcpy(&m_xddPixelFormat, &header.ddpfPixelFormat, sizeof(m_xddPixelFormat));
     DecodePixelFormat(m_strFormat, &m_xddPixelFormat);
-    if (m_CompFormat != PF_DXT1 && m_CompFormat != PF_DXT3 && m_CompFormat != PF_DXT5) return false;
+    const bool compressed = m_CompFormat == PF_DXT1 || m_CompFormat == PF_DXT3 || m_CompFormat == PF_DXT5;
+    if (!compressed && (!(header.ddpfPixelFormat.dwFlags & DDPF_RGB) ||
+        (header.ddpfPixelFormat.dwRGBBitCount != 16 && header.ddpfPixelFormat.dwRGBBitCount != 24 && header.ddpfPixelFormat.dwRGBBitCount != 32))) return false;
+    if (!compressed) m_CompFormat = PF_ARGB;
     const DWORD levels = header.dwMipMapCount ? header.dwMipMapCount : 1;
     DWORD maxLevels = 1;
     for (DWORD extent = max(header.dwWidth, header.dwHeight); extent > 1; extent >>= 1) ++maxLevels;
@@ -152,12 +155,15 @@ bool CDXTCImage::LoadHeaderFromMemory(const BYTE* data, int size)
     DWORD width = header.dwWidth, height = header.dwHeight;
     for (DWORD level = 0; level < levels; ++level)
     {
-        const DWORD rowBytes = max(1UL, (width + 3) / 4) * blockBytes;
-        const DWORD rows = max(1UL, (height + 3) / 4);
-        const size_t bytes = static_cast<size_t>(rowBytes) * rows;
+        const DWORD rowBytes = compressed ? max(1UL, (width + 3) / 4) * blockBytes : width * (header.ddpfPixelFormat.dwRGBBitCount / 8);
+        const DWORD rows = compressed ? max(1UL, (height + 3) / 4) : height;
+        // Honor a padded top-level RGB pitch; lower mip levels are packed.
+        const DWORD pitch = !compressed && level == 0 && (header.dwFlags & DDSD_PITCH) ? static_cast<DWORD>(header.lPitch) : rowBytes;
+        if (pitch < rowBytes) return false;
+        const size_t bytes = static_cast<size_t>(pitch) * rows;
         if (bytes > remaining || bytes > 0x7fffffff) return false;
         m_pbCompBufferByLevels[level] = cursor;
-        m_compRowBytes[level] = rowBytes; m_compRows[level] = rows;
+        m_compRowBytes[level] = pitch; m_compRows[level] = rows;
         m_compBytes[level] = static_cast<DWORD>(bytes);
         cursor += bytes; remaining -= bytes;
         width = max(1UL, width >> 1); height = max(1UL, height >> 1);

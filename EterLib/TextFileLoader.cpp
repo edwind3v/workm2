@@ -609,7 +609,7 @@ BOOL CTextFileLoader::GetTokenFloat(const std::string & c_rstrKey, float * pData
 	return TRUE;
 }
 
-BOOL CTextFileLoader::GetTokenVector2(const std::string & c_rstrKey, D3DXVECTOR2 * pVector2)
+BOOL CTextFileLoader::GetTokenVector2(const std::string & c_rstrKey, Vector2 * pVector2)
 {
 	CTokenVector * pTokenVector;
 	if (!GetTokenVector(c_rstrKey, &pTokenVector))
@@ -627,7 +627,7 @@ BOOL CTextFileLoader::GetTokenVector2(const std::string & c_rstrKey, D3DXVECTOR2
 	return TRUE;
 }
 
-BOOL CTextFileLoader::GetTokenVector3(const std::string & c_rstrKey, D3DXVECTOR3 * pVector3)
+BOOL CTextFileLoader::GetTokenVector3(const std::string & c_rstrKey, Vector3 * pVector3)
 {
 	CTokenVector * pTokenVector;
 	if (!GetTokenVector(c_rstrKey, &pTokenVector))
@@ -646,7 +646,7 @@ BOOL CTextFileLoader::GetTokenVector3(const std::string & c_rstrKey, D3DXVECTOR3
 	return TRUE;
 }
 
-BOOL CTextFileLoader::GetTokenVector4(const std::string & c_rstrKey, D3DXVECTOR4 * pVector4)
+BOOL CTextFileLoader::GetTokenVector4(const std::string & c_rstrKey, Vector4 * pVector4)
 {
 	CTokenVector * pTokenVector;
 	if (!GetTokenVector(c_rstrKey, &pTokenVector))
@@ -666,12 +666,12 @@ BOOL CTextFileLoader::GetTokenVector4(const std::string & c_rstrKey, D3DXVECTOR4
 	return TRUE;
 }
 
-BOOL CTextFileLoader::GetTokenPosition(const std::string & c_rstrKey, D3DXVECTOR3 * pVector)
+BOOL CTextFileLoader::GetTokenPosition(const std::string & c_rstrKey, Vector3 * pVector)
 {
 	return GetTokenVector3(c_rstrKey, pVector);
 }
 
-BOOL CTextFileLoader::GetTokenQuaternion(const std::string & c_rstrKey, D3DXQUATERNION * pQ)
+BOOL CTextFileLoader::GetTokenQuaternion(const std::string & c_rstrKey, Quaternion * pQ)
 {
 	CTokenVector * pTokenVector;
 	if (!GetTokenVector(c_rstrKey, &pTokenVector))
@@ -691,7 +691,7 @@ BOOL CTextFileLoader::GetTokenQuaternion(const std::string & c_rstrKey, D3DXQUAT
 	return TRUE;
 }
 
-BOOL CTextFileLoader::GetTokenDirection(const std::string & c_rstrKey, D3DVECTOR * pVector)
+BOOL CTextFileLoader::GetTokenDirection(const std::string & c_rstrKey, Vector3 * pVector)
 {
 	CTokenVector * pTokenVector;
 	if (!GetTokenVector(c_rstrKey, &pTokenVector))
@@ -710,7 +710,7 @@ BOOL CTextFileLoader::GetTokenDirection(const std::string & c_rstrKey, D3DVECTOR
 	return TRUE;
 }
 
-BOOL CTextFileLoader::GetTokenColor(const std::string & c_rstrKey, D3DXCOLOR * pColor)
+BOOL CTextFileLoader::GetTokenColor(const std::string & c_rstrKey, Color * pColor)
 {
 	CTokenVector * pTokenVector;
 	if (!GetTokenVector(c_rstrKey, &pTokenVector))

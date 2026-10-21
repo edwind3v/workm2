@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterLib/ShaderManager.h"
 #include "PythonSystem.h"
 #include "PythonApplication.h"
 
@@ -34,80 +35,92 @@ void CPythonSystem::GetDisplaySettings()
 	memset(m_ResolutionList, 0, sizeof(TResolution) * RESOLUTION_MAX_NUM);
 	m_ResolutionCount = 0;
 
-	const LPDIRECT3D9EX lpD3D = CPythonGraphic::Instance().GetD3D();
+	IDXGIFactory* pFactory = CPythonGraphic::Instance().GetDXGIFactory();
+	if (!pFactory)
+		return;
 
-	D3DADAPTER_IDENTIFIER9 d3dAdapterIdentifier;
-	D3DDISPLAYMODEEX d3ddmDesktop = {};
-	d3ddmDesktop.Size = sizeof(D3DDISPLAYMODEEX);
+	IDXGIAdapter* pAdapter = nullptr;
+	if (FAILED(pFactory->EnumAdapters(0, &pAdapter)) || !pAdapter)
+		return;
 
-	lpD3D->GetAdapterIdentifier(D3DADAPTER_DEFAULT, D3DENUM_WHQL_LEVEL, &d3dAdapterIdentifier);
-	lpD3D->GetAdapterDisplayModeEx(D3DADAPTER_DEFAULT, &d3ddmDesktop, nullptr);
-
-	D3DDISPLAYMODEFILTER filter = {};
-	filter.Size = sizeof(D3DDISPLAYMODEFILTER);
-	filter.Format = d3ddmDesktop.Format;
-
-	const DWORD dwNumAdapterModes = lpD3D->GetAdapterModeCountEx(D3DADAPTER_DEFAULT, &filter);
-
-	for (UINT iMode = 0; iMode < dwNumAdapterModes; iMode++)
+	IDXGIOutput* pOutput = nullptr;
+	if (FAILED(pAdapter->EnumOutputs(0, &pOutput)) || !pOutput)
 	{
-		D3DDISPLAYMODEEX DisplayMode = {};
-		DisplayMode.Size = sizeof(D3DDISPLAYMODEEX);
+		pAdapter->Release();
+		return;
+	}
 
-		lpD3D->EnumAdapterModesEx(D3DADAPTER_DEFAULT, &filter, iMode, &DisplayMode);
-		DWORD bpp = 0;
+	// Get display mode list for common formats
+	DXGI_FORMAT formats[] = { DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM };
 
-		if (DisplayMode.Width < 800 || DisplayMode.Height < 600)
+	for (int f = 0; f < 2; ++f)
+	{
+		UINT numModes = 0;
+		pOutput->GetDisplayModeList(formats[f], 0, &numModes, nullptr);
+
+		if (numModes == 0)
 			continue;
 
-		if (DisplayMode.Format == D3DFMT_R5G6B5)
-			bpp = 16;
-		else if (DisplayMode.Format == D3DFMT_X8R8G8B8)
-			bpp = 32;
-		else
-			continue;
+		std::vector<DXGI_MODE_DESC> modes(numModes);
+		pOutput->GetDisplayModeList(formats[f], 0, &numModes, modes.data());
 
-		int check_res = false;
-
-		for (int i = 0; !check_res && i < m_ResolutionCount; ++i)
+		for (UINT iMode = 0; iMode < numModes; ++iMode)
 		{
-			if (m_ResolutionList[i].bpp != bpp ||
-				m_ResolutionList[i].width != DisplayMode.Width ||
-				m_ResolutionList[i].height != DisplayMode.Height)
+			const DXGI_MODE_DESC& mode = modes[iMode];
+			DWORD bpp = 32;  // DX11 primarily uses 32-bit formats
+
+			if (mode.Width < 800 || mode.Height < 600)
 				continue;
 
-			int check_fre = false;
+			DWORD refreshRate = mode.RefreshRate.Denominator > 0
+				? mode.RefreshRate.Numerator / mode.RefreshRate.Denominator
+				: 60;
 
-			for (int j = 0; j < m_ResolutionList[i].frequency_count; ++j)
+			int check_res = false;
+
+			for (int i = 0; !check_res && i < m_ResolutionCount; ++i)
 			{
-				if (m_ResolutionList[i].frequency[j] == DisplayMode.RefreshRate)
+				if (m_ResolutionList[i].bpp != bpp ||
+					m_ResolutionList[i].width != mode.Width ||
+					m_ResolutionList[i].height != mode.Height)
+					continue;
+
+				int check_fre = false;
+
+				for (int j = 0; j < m_ResolutionList[i].frequency_count; ++j)
 				{
-					check_fre = true;
-					break;
+					if (m_ResolutionList[i].frequency[j] == refreshRate)
+					{
+						check_fre = true;
+						break;
+					}
 				}
+
+				if (!check_fre)
+					if (m_ResolutionList[i].frequency_count < FREQUENCY_MAX_NUM)
+						m_ResolutionList[i].frequency[m_ResolutionList[i].frequency_count++] = refreshRate;
+
+				check_res = true;
 			}
 
-			if (!check_fre)
-				if (m_ResolutionList[i].frequency_count < FREQUENCY_MAX_NUM)
-					m_ResolutionList[i].frequency[m_ResolutionList[i].frequency_count++] = DisplayMode.RefreshRate;
-
-			check_res = true;
-		}
-
-		if (!check_res)
-		{
-			if (m_ResolutionCount < RESOLUTION_MAX_NUM)
+			if (!check_res)
 			{
-				m_ResolutionList[m_ResolutionCount].width			= DisplayMode.Width;
-				m_ResolutionList[m_ResolutionCount].height			= DisplayMode.Height;
-				m_ResolutionList[m_ResolutionCount].bpp				= bpp;
-				m_ResolutionList[m_ResolutionCount].frequency[0]	= DisplayMode.RefreshRate;
-				m_ResolutionList[m_ResolutionCount].frequency_count	= 1;
+				if (m_ResolutionCount < RESOLUTION_MAX_NUM)
+				{
+					m_ResolutionList[m_ResolutionCount].width			= mode.Width;
+					m_ResolutionList[m_ResolutionCount].height			= mode.Height;
+					m_ResolutionList[m_ResolutionCount].bpp				= bpp;
+					m_ResolutionList[m_ResolutionCount].frequency[0]	= refreshRate;
+					m_ResolutionList[m_ResolutionCount].frequency_count	= 1;
 
-				++m_ResolutionCount;
+					++m_ResolutionCount;
+				}
 			}
 		}
 	}
+
+	pOutput->Release();
+	pAdapter->Release();
 }
 
 int	CPythonSystem::GetResolutionCount() const
@@ -315,6 +328,10 @@ void CPythonSystem::SetDefaultConfig()
 	m_Config.bSoftwareTiling	= 0;
 	m_Config.iShadowLevel		= 3;
 	m_Config.iAntialiasing		= 0;
+	m_Config.dx11MSAASamples = MSAA_DEFAULT_SAMPLE_COUNT;
+	m_Config.dx11Bloom = true;
+	m_Config.dx11SSAO = true;
+	m_Config.dx11GodRays = true;
 	m_Config.bViewChat			= true;
 	m_Config.bAlwaysShowName	= DEFAULT_VALUE_ALWAYS_SHOW_NAME;
 	m_Config.bShowDamage		= true;
@@ -440,7 +457,14 @@ bool CPythonSystem::LoadConfig()
 		if (sscanf(buf, " %s %s\n", command, value) == EOF)
 			break;
 
-		if (!stricmp(command, "WIDTH"))
+		if (!stricmp(command, "DX11_MSAA_SAMPLES")) {
+            const int samples = atoi(value);
+            m_Config.dx11MSAASamples = samples >= 8 ? 8 : samples >= 4 ? 4 : samples >= 2 ? 2 : 1;
+        }
+        else if (!stricmp(command, "DX11_BLOOM")) m_Config.dx11Bloom = atoi(value) != 0;
+        else if (!stricmp(command, "DX11_SSAO")) m_Config.dx11SSAO = atoi(value) != 0;
+        else if (!stricmp(command, "DX11_GODRAYS")) m_Config.dx11GodRays = atoi(value) != 0;
+        else if (!stricmp(command, "WIDTH"))
 			m_Config.width = atoi(value);
 		else if (!stricmp(command, "HEIGHT"))
 			m_Config.height = atoi(value);
@@ -589,7 +613,9 @@ bool CPythonSystem::SaveConfig()
 	fprintf(fp, "NO_ANTIALIASING		%d\n", m_Config.iAntialiasing);
 	fprintf(fp, "\n");
 
-	fclose(fp);
+	fprintf(fp, "DX11_MSAA_SAMPLES\t%d\nDX11_BLOOM\t%d\nDX11_SSAO\t%d\nDX11_GODRAYS\t%d\n",
+        m_Config.dx11MSAASamples, int(m_Config.dx11Bloom), int(m_Config.dx11SSAO), int(m_Config.dx11GodRays));
+    fclose(fp);
 	return true;
 }
 
@@ -663,6 +689,11 @@ void CPythonSystem::ApplyConfig()
 			CPythonApplication::Instance().SetCursorMode(CPythonApplication::CURSOR_MODE_HARDWARE);
 	}
 
+	if (SHADERMANAGER.IsInitialized())
+	{
+		SHADERMANAGER.SetBloomEnabled(m_Config.dx11Bloom);
+		SHADERMANAGER.SetSSAOEnabled(m_Config.dx11SSAO);
+	}
 	m_OldConfig = m_Config;
 
 	ChangeSystem();

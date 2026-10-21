@@ -69,7 +69,7 @@ bool CGraphicImage::OnLoad(int iSize, const void * c_pvBuf)
 	m_imageTexture.SetFileName(CResource::GetFileName());
 
 	//@fixme002
-	if (!m_imageTexture.CreateFromMemoryFile(iSize, c_pvBuf, D3DFMT_UNKNOWN, m_dwFilter))
+	if (!m_imageTexture.CreateFromMemoryFile(iSize, c_pvBuf, DXGI_FORMAT_UNKNOWN, GetFileName(), m_dwFilter))
 	{
 		TraceError("CGraphicImage::OnLoad: CreateFromMemoryFile: texture not found(%s)", CResource::GetFileName());
 		return false;

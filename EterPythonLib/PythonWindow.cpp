@@ -976,7 +976,7 @@ namespace UI
 
 	void CLine::OnRender()
 	{
-		const CPythonGraphic & rkpyGraphic = CPythonGraphic::Instance();
+		CPythonGraphic & rkpyGraphic = CPythonGraphic::Instance();
 		rkpyGraphic.SetDiffuseColor(m_dwColor);
 		rkpyGraphic.RenderLine2d(m_rect.left, m_rect.top, m_rect.right, m_rect.bottom);
 	}
@@ -987,9 +987,9 @@ namespace UI
 
 	CBar3D::CBar3D(PyObject * ppyObject) : CWindow(ppyObject)
 	{
-		m_dwLeftColor = D3DXCOLOR(0.2f, 0.2f, 0.2f, 1.0f);
-		m_dwRightColor = D3DXCOLOR(0.7f, 0.7f, 0.7f, 1.0f);
-		m_dwCenterColor = D3DXCOLOR(0.0f, 0.0f, 0.0f, 1.0f);
+		m_dwLeftColor = Color(0.2f, 0.2f, 0.2f, 1.0f);
+		m_dwRightColor = Color(0.7f, 0.7f, 0.7f, 1.0f);
+		m_dwCenterColor = Color(0.0f, 0.0f, 0.0f, 1.0f);
 	}
 	CBar3D::~CBar3D()
 	{
@@ -1004,7 +1004,7 @@ namespace UI
 
 	void CBar3D::OnRender()
 	{
-		const CPythonGraphic & rkpyGraphic = CPythonGraphic::Instance();
+		CPythonGraphic & rkpyGraphic = CPythonGraphic::Instance();
 
 		rkpyGraphic.SetDiffuseColor(m_dwCenterColor);
 		rkpyGraphic.RenderBar2d(m_rect.left, m_rect.top, m_rect.right, m_rect.bottom);
@@ -1689,7 +1689,7 @@ namespace UI
 			elem->SetDiffuseColor(r, g, b, a);
 	}
 
-	void CAniImageBox::SetDiffuseColor(const D3DXCOLOR & color) const
+	void CAniImageBox::SetDiffuseColor(const Color & color) const
 	{
 		for (const auto & elem : m_ImageVector)
 			elem->SetDiffuseColor(color.r, color.g, color.b, color.a);
@@ -2359,10 +2359,10 @@ namespace UI
 			m_v2DstPos.x = fDstX;
 			m_v2DstPos.y = fDstY;
 
-			D3DXVec2Subtract(&m_v2Direction, &m_v2DstPos, &m_v2SrcPos);
+			Vec2Subtract(&m_v2Direction, &m_v2DstPos, &m_v2SrcPos);
 
 			m_fDistance = (m_v2Direction.y * m_v2Direction.y + m_v2Direction.x * m_v2Direction.x);
-			D3DXVec2Normalize(&m_v2Direction, &m_v2Direction);
+			Vec2Normalize(&m_v2Direction, &m_v2Direction);
 
 			if (m_v2SrcPos != m_v2NextPos)
 			{
@@ -2378,8 +2378,8 @@ namespace UI
 		if (IsShow() && GetMove())
 		{
 			auto v1 = (m_v2Direction * m_fMoveSpeed);
-			D3DXVec2Add(&m_v2NextPos, &m_v2NextPos, &v1);
-			D3DXVec2Subtract(&m_v2NextDistance, &m_v2NextPos, &m_v2SrcPos);
+			Vec2Add(&m_v2NextPos, &m_v2NextPos, &v1);
+			Vec2Subtract(&m_v2NextDistance, &m_v2NextPos, &m_v2SrcPos);
 
 			float fNextDistance = m_v2NextDistance.y * m_v2NextDistance.y + m_v2NextDistance.x * m_v2NextDistance.x;
 			if (fNextDistance >= m_fDistance)
@@ -2450,11 +2450,11 @@ namespace UI
 			m_v2DstPos.x = fDstX;
 			m_v2DstPos.y = fDstY;
 
-			D3DXVec2Subtract(&m_v2Direction, &m_v2DstPos, &m_v2SrcPos);
+			Vec2Subtract(&m_v2Direction, &m_v2DstPos, &m_v2SrcPos);
 
 			m_fDistance = (m_v2Direction.x * m_v2Direction.x + m_v2Direction.y * m_v2Direction.y);
 
-			D3DXVec2Normalize(&m_v2Direction, &m_v2Direction);
+			Vec2Normalize(&m_v2Direction, &m_v2Direction);
 
 			if (m_pImageInstance && m_v2SrcPos != m_v2NextPos)
 			{
@@ -2495,8 +2495,8 @@ namespace UI
 		if (IsShow() && GetMove())
 		{
 			auto v1 = (m_v2Direction * m_fMoveSpeed);
-			D3DXVec2Add(&m_v2NextPos, &m_v2NextPos, &v1);
-			D3DXVec2Subtract(&m_v2NextDistance, &m_v2NextPos, &m_v2SrcPos);
+			Vec2Add(&m_v2NextPos, &m_v2NextPos, &v1);
+			Vec2Subtract(&m_v2NextDistance, &m_v2NextPos, &m_v2SrcPos);
 
 			float fNextDistance = (m_v2NextDistance.x * m_v2NextDistance.x + m_v2NextDistance.y * m_v2NextDistance.y);
 			if (fNextDistance >= m_fDistance)
@@ -2580,18 +2580,18 @@ namespace UI
 		if (IsShow() && GetMove())
 		{
 			auto v1 = (m_v2Direction * m_fMoveSpeed);
-			D3DXVec2Add(&m_v2NextPos, &m_v2NextPos, &v1);
-			D3DXVec2Subtract(&m_v2NextDistance, &m_v2NextPos, &m_v2SrcPos);
+			Vec2Add(&m_v2NextPos, &m_v2NextPos, &v1);
+			Vec2Subtract(&m_v2NextDistance, &m_v2NextPos, &m_v2SrcPos);
 
 			float fNextDistance = (m_v2NextDistance.x * m_v2NextDistance.x + m_v2NextDistance.y * m_v2NextDistance.y);
 			if (m_fScaleDistance < fNextDistance)
 				m_fAdditionalScale *= -1.0f;
 
-			D3DXVECTOR2 v2NewScale;
-			auto v2 = D3DXVECTOR2(m_fAdditionalScale, m_fAdditionalScale);
-			D3DXVec2Add(&v2NewScale, &m_pImageInstance->GetScale(), &v2);
+			Vector2 v2NewScale;
+			auto v2 = Vector2(m_fAdditionalScale, m_fAdditionalScale);
+			Vec2Add(&v2NewScale, &m_pImageInstance->GetScale(), &v2);
 			if (m_fMaxScale < v2NewScale.x)
-				v2NewScale = D3DXVECTOR2(m_fMaxScale, m_fMaxScale);
+				v2NewScale = Vector2(m_fMaxScale, m_fMaxScale);
 
 			if (m_v2CurScale.x > v2NewScale.x)
 				v2NewScale = m_v2CurScale;

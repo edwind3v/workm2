@@ -6,6 +6,51 @@
 #include "packet.h"
 
 #include "../eterLib/Camera.h"
+#include "../EterLib/ShaderManager.h"
+#include "../EterLib/VTFInstanceManager.h"
+#include "../EffectLib/EffectManager.h"
+#ifdef ENABLE_FRUSTUM_CULLING
+int CPythonCharacterManager::ms_iCulledCount = 0;
+int CPythonCharacterManager::ms_iRenderedCount = 0;
+int CPythonCharacterManager::ms_iTotalCount = 0;
+#endif
+
+#ifdef ENABLE_CHAR_RENDER_LIMIT
+#ifndef CHAR_RENDER_LIMIT_DEFAULT
+#define CHAR_RENDER_LIMIT_DEFAULT 200
+#endif
+int CPythonCharacterManager::ms_iRenderLimit = CHAR_RENDER_LIMIT_DEFAULT;
+int CPythonCharacterManager::ms_iSkippedByLimit = 0;
+#endif
+
+#ifdef ENABLE_RENDER_MODE_GROUPING
+int CPythonCharacterManager::ms_iRenderModeNormal = 0;
+int CPythonCharacterManager::ms_iRenderModeBlend = 0;
+int CPythonCharacterManager::ms_iRenderModeAdd = 0;
+int CPythonCharacterManager::ms_iRenderModeModulate = 0;
+#endif
+
+#ifdef ENABLE_UPDATE_CULLING
+int CPythonCharacterManager::ms_iUpdateSkipped = 0;
+int CPythonCharacterManager::ms_iUpdateFull = 0;
+int CPythonCharacterManager::ms_iUpdateReduced = 0;
+#endif
+
+#if defined(ENABLE_UPDATE_CULLING) || defined(ENABLE_ANIMATION_LOD) || defined(ENABLE_DEFORM_CULLING)
+DWORD CPythonCharacterManager::ms_dwFrameCounter = 0;
+#endif
+
+#ifdef ENABLE_DEFORM_CULLING
+int CPythonCharacterManager::ms_iDeformSkipped = 0;
+int CPythonCharacterManager::ms_iDeformRendered = 0;
+#endif
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Frame Process
+
+
+
+
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Frame Process
@@ -170,6 +215,12 @@ void CPythonCharacterManager::Update()
 	DWORD t1=timeGetTime();
 #endif
 	CInstanceBase::ResetPerformanceCounter();
+#if defined(ENABLE_UPDATE_CULLING) || defined(ENABLE_ANIMATION_LOD) || defined(ENABLE_DEFORM_CULLING)
+    ++ms_dwFrameCounter;
+#endif
+#ifdef ENABLE_UPDATE_CULLING
+    ms_iUpdateSkipped = ms_iUpdateFull = ms_iUpdateReduced = 0;
+#endif
 
 	CInstanceBase* pkInstMain=GetMainInstancePtr();
 #ifdef __PERFORMANCE_CHECKER__
@@ -184,7 +235,18 @@ void CPythonCharacterManager::Update()
 		const auto c=i++;
 
 		CInstanceBase* pkInstEach=c->second;
-		pkInstEach->Update();
+		bool update = true;
+#ifdef ENABLE_UPDATE_CULLING
+        if (pkInstMain && pkInstEach != pkInstMain && !pkInstEach->IsPC())
+        {
+            const float distance = pkInstEach->NEW_GetDistanceFromDestInstance(*pkInstMain);
+            const DWORD cadence = distance > UPDATE_CULLING_DISTANCE_FAR ? UPDATE_CULLING_FRAME_SKIP_FAR :
+                distance > UPDATE_CULLING_DISTANCE_MID ? UPDATE_CULLING_FRAME_SKIP_MID : 1;
+            update = (ms_dwFrameCounter % cadence) == (pkInstEach->GetVirtualID() % cadence);
+        }
+        if (update) ++ms_iUpdateFull; else ++ms_iUpdateSkipped;
+#endif
+        if (update) pkInstEach->Update();
 
 		if (pkInstMain)
 		{
@@ -388,8 +450,36 @@ struct FCharacterManagerCharacterInstanceListDeform
 
 void CPythonCharacterManager::Deform()
 {
-	std::for_each(m_kAliveInstMap.begin(), m_kAliveInstMap.end(), FCharacterManagerCharacterInstanceDeform());
-	std::for_each(m_kDeadInstList.begin(), m_kDeadInstList.end(), FCharacterManagerCharacterInstanceListDeform());
+#if defined(ENABLE_DEFORM_CULLING) || defined(ENABLE_ANIMATION_LOD)
+#ifdef ENABLE_DEFORM_CULLING
+    ms_iDeformSkipped = ms_iDeformRendered = 0;
+#endif
+    CInstanceBase* main = GetMainInstancePtr();
+    for (const auto& entry : m_kAliveInstMap)
+    {
+        CInstanceBase* instance = entry.second;
+        bool deform = true;
+        if (main && main != instance && !instance->IsPC())
+        {
+            const float distance = instance->NEW_GetDistanceFromDestInstance(*main);
+#ifdef ENABLE_DEFORM_CULLING
+            if (distance > UPDATE_CULLING_DISTANCE_FAR) deform = false;
+#endif
+#ifdef ENABLE_ANIMATION_LOD
+            const DWORD cadence = distance > ANIMATION_LOD_DISTANCE_MID ? ANIMATION_LOD_SKIP_FRAMES_FAR :
+                distance > ANIMATION_LOD_DISTANCE_HIGH ? ANIMATION_LOD_SKIP_FRAMES_MID : 1;
+            deform = deform && (ms_dwFrameCounter + entry.first) % cadence == 0;
+#endif
+        }
+        if (deform) instance->Deform();
+#ifdef ENABLE_DEFORM_CULLING
+        if (deform) ++ms_iDeformRendered; else ++ms_iDeformSkipped;
+#endif
+    }
+#else
+    std::for_each(m_kAliveInstMap.begin(), m_kAliveInstMap.end(), FCharacterManagerCharacterInstanceDeform());
+#endif
+    std::for_each(m_kDeadInstList.begin(), m_kDeadInstList.end(), FCharacterManagerCharacterInstanceListDeform());
 }
 
 bool CPythonCharacterManager::OLD_GetPickedInstanceVID(DWORD* pdwPickedActorID) const
@@ -406,7 +496,7 @@ CInstanceBase * CPythonCharacterManager::OLD_GetPickedInstancePtr() const
 	return m_pkInstPick;
 }
 
-D3DXVECTOR2 & CPythonCharacterManager::OLD_GetPickedInstPosReference()
+Vector2 & CPythonCharacterManager::OLD_GetPickedInstPosReference()
 {
 	return m_v2PickedInstProjPos;
 }
@@ -468,17 +558,260 @@ struct FCharacterInstanceRenderTrace
 
 void CPythonCharacterManager::__RenderSortedAliveActorList()
 {
+#if defined(ENABLE_FRUSTUM_CULLING) || defined(ENABLE_CHAR_RENDER_LIMIT) || defined(ENABLE_RENDER_MODE_GROUPING)
+	ResetCullingStats();
+#endif
+
+	CInstanceBase* pkInstMain = GetMainInstancePtr();
+	if (pkInstMain)
+	{
+		Vector3 v3PlayerPos = pkInstMain->GetGraphicThingInstanceRef().GetPosition();
+#ifdef ENABLE_EFFECT_LIMIT
+		CEffectManager::SetMainPlayerPosition(v3PlayerPos);
+#endif
+
+
+	}
+
 	static std::vector<CInstanceBase*> s_kVct_pkInstAliveSort;
 	s_kVct_pkInstAliveSort.clear();
 
-	TCharacterInstanceMap& rkMap_pkInstAlive=m_kAliveInstMap;
-	TCharacterInstanceMap::iterator i;
-	for (i=rkMap_pkInstAlive.begin(); i!=rkMap_pkInstAlive.end(); ++i)
-		s_kVct_pkInstAliveSort.push_back(i->second);
+	TCharacterInstanceMap& rkMap_pkInstAlive = m_kAliveInstMap;
+	s_kVct_pkInstAliveSort.reserve(rkMap_pkInstAlive.size());
 
-	std::sort(s_kVct_pkInstAliveSort.begin(), s_kVct_pkInstAliveSort.end(), LessCharacterInstancePtrRenderOrder());
-	std::for_each(s_kVct_pkInstAliveSort.begin(), s_kVct_pkInstAliveSort.end(), FCharacterInstanceRender());
-	std::for_each(s_kVct_pkInstAliveSort.begin(), s_kVct_pkInstAliveSort.end(), FCharacterInstanceRenderTrace());
+	for (auto& [key, inst] : rkMap_pkInstAlive)
+		s_kVct_pkInstAliveSort.push_back(inst);
+
+#ifdef ENABLE_CHAR_RENDER_LIMIT
+	if (ms_iRenderLimit > 0)
+	{
+		CCamera* pCamera = CCameraManager::Instance().GetCurrentCamera();
+
+		if (pCamera)
+		{
+			Vector3 v3CameraPos = pCamera->GetEye();
+
+			std::sort(s_kVct_pkInstAliveSort.begin(), s_kVct_pkInstAliveSort.end(),
+				[&v3CameraPos](CInstanceBase* a, CInstanceBase* b)
+				{
+					const Vector3& v3PosA = a->GetGraphicThingInstanceRef().GetPosition();
+					const Vector3& v3PosB = b->GetGraphicThingInstanceRef().GetPosition();
+
+					float fDistA =
+						(v3PosA.x - v3CameraPos.x) * (v3PosA.x - v3CameraPos.x) +
+						(v3PosA.y - v3CameraPos.y) * (v3PosA.y - v3CameraPos.y) +
+						(v3PosA.z - v3CameraPos.z) * (v3PosA.z - v3CameraPos.z);
+
+					float fDistB =
+						(v3PosB.x - v3CameraPos.x) * (v3PosB.x - v3CameraPos.x) +
+						(v3PosB.y - v3CameraPos.y) * (v3PosB.y - v3CameraPos.y) +
+						(v3PosB.z - v3CameraPos.z) * (v3PosB.z - v3CameraPos.z);
+
+					return fDistA < fDistB;
+				});
+		}
+		else
+		{
+			std::sort(s_kVct_pkInstAliveSort.begin(), s_kVct_pkInstAliveSort.end(), LessCharacterInstancePtrRenderOrder());
+		}
+	}
+	else
+#endif
+	{
+		std::sort(s_kVct_pkInstAliveSort.begin(), s_kVct_pkInstAliveSort.end(), LessCharacterInstancePtrRenderOrder());
+	}
+
+#ifdef ENABLE_RENDER_MODE_GROUPING
+	static std::vector<CInstanceBase*> s_kVct_pkInstNormal;
+	static std::vector<CInstanceBase*> s_kVct_pkInstBlend;
+	static std::vector<CInstanceBase*> s_kVct_pkInstAdd;
+	static std::vector<CInstanceBase*> s_kVct_pkInstModulate;
+
+	s_kVct_pkInstNormal.clear();
+	s_kVct_pkInstBlend.clear();
+	s_kVct_pkInstAdd.clear();
+	s_kVct_pkInstModulate.clear();
+#else
+	static std::vector<CInstanceBase*> s_kVct_pkInstVTFDeferred;
+	s_kVct_pkInstVTFDeferred.clear();
+#endif
+
+#ifdef ENABLE_CHAR_RENDER_LIMIT
+	int iRenderCount = 0;
+	int iLimit = ms_iRenderLimit;
+#endif
+
+	if (VTFMANAGER.IsInitialized())
+		VTFMANAGER.ClearDeferredRigidBatches();
+
+	for (CInstanceBase* pInstance : s_kVct_pkInstAliveSort)
+	{
+#ifdef ENABLE_CHAR_RENDER_LIMIT
+		bool bIsImportant = pInstance == pkInstMain || pInstance->IsPC();
+
+		if (!bIsImportant && iLimit > 0 && iRenderCount >= iLimit)
+		{
+			++ms_iSkippedByLimit;
+			continue;
+		}
+#endif
+
+#ifdef ENABLE_FRUSTUM_CULLING
+		if (pkInstMain)
+		{
+			++ms_iTotalCount;
+
+			Vector3 v3Center;
+			float fRadius = 0.0f;
+			pInstance->GetGraphicThingInstanceRef().GetBoundingSphere(v3Center, fRadius);
+
+			if (CScreen::GetFrustum().ViewVolumeTest(Vector3d(v3Center.x, v3Center.y, v3Center.z), fRadius) == VS_OUTSIDE)
+			{
+				++ms_iCulledCount;
+				continue;
+			}
+
+			++ms_iRenderedCount;
+		}
+#endif
+
+#ifdef ENABLE_CHAR_RENDER_LIMIT
+		++iRenderCount;
+#endif
+
+#ifdef ENABLE_RENDER_MODE_GROUPING
+		switch (pInstance->GetGraphicThingInstanceRef().GetRenderMode())
+		{
+		case CActorInstance::RENDER_MODE_BLEND:
+			s_kVct_pkInstBlend.push_back(pInstance);
+			break;
+
+		case CActorInstance::RENDER_MODE_ADD:
+			s_kVct_pkInstAdd.push_back(pInstance);
+			break;
+
+		case CActorInstance::RENDER_MODE_MODULATE:
+			s_kVct_pkInstModulate.push_back(pInstance);
+			break;
+
+		default:
+			s_kVct_pkInstNormal.push_back(pInstance);
+			break;
+		}
+#else
+		if (VTFMANAGER.IsInitialized())
+		{
+			s_kVct_pkInstVTFDeferred.push_back(pInstance);
+			pInstance->RenderWithRigidDefer();
+		}
+		else
+		{
+			pInstance->Render();
+		}
+
+		pInstance->RenderTrace();
+#endif
+	}
+
+#ifndef ENABLE_RENDER_MODE_GROUPING
+	SHADERMANAGER.PushState();
+	SHADERMANAGER.SetPipelineState(PSTATE_CULLMODE, CULL_NONE);
+
+	if (VTFMANAGER.IsInitialized() && VTFMANAGER.HasDeferredRigidBatches())
+		VTFMANAGER.FlushDeferredRigidBatches();
+
+	for (CInstanceBase* pInstance : s_kVct_pkInstVTFDeferred)
+		pInstance->RenderBlendPassDeferred();
+
+	SHADERMANAGER.PopState();
+#endif
+
+#ifdef ENABLE_RENDER_MODE_GROUPING
+	if (VTFMANAGER.IsInitialized())
+	{
+		VTFMANAGER.ClearDeferredRigidBatches();
+
+		for (CInstanceBase* pInstance : s_kVct_pkInstNormal)
+		{
+			pInstance->RenderWithRigidDefer();
+			pInstance->RenderTrace();
+		}
+
+		SHADERMANAGER.PushState();
+		SHADERMANAGER.SetPipelineState(PSTATE_CULLMODE, CULL_NONE);
+
+		VTFMANAGER.FlushDeferredRigidBatches();
+
+		for (CInstanceBase* pInstance : s_kVct_pkInstNormal)
+			pInstance->RenderBlendPassDeferred();
+
+		SHADERMANAGER.PopState();
+	}
+	else
+	{
+		for (CInstanceBase* pInstance : s_kVct_pkInstNormal)
+		{
+			pInstance->Render();
+			pInstance->RenderTrace();
+		}
+	}
+
+	if (VTFMANAGER.IsInitialized())
+	{
+		auto renderModeVTF = [](std::vector<CInstanceBase*>& vec)
+			{
+				if (vec.empty())
+					return;
+
+				VTFMANAGER.ClearDeferredRigidBatches();
+
+				for (CInstanceBase* pInstance : vec)
+				{
+					pInstance->RenderWithRigidDefer();
+					pInstance->RenderTrace();
+				}
+
+				SHADERMANAGER.PushState();
+				SHADERMANAGER.SetPipelineState(PSTATE_CULLMODE, CULL_NONE);
+
+				VTFMANAGER.FlushDeferredRigidBatches();
+
+				for (CInstanceBase* pInstance : vec)
+					pInstance->RenderBlendPassDeferred();
+
+				SHADERMANAGER.PopState();
+			};
+
+		renderModeVTF(s_kVct_pkInstBlend);
+		renderModeVTF(s_kVct_pkInstAdd);
+		renderModeVTF(s_kVct_pkInstModulate);
+	}
+	else
+	{
+		for (CInstanceBase* pInstance : s_kVct_pkInstBlend)
+		{
+			pInstance->Render();
+			pInstance->RenderTrace();
+		}
+
+		for (CInstanceBase* pInstance : s_kVct_pkInstAdd)
+		{
+			pInstance->Render();
+			pInstance->RenderTrace();
+		}
+
+		for (CInstanceBase* pInstance : s_kVct_pkInstModulate)
+		{
+			pInstance->Render();
+			pInstance->RenderTrace();
+		}
+	}
+
+	ms_iRenderModeNormal = (int)s_kVct_pkInstNormal.size();
+	ms_iRenderModeBlend = (int)s_kVct_pkInstBlend.size();
+	ms_iRenderModeAdd = (int)s_kVct_pkInstAdd.size();
+	ms_iRenderModeModulate = (int)s_kVct_pkInstModulate.size();
+#endif
 }
 
 void CPythonCharacterManager::__RenderSortedDeadActorList()
@@ -497,26 +830,36 @@ void CPythonCharacterManager::__RenderSortedDeadActorList()
 
 void CPythonCharacterManager::Render()
 {
-	STATEMANAGER.SetTexture(0, nullptr);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG1,	D3DTA_TEXTURE);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG2,	D3DTA_CURRENT);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLOROP,	D3DTOP_MODULATE);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG1,	D3DTA_TEXTURE);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAOP,	D3DTOP_SELECTARG1);
-
-	STATEMANAGER.SetTexture(1, nullptr);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_COLOROP,	D3DTOP_DISABLE);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_ALPHAOP,	D3DTOP_DISABLE);
-
+	// Terrain/tree helpers may have changed native bindings outside this pass.
+	SHADERMANAGER.InvalidateDeviceStateCache();
+	SHADERMANAGER.SetViewProjection(&CGraphicBase::GetViewMatrix(), &CGraphicBase::GetProjectionMatrix());
+	const UINT drawStart = SHADERMANAGER.GetGlobalDrawCount();
+	CGrannyMaterial::ResetRenderStateCache();
+	SHADERMANAGER.SetLightingEnabled(true);
+	SHADERMANAGER.SetDiffuseColor(1.0f, 1.0f, 1.0f, 1.0f);
+	SHADERMANAGER.SetDefaultTexture(0);
+	SHADERMANAGER.SetShaderResource(1, nullptr);
+	SHADERMANAGER.SetTwoTextureBlend(false);
 	__RenderSortedAliveActorList();
 	__RenderSortedDeadActorList();
-
-	CInstanceBase * pkPickedInst = OLD_GetPickedInstancePtr();
-	if (pkPickedInst)
+	if (CInstanceBase* picked = OLD_GetPickedInstancePtr())
 	{
-		const D3DXVECTOR3 & c_rv3Position = pkPickedInst->GetGraphicThingInstanceRef().GetPosition();
-		CPythonGraphic::Instance().ProjectPosition(c_rv3Position.x, c_rv3Position.y, c_rv3Position.z, &m_v2PickedInstProjPos.x, &m_v2PickedInstProjPos.y);
+		const Vector3& pos = picked->GetGraphicThingInstanceRef().GetPosition();
+		CPythonGraphic::Instance().ProjectPosition(pos.x, pos.y, pos.z, &m_v2PickedInstProjPos.x, &m_v2PickedInstProjPos.y);
 	}
+    static DWORD lastReport = 0;
+    const DWORD now = GetTickCount();
+    if (!m_kAliveInstMap.empty() && now - lastReport >= 5000)
+    {
+        lastReport = now;
+        auto* main = GetMainInstancePtr();
+        Vector3 center(0, 0, 0); float radius = 0.0f;
+        if (main) main->GetGraphicThingInstanceRef().GetBoundingSphere(center, radius);
+        TraceError("DX11_ACTORS alive=%u dead=%u draws=%u main_shown=%d center=(%.1f,%.1f,%.1f) radius=%.1f",
+            unsigned(m_kAliveInstMap.size()), unsigned(m_kDeadInstList.size()),
+            SHADERMANAGER.GetGlobalDrawCount() - drawStart,
+            main ? int(main->GetGraphicThingInstanceRef().isShow()) : -1, center.x, center.y, center.z, radius);
+    }
 }
 
 void CPythonCharacterManager::RenderShadowMainInstance() const
@@ -536,7 +879,14 @@ struct FCharacterManagerCharacterInstanceRenderToShadowMap
 
 void CPythonCharacterManager::RenderShadowAllInstances()
 {
-	std::for_each(m_kAliveInstMap.begin(), m_kAliveInstMap.end(), FCharacterManagerCharacterInstanceRenderToShadowMap());
+	CGrannyModelInstance::ms_bShadowSkipRigid = VTFMANAGER.IsInitialized();
+
+	for (auto* pkInst : m_kVct_pkShadowCasters)
+		pkInst->RenderToShadowMap();
+
+	CGrannyModelInstance::ms_bShadowSkipRigid = false;
+
+	VTFMANAGER.FlushDeferredShadowBatches();
 }
 
 struct FCharacterManagerCharacterInstanceRenderCollision
@@ -738,7 +1088,7 @@ struct CInstanceBase_SLessCameraDistance
 void CPythonCharacterManager::__SortPickedActorList()
 {
 	const CCamera * pCamera = CCameraManager::Instance().GetCurrentCamera();
-	const D3DXVECTOR3& c_rv3EyePos=pCamera->GetEye();
+	const Vector3& c_rv3EyePos=pCamera->GetEye();
 
 	CInstanceBase_SLessCameraDistance kLess;
 	kLess.m_kPPosEye=TPixelPosition(+c_rv3EyePos.x, -c_rv3EyePos.y, +c_rv3EyePos.z);
@@ -958,7 +1308,7 @@ void CPythonCharacterManager::__Initialize()
 	m_pkInstMain = nullptr;
 	m_pkInstBind = nullptr;
 	m_pkInstPick = nullptr;
-	m_v2PickedInstProjPos = D3DXVECTOR2(0.0f, 0.0f);
+	m_v2PickedInstProjPos = Vector2(0.0f, 0.0f);
 }
 
 CPythonCharacterManager::CPythonCharacterManager()
@@ -971,3 +1321,62 @@ CPythonCharacterManager::~CPythonCharacterManager()
 	Destroy();
 }
 
+
+namespace {
+	void __DeferShadowRigidParts(CInstanceBase* pkInst)
+	{
+		if (!pkInst) return;
+		CActorInstance& rkActor = pkInst->GetGraphicThingInstanceRef();
+		for (DWORD idx = 0; idx < rkActor.GetLODControllerCount(); ++idx)
+		{
+			CGrannyLODController* pLOD = rkActor.GetLODControllerPointer(idx);
+			if (!pLOD || !pLOD->isModelInstance()) continue;
+			CGrannyModelInstance* pModelInst = pLOD->GetCurrentModelInstance();
+			if (!pModelInst || pModelInst->IsEmpty()) continue;
+			if (pModelInst->HasRigidMeshes())
+			{
+				CGrannyModel* pModel = pModelInst->GetModel();
+				if (pModel)
+					VTFMANAGER.DeferRigidModelInstanceForShadow(pModel, pModelInst);
+			}
+		}
+	}
+}
+
+void CPythonCharacterManager::ResetCullingStats()
+{
+#ifdef ENABLE_FRUSTUM_CULLING
+	ms_iCulledCount = 0;
+	ms_iRenderedCount = 0;
+	ms_iTotalCount = 0;
+#endif
+#ifdef ENABLE_CHAR_RENDER_LIMIT
+	ms_iSkippedByLimit = 0;
+#endif
+#ifdef ENABLE_RENDER_MODE_GROUPING
+	ms_iRenderModeNormal = 0;
+	ms_iRenderModeBlend = 0;
+	ms_iRenderModeAdd = 0;
+	ms_iRenderModeModulate = 0;
+#endif
+}
+
+void CPythonCharacterManager::EndShadowCastersForFrame()
+{
+	m_kVct_pkShadowCasters.clear();
+	VTFMANAGER.ClearDeferredShadowBatches();
+}
+
+void CPythonCharacterManager::CollectShadowCastersForFrame()
+{
+	m_kVct_pkShadowCasters.clear();
+	VTFMANAGER.ClearDeferredShadowBatches();
+	for (const auto& entry : m_kAliveInstMap)
+	{
+#ifdef ENABLE_SHADOW_RENDER_LIMIT
+		if (SHADOW_RENDER_LIMIT_DEFAULT > 0 && m_kVct_pkShadowCasters.size() >= SHADOW_RENDER_LIMIT_DEFAULT) break;
+#endif
+		m_kVct_pkShadowCasters.push_back(entry.second);
+		if (VTFMANAGER.IsInitialized()) __DeferShadowRigidParts(entry.second);
+	}
+}

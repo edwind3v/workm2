@@ -28,20 +28,20 @@ class CGraphicObjectInstance : public CGraphicCollisionObject
 		virtual int GetType() const = 0;
 
 	public:
-		const D3DXVECTOR3 &		GetPosition() const;
-		const D3DXVECTOR3 &		GetScale() const;
+		const Vector3 &		GetPosition() const;
+		const Vector3 &		GetScale() const;
 		float					GetRotation() const;
 		float					GetYaw() const;
 		float					GetPitch() const;
 		float					GetRoll() const;
 
 		void					SetPosition(float x, float y, float z);
-		void					SetPosition(const D3DXVECTOR3& rv3Pos);
+		void					SetPosition(const Vector3& rv3Pos);
 		void					SetScale(float x, float y, float z);
 		void					SetRotation(float fRotation);
 		void					SetRotation(float fYaw, float fPitch, float fRoll);
-		void					SetRotationQuaternion(const D3DXQUATERNION &q);
-		void					SetRotationMatrix(const D3DXMATRIX & m);
+		void					SetRotationQuaternion(const Quaternion &q);
+		void					SetRotationMatrix(const Matrix & m);
 
 		void					Clear();
 		void					Update();
@@ -70,15 +70,18 @@ class CGraphicObjectInstance : public CGraphicCollisionObject
 		bool					isIntersect(const CRay & c_rRay, float * pu, float * pv, float * pt) const;
 
 		// Bounding Box
-		D3DXVECTOR4 &			GetWTBBoxVertex(const unsigned char & c_rucNumTBBoxVertex);
-		D3DXVECTOR3 &			GetTBBoxMin() { return m_v3TBBoxMin; }
-		D3DXVECTOR3 &			GetTBBoxMax() { return m_v3TBBoxMax; }
-		D3DXVECTOR3 &			GetBBoxMin() { return m_v3BBoxMin; }
-		D3DXVECTOR3 &			GetBBoxMax() { return m_v3BBoxMax; }
+		Vector4 &			GetWTBBoxVertex(const unsigned char & c_rucNumTBBoxVertex);
+		Vector3 &			GetTBBoxMin() { return m_v3TBBoxMin; }
+		Vector3 &			GetTBBoxMax() { return m_v3TBBoxMax; }
+		Vector3 &			GetBBoxMin() { return m_v3BBoxMin; }
+		Vector3 &			GetBBoxMax() { return m_v3BBoxMax; }
 
 		// Matrix
- 		D3DXMATRIX &			GetTransform();
-		const D3DXMATRIX&		GetWorldMatrix() const { return m_worldMatrix; }
+ 		Matrix &			GetTransform();
+		// Donor object code uses GetMatrix for this instance, not the global stack.
+		Matrix& GetMatrix() { return m_worldMatrix; }
+		const Matrix& GetMatrix() const { return m_worldMatrix; }
+		const Matrix&		GetWorldMatrix() const { return m_worldMatrix; }
 
 		// Portal
 		void					SetPortal(DWORD dwIndex, int iID);
@@ -92,7 +95,7 @@ class CGraphicObjectInstance : public CGraphicCollisionObject
 	public:
 		void					UpdateBoundingSphere();
 		void					RegisterBoundingSphere();
-		virtual bool			GetBoundingSphere(D3DXVECTOR3 & v3Center, float & fRadius) = 0;
+		virtual bool			GetBoundingSphere(Vector3 & v3Center, float & fRadius) = 0;
 
 		virtual void			OnRender() = 0;
 		virtual void			OnBlendRender() = 0;
@@ -104,29 +107,29 @@ class CGraphicObjectInstance : public CGraphicCollisionObject
 		virtual void			OnDeform(){}
 
 	protected:
-		D3DXVECTOR3				m_v3Position;
-		D3DXVECTOR3				m_v3Scale;
+		Vector3				m_v3Position;
+		Vector3				m_v3Scale;
 
 		float					m_fYaw;
 		float					m_fPitch;
 		float					m_fRoll;
 
-		D3DXMATRIX				m_mRotation;
+		Matrix				m_mRotation;
 
 		bool					m_isVisible;
 #ifdef __ENABLE_STEALTH_FIX__
 		bool					m_isAlwaysHidden;
 #endif
 
-		D3DXMATRIX				m_worldMatrix;
+		Matrix				m_worldMatrix;
 
 		// Camera Block
 		bool					m_BlockCamera;
 
 		// Bounding Box
-		D3DXVECTOR4				m_v4TBBox[8];
-		D3DXVECTOR3				m_v3TBBoxMin, m_v3TBBoxMax;
-		D3DXVECTOR3				m_v3BBoxMin, m_v3BBoxMax;
+		Vector4				m_v4TBBox[8];
+		Vector3				m_v3TBBoxMin, m_v3TBBoxMax;
+		Vector3				m_v3BBoxMin, m_v3BBoxMax;
 
 		// Portal
 		BYTE					m_abyPortalID[PORTAL_ID_MAX_NUM];
@@ -136,11 +139,11 @@ class CGraphicObjectInstance : public CGraphicCollisionObject
 
 	// Static Collision Data
 	public:
-		void					AddCollision(const CStaticCollisionData * pscd, const D3DXMATRIX * pMat);
+		void					AddCollision(const CStaticCollisionData * pscd, const Matrix * pMat);
 		void					ClearCollision();
 		bool					CollisionDynamicSphere(const CDynamicSphereInstance & s) const;
 		bool					MovementCollisionDynamicSphere(const CDynamicSphereInstance & s) const;
-		D3DXVECTOR3				GetCollisionMovementAdjust(const CDynamicSphereInstance & s) const;
+		Vector3				GetCollisionMovementAdjust(const CDynamicSphereInstance & s) const;
 
 		void					UpdateCollisionData(const CStaticCollisionDataVector * pscdVector = nullptr);
 
@@ -172,14 +175,14 @@ class CGraphicObjectInstance : public CGraphicCollisionObject
 	public:
 		void					SetScaleWorld(float x, float y, float z);
 		void					SetAcceScale(float x, float y, float z);
-		void					SetAcceScale(const D3DXVECTOR3& rv3Scale, BYTE bRace);
+		void					SetAcceScale(const Vector3& rv3Scale, BYTE bRace);
 
 	protected:
 		BYTE					m_bAttachedAcceRace{};
-		D3DXVECTOR3				m_v3ScaleAcce{};
-		D3DXMATRIX				m_matAbsoluteTrans{};
-		D3DXMATRIX				m_matScale{};
-		D3DXMATRIX				m_matScaleWorld{};
+		Vector3				m_v3ScaleAcce{};
+		Matrix				m_matAbsoluteTrans{};
+		Matrix				m_matScale{};
+		Matrix				m_matScaleWorld{};
 #endif
 };
 

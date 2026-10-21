@@ -19,12 +19,12 @@ float NEW_UnsignedDegreeToSignedDegree(float fUD)
 
 float NEW_GetSignedDegreeFromDirPixelPosition(const TPixelPosition& kPPosDir)
 {
-	const D3DXVECTOR3 vtDir(kPPosDir.x, -kPPosDir.y, kPPosDir.z);
-	D3DXVECTOR3 vtDirNormal;
-	D3DXVec3Normalize(&vtDirNormal, &vtDir);
+	const Vector3 vtDir(kPPosDir.x, -kPPosDir.y, kPPosDir.z);
+	Vector3 vtDirNormal;
+	Vec3Normalize(&vtDirNormal, &vtDir);
 
-	const D3DXVECTOR3 vtDirNormalStan(0, -1, 0);
-	float fDirRot = D3DXToDegree(acosf(D3DXVec3Dot(&vtDirNormal, &vtDirNormalStan)));
+	const Vector3 vtDirNormalStan(0, -1, 0);
+	float fDirRot = ToDegree(acosf(Vec3Dot(&vtDirNormal, &vtDirNormalStan)));
 
 	if (vtDirNormal.x<0.0f)
 		fDirRot=-fDirRot;
@@ -125,12 +125,12 @@ void CInstanceBase::NEW_GetRandomPositionInFanRange(CInstanceBase& rkInstTarget,
 
 	const float fRot=frandom(fDstDirRot-10.0f, fDstDirRot+10.0f);
 
-	D3DXMATRIX kMatRot;
-	D3DXMatrixRotationZ(&kMatRot, D3DXToRadian(-fRot));
+	Matrix kMatRot;
+	MatrixRotationZ(&kMatRot, ToRadian(-fRot));
 
-	const D3DXVECTOR3 v3Src(0.0f, 8000.0f, 0.0f);
-	D3DXVECTOR3 v3Pos;
-	D3DXVec3TransformCoord(&v3Pos, &v3Src, &kMatRot);
+	const Vector3 v3Src(0.0f, 8000.0f, 0.0f);
+	Vector3 v3Pos;
+	Vec3TransformCoord(&v3Pos, &v3Src, &kMatRot);
 
 	const TPixelPosition& c_rkPPosCur=NEW_GetCurPixelPositionRef();
 	//const TPixelPosition& c_rkPPosFront=rkInstTarget.NEW_GetCurPixelPositionRef();
@@ -530,12 +530,12 @@ BOOL CInstanceBase::CheckAdvancing()
 	}
 
 	CPythonBackground& rkBG=CPythonBackground::Instance();
-	const D3DXVECTOR3 & rv3Position = m_GraphicThingInstance.GetPosition();
-	const D3DXVECTOR3 & rv3MoveDirection = m_GraphicThingInstance.GetMovementVectorRef();
+	const Vector3 & rv3Position = m_GraphicThingInstance.GetPosition();
+	const Vector3 & rv3MoveDirection = m_GraphicThingInstance.GetMovementVectorRef();
 
-	const int iStep = int(D3DXVec3Length(&rv3MoveDirection) / 10.0f);
-	const D3DXVECTOR3 v3CheckStep = rv3MoveDirection / float(iStep);
-	D3DXVECTOR3 v3CheckPosition = rv3Position;
+	const int iStep = int(Vec3Length(&rv3MoveDirection) / 10.0f);
+	const Vector3 v3CheckStep = rv3MoveDirection / float(iStep);
+	Vector3 v3CheckPosition = rv3Position;
 	for (int j = 0; j < iStep; ++j)
 	{
 		v3CheckPosition += v3CheckStep;
@@ -549,7 +549,7 @@ BOOL CInstanceBase::CheckAdvancing()
 	}
 
 	// Check
-	const D3DXVECTOR3 v3NextPosition = rv3Position + rv3MoveDirection;
+	const Vector3 v3NextPosition = rv3Position + rv3MoveDirection;
 	if (rkBG.isAttrOn(v3NextPosition.x, -v3NextPosition.y, CTerrainImpl::ATTRIBUTE_BLOCK))
 	{
 		BlockMovement();

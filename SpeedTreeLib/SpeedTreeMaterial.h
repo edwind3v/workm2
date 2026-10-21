@@ -32,10 +32,21 @@
 ///////////////////////////////////////////////////////////////////////
 //	Include Files
 
-#include <d3d9.h>
-#include <d3d9types.h>
-#include <d3dx9.h>
-#include "../eterLib/StateManager.h"
+#include <d3d11.h>
+#include <DirectXMath.h>
+#include "../eterLib/GrpMathType.h"
+#include "../eterLib/GrpMathFunc.h"
+
+// SpeedTree Material struct
+struct SSpeedTreeMaterial
+{
+	Color Diffuse;
+	Color Ambient;
+	Color Specular;
+	Color Emissive;
+	float Power;
+	float _pad[3];
+};
 
 ///////////////////////////////////////////////////////////////////////
 //	class CSpeedTreeMaterial declaration/definiton
@@ -54,27 +65,35 @@ class CSpeedTreeMaterial
 
 		void Set(const float * pMaterialArray)
 		{
-			memcpy(&m_cMaterial.Diffuse, pMaterialArray, 3 * sizeof(float));
+			m_cMaterial.Diffuse.r = pMaterialArray[0];
+			m_cMaterial.Diffuse.g = pMaterialArray[1];
+			m_cMaterial.Diffuse.b = pMaterialArray[2];
 			m_cMaterial.Diffuse.a = 1.0f;
 
-			memcpy(&m_cMaterial.Ambient, pMaterialArray + 3, 3 * sizeof(float));
+			m_cMaterial.Ambient.r = pMaterialArray[3];
+			m_cMaterial.Ambient.g = pMaterialArray[4];
+			m_cMaterial.Ambient.b = pMaterialArray[5];
 			m_cMaterial.Ambient.a = 1.0f;
 
-			memcpy(&m_cMaterial.Specular, pMaterialArray + 6, 3 * sizeof(float));
+			m_cMaterial.Specular.r = pMaterialArray[6];
+			m_cMaterial.Specular.g = pMaterialArray[7];
+			m_cMaterial.Specular.b = pMaterialArray[8];
 			m_cMaterial.Specular.a = 1.0f;
 
-			memcpy(&m_cMaterial.Emissive, pMaterialArray + 9, 3 * sizeof(float));
+			m_cMaterial.Emissive.r = pMaterialArray[9];
+			m_cMaterial.Emissive.g = pMaterialArray[10];
+			m_cMaterial.Emissive.b = pMaterialArray[11];
 			m_cMaterial.Emissive.a = 1.0f;
 
 			m_cMaterial.Power = pMaterialArray[12];
 		}
 
-		void Activate(const LPDIRECT3DDEVICE9& pDx) const
+		SSpeedTreeMaterial* Get()
 		{
-			STATEMANAGER.SetMaterial(&m_cMaterial);
+			return &m_cMaterial;
 		}
 
 	private:
-		D3DMATERIAL9 m_cMaterial;	// the material object
+		SSpeedTreeMaterial m_cMaterial;	// the material object
 };
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

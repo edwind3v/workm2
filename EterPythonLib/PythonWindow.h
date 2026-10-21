@@ -478,7 +478,7 @@ namespace UI
 
 			void SetDelay(int iDelay);
 			#ifdef ENABLE_HIGHLIGHT_NEW_ITEM
-			void SetDiffuseColor(const D3DXCOLOR& color) const;
+			void SetDiffuseColor(const Color& color) const;
 			void SetDiffuseColor(float r, float g, float b, float a) const;
 			#endif
 			void AppendImage(const char * c_szFileName);
@@ -647,7 +647,7 @@ namespace UI
 		void OnEndMove();
 		void OnChangePosition();
 
-		D3DXVECTOR2 m_v2SrcPos, m_v2DstPos, m_v2NextPos, m_v2Direction, m_v2NextDistance;
+		Vector2 m_v2SrcPos, m_v2DstPos, m_v2NextPos, m_v2Direction, m_v2NextDistance;
 		float m_fDistance, m_fMoveSpeed;
 		bool m_bIsMove;
 	};
@@ -673,7 +673,7 @@ namespace UI
 		virtual void OnRender();
 		virtual void OnEndMove();
 
-		D3DXVECTOR2 m_v2SrcPos, m_v2DstPos, m_v2NextPos, m_v2Direction, m_v2NextDistance;
+		Vector2 m_v2SrcPos, m_v2DstPos, m_v2NextPos, m_v2Direction, m_v2NextDistance;
 		float m_fDistance, m_fMoveSpeed;
 		bool m_bIsMove;
 	};
@@ -696,7 +696,7 @@ namespace UI
 		virtual void OnUpdate();
 
 		float m_fMaxScale, m_fMaxScaleRate, m_fScaleDistance, m_fAdditionalScale;
-		D3DXVECTOR2 m_v2CurScale;
+		Vector2 m_v2CurScale;
 	};
 #endif
 };

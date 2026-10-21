@@ -3,7 +3,7 @@
 #include "GrpBase.h"
 #include "GrpDib.h"
 #include "../eterbase/Stl.h"
-#include "../eterlib/StateManager.h"
+#include "../eterlib/ShaderManager.h"
 
 void CBlockTexture::SetClipRect(const RECT & c_rRect)
 {
@@ -11,7 +11,7 @@ void CBlockTexture::SetClipRect(const RECT & c_rRect)
 	m_clipRect = c_rRect;
 }
 
-void CBlockTexture::Render(int ix, int iy) const
+void CBlockTexture::Render(int ix, int iy)
 {
 	int isx = ix + m_rect.left;
 	int isy = iy + m_rect.top;
@@ -37,52 +37,52 @@ void CBlockTexture::Render(int ix, int iy) const
 
 		if (m_clipRect.left > isx)
 		{
-			const int idx = m_clipRect.left - isx;
+			int idx = m_clipRect.left - isx;
 			isx += idx;
 			su += float(idx) / float(m_dwWidth);
 		}
 		if (iex > m_clipRect.right)
 		{
-			const int idx = iex - m_clipRect.right;
+			int idx = iex - m_clipRect.right;
 			iex -= idx;
 			eu -= float(idx) / float(m_dwWidth);
 		}
 
 		if (m_clipRect.top > isy)
 		{
-			const int idy = m_clipRect.top - isy;
+			int idy = m_clipRect.top - isy;
 			isy += idy;
 			sv += float(idy) / float(m_dwHeight);
 		}
 		if (iey > m_clipRect.bottom)
 		{
-			const int idy = iey - m_clipRect.bottom;
+			int idy = iey - m_clipRect.bottom;
 			iey -= idy;
 			ev -= float(idy) / float(m_dwHeight);
 		}
 	}
 
 	TPDTVertex vertices[4];
-	vertices[0].position.x	= isx - 0.5f;
-	vertices[0].position.y	= isy - 0.5f;
+	vertices[0].position.x	= (float)isx;
+	vertices[0].position.y	= (float)isy;
 	vertices[0].position.z	= 0.0f;
 	vertices[0].texCoord	= TTextureCoordinate(su, sv);
 	vertices[0].diffuse		= 0xffffffff;
 
-	vertices[1].position.x	= iex - 0.5f;
-	vertices[1].position.y	= isy - 0.5f;
+	vertices[1].position.x	= (float)iex;
+	vertices[1].position.y	= (float)isy;
 	vertices[1].position.z	= 0.0f;
 	vertices[1].texCoord	= TTextureCoordinate(eu, sv);
 	vertices[1].diffuse		= 0xffffffff;
 
-	vertices[2].position.x	= isx - 0.5f;
-	vertices[2].position.y	= iey - 0.5f;
+	vertices[2].position.x	= (float)isx;
+	vertices[2].position.y	= (float)iey;
 	vertices[2].position.z	= 0.0f;
 	vertices[2].texCoord	= TTextureCoordinate(su, ev);
 	vertices[2].diffuse		= 0xffffffff;
 
-	vertices[3].position.x	= iex - 0.5f;
-	vertices[3].position.y	= iey - 0.5f;
+	vertices[3].position.x	= (float)iex;
+	vertices[3].position.y	= (float)iey;
 	vertices[3].position.z	= 0.0f;
 	vertices[3].texCoord	= TTextureCoordinate(eu, ev);
 	vertices[3].diffuse		= 0xffffffff;
@@ -91,16 +91,21 @@ void CBlockTexture::Render(int ix, int iy) const
 	{
 		CGraphicBase::SetDefaultIndexBuffer(CGraphicBase::DEFAULT_IB_FILL_RECT);
 
-		STATEMANAGER.SetTexture(0, m_lpd3dTexture);
-		STATEMANAGER.SetTexture(1, nullptr);
-		STATEMANAGER.SetFVF(D3DFVF_XYZ|D3DFVF_TEX1|D3DFVF_DIFFUSE);
-		STATEMANAGER.DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 4, 0, 2, 0);
+		if (SHADERMANAGER.IsInitialized())
+		{
+			SHADERMANAGER.BeginUI();
+			SHADERMANAGER.CommitChanges();
+		}
+
+		SHADERMANAGER.SetShaderResource(0, m_pSRV);
+		SHADERMANAGER.SetShaderResource(1, NULL);
+		SHADERMANAGER.DrawIndexed(TOPOLOGY_TRIANGLELIST, 0, 4, 0, 2);
 	}
 }
 
-void CBlockTexture::InvalidateRect(const RECT & c_rsrcRect) const
+void CBlockTexture::InvalidateRect(const RECT & c_rsrcRect)
 {
-	const RECT dstRect = m_rect;
+	RECT dstRect = m_rect;
 	if (c_rsrcRect.right < dstRect.left ||
 		c_rsrcRect.left > dstRect.right ||
 		c_rsrcRect.bottom < dstRect.top ||
@@ -123,39 +128,72 @@ void CBlockTexture::InvalidateRect(const RECT & c_rsrcRect) const
 	pdwSrc = (DWORD *)m_pDIB->GetPointer();
 	pdwSrc += dstRect.left + dstRect.top*m_pDIB->GetWidth();
 
-	D3DLOCKED_RECT lockedRect;
-	if (FAILED(m_lpd3dTexture->LockRect(0, &lockedRect, &clipRect, 0)))
+	D3D11_MAPPED_SUBRESOURCE mappedResource;
+	if (FAILED(ms_pContext->Map(m_pTexture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource)))
 	{
-		Tracef("InvalidateRect() - Failed to LockRect");
+		Tracef("InvalidateRect() - Failed to Map texture");
 		return;
 	}
 
-	const int iclipWidth = clipRect.right - clipRect.left;
-	const int iclipHeight = clipRect.bottom - clipRect.top;
-	auto pdwDst = (DWORD *)lockedRect.pBits;
-	const DWORD dwDstWidth = lockedRect.Pitch>>2;
-	const DWORD dwSrcWidth = m_pDIB->GetWidth();
-	for (int i = 0; i < iclipHeight; ++i)
+	int iclipWidth = clipRect.right - clipRect.left;
+	int iclipHeight = clipRect.bottom - clipRect.top;
+	DWORD * pdwDst = (DWORD *)mappedResource.pData;
+	DWORD dwDstWidth = mappedResource.RowPitch >> 2;
+	DWORD dwSrcWidth = m_pDIB->GetWidth();
+
+	// Offset to the clip region
+	pdwDst += clipRect.left + clipRect.top * dwDstWidth;
+	pdwSrc += clipRect.left + clipRect.top * dwSrcWidth;
+
+	for (int y = 0; y < iclipHeight; ++y)
 	{
-		for (int i = 0; i < iclipWidth; ++i)
+		for (int x = 0; x < iclipWidth; ++x)
 		{
-			if (pdwSrc[i])
-				pdwDst[i] = pdwSrc[i] | 0xff000000;
+			if (pdwSrc[x])
+				pdwDst[x] = pdwSrc[x] | 0xff000000;
 			else
-				pdwDst[i] = 0;
+				pdwDst[x] = 0;
 		}
 		pdwDst += dwDstWidth;
 		pdwSrc += dwSrcWidth;
 	}
 
-	m_lpd3dTexture->UnlockRect(0);
+	ms_pContext->Unmap(m_pTexture, 0);
 }
 
 bool CBlockTexture::Create(CGraphicDib * pDIB, const RECT & c_rRect, DWORD dwWidth, DWORD dwHeight)
 {
-	if (FAILED(ms_lpd3dDevice->CreateTexture(dwWidth, dwHeight, 0, D3DUSAGE_DYNAMIC, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &m_lpd3dTexture, nullptr)))
+	D3D11_TEXTURE2D_DESC texDesc = {};
+	texDesc.Width = dwWidth;
+	texDesc.Height = dwHeight;
+	texDesc.MipLevels = 1;
+	texDesc.ArraySize = 1;
+	texDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+	texDesc.SampleDesc.Count = 1;
+	texDesc.SampleDesc.Quality = 0;
+	texDesc.Usage = D3D11_USAGE_DYNAMIC;
+	texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+	texDesc.MiscFlags = 0;
+
+	if (FAILED(ms_pDevice->CreateTexture2D(&texDesc, nullptr, &m_pTexture)))
 	{
 		Tracef("Failed to create block texture %u, %u\n", dwWidth, dwHeight);
+		return false;
+	}
+
+	// Create shader resource view
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	srvDesc.Format = texDesc.Format;
+	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Texture2D.MostDetailedMip = 0;
+	srvDesc.Texture2D.MipLevels = 1;
+
+	if (FAILED(ms_pDevice->CreateShaderResourceView(m_pTexture, &srvDesc, &m_pSRV)))
+	{
+		m_pTexture->Release();
+		m_pTexture = nullptr;
+		Tracef("Failed to create SRV for block texture %u, %u\n", dwWidth, dwHeight);
 		return false;
 	}
 
@@ -170,13 +208,21 @@ bool CBlockTexture::Create(CGraphicDib * pDIB, const RECT & c_rRect, DWORD dwWid
 
 CBlockTexture::CBlockTexture()
 {
-	m_pDIB = nullptr;
-	m_lpd3dTexture = nullptr;
+	m_pDIB = NULL;
+	m_pTexture = nullptr;
+	m_pSRV = nullptr;
 }
 
 CBlockTexture::~CBlockTexture()
 {
-	safe_release(m_lpd3dTexture);
-	m_lpd3dTexture = nullptr;
+	if (m_pSRV)
+	{
+		m_pSRV->Release();
+		m_pSRV = nullptr;
+	}
+	if (m_pTexture)
+	{
+		m_pTexture->Release();
+		m_pTexture = nullptr;
+	}
 }
-

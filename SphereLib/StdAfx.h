@@ -4,8 +4,13 @@
 //#define SPHERELIB_STRICT
 //#include <crtdbg.h>
 
-#include <d3d9.h>
-#include <d3dx9.h>
+#include "../UserInterface/Locale_inc.h"
+
+// DX11 includes
+#include <d3d11.h>
+#include <DirectXMath.h>
+#include "../EterLib/GrpMathType.h"
+#include "../EterLib/GrpMathFunc.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,4 +20,3 @@
 
 #include "../eterBase/StdAfx.h"
 #include "../UserInterface/Locale_inc.h"
-

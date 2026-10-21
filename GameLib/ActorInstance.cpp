@@ -2,10 +2,9 @@
 #include "ActorInstance.h"
 #include "AreaTerrain.h"
 #include "RaceData.h"
-#include "../SpeedTreeLib/CSpeedTreeDirectX.h"
+#include "../SpeedTreeLib/SpeedTreeForestDX11.h"
 #include "../SpeedTreeLib/SpeedTreeWrapper.h"
 #include "GameLibDefines.h"
-#include "../eterLib/DX11GrannyProbe.h"
 #ifdef ENABLE_RACE_HEIGHT
 #include "RaceManager.h"
 #endif
@@ -21,13 +20,7 @@ enum
 
 void CActorInstance::INSTANCEBASE_Deform()
 {
-	// In composite preview mode capture only the main player's active Granny
-	// body/costume/equipment parts, all from the same deformation frame.
-	if (m_isMain)
-		graphics::BeginDX11PrimaryCharacterCapture();
 	Deform();
-	if (m_isMain)
-		graphics::EndDX11PrimaryCharacterCapture();
 	TraceProcess();
 }
 
@@ -209,7 +202,7 @@ void CActorInstance::SetMoveSpeed(float fMovSpd)
 	}
 }
 
-void CActorInstance::SetFishingPosition(D3DXVECTOR3 & rv3Position)
+void CActorInstance::SetFishingPosition(Vector3 & rv3Position)
 {
 	m_v3FishingPosition = rv3Position;
 }
@@ -473,8 +466,8 @@ void CActorInstance::__AccumulationMovement(float fRot)
 	if (CRaceMotionData::NAME_WAIT == __GetCurrentMotionIndex())
 		return;
 
-	D3DXMATRIX s_matRotationZ;
-	D3DXMatrixRotationZ(&s_matRotationZ, D3DXToRadian(fRot));
+	Matrix s_matRotationZ;
+	MatrixRotationZ(&s_matRotationZ, ToRadian(fRot));
 	UpdateTransform(&s_matRotationZ, GetAverageSecondElapsed());
 
 	AddMovement(s_matRotationZ._41, s_matRotationZ._42, s_matRotationZ._43);
@@ -518,7 +511,7 @@ void CActorInstance::OnUpdateCollisionData(const CStaticCollisionDataVector * ps
 	for(it = pscdVector->begin();it!=pscdVector->end();++it)
 	{
 		const CStaticCollisionData & c_rColliData = *it;
-		const D3DXMATRIX & c_rMatrix = GetTransform();
+		const Matrix & c_rMatrix = GetTransform();
 		AddCollision(&c_rColliData, &c_rMatrix);
 	}
 }
@@ -622,7 +615,7 @@ void CActorInstance::AdjustDynamicCollisionMovement(const CActorInstance * c_pAc
 	{
 		BlockMovement();
 
-	/*	m_v3Movement = D3DXVECTOR3(0.f,0.f,0.f);
+	/*	m_v3Movement = Vector3(0.f,0.f,0.f);
 
 		TCollisionPointInstanceListIterator itMain = m_BodyPointInstanceList.begin();
 		for (; itMain != m_BodyPointInstanceList.end(); ++itMain)
@@ -637,7 +630,7 @@ void CActorInstance::AdjustDynamicCollisionMovement(const CActorInstance * c_pAc
 	}
 	else
 	{
-		float move_length = D3DXVec3Length(&m_v3Movement);
+		float move_length = Vec3Length(&m_v3Movement);
 		if (move_length>gc_fActorSlideMoveSpeed)
 			m_v3Movement*=gc_fActorSlideMoveSpeed/move_length;
 
@@ -655,13 +648,13 @@ void CActorInstance::AdjustDynamicCollisionMovement(const CActorInstance * c_pAc
 					CSphereCollisionInstance s;
 					s.GetAttribute().fRadius=itOpp->SphereInstanceVector[0].fRadius;
 					s.GetAttribute().v3Position=itOpp->SphereInstanceVector[0].v3Position;
-					const D3DXVECTOR3 v3Delta = s.GetCollisionMovementAdjust(c_rMainSphere);
+					const Vector3 v3Delta = s.GetCollisionMovementAdjust(c_rMainSphere);
 					m_v3Movement+=v3Delta;
 					c_rMainSphere.v3Position+=v3Delta;
 
 					if (v3Delta.x !=0.0f || v3Delta.y !=0.0f || v3Delta.z !=0.0f )
 					{
-						move_length = D3DXVec3Length(&m_v3Movement);
+						move_length = Vec3Length(&m_v3Movement);
 						if (move_length>gc_fActorSlideMoveSpeed)
 						{
 							m_v3Movement*=gc_fActorSlideMoveSpeed/move_length;
@@ -686,7 +679,7 @@ void CActorInstance::__AdjustCollisionMovement(const CGraphicObjectInstance * c_
 	if (m_v3Movement.x == 0.0f && m_v3Movement.y == 0.0f && m_v3Movement.z == 0.0f)
 		return;
 
-	float move_length = D3DXVec3Length(&m_v3Movement);
+	float move_length = Vec3Length(&m_v3Movement);
 	if (move_length>gc_fActorSlideMoveSpeed)
 		m_v3Movement*=gc_fActorSlideMoveSpeed/move_length;
 
@@ -698,13 +691,13 @@ void CActorInstance::__AdjustCollisionMovement(const CGraphicObjectInstance * c_
 		{
 			CDynamicSphereInstance & c_rMainSphere = c_rMainSphereVector[i];
 
-			const D3DXVECTOR3 v3Delta = c_pGraphicObjectInstance->GetCollisionMovementAdjust(c_rMainSphere);
+			const Vector3 v3Delta = c_pGraphicObjectInstance->GetCollisionMovementAdjust(c_rMainSphere);
 			m_v3Movement+=v3Delta;
 			c_rMainSphere.v3Position+=v3Delta;
 
 			if (v3Delta.x !=0.0f || v3Delta.y !=0.0f || v3Delta.z !=0.0f )
 			{
-				move_length = D3DXVec3Length(&m_v3Movement);
+				move_length = Vec3Length(&m_v3Movement);
 				if (move_length>gc_fActorSlideMoveSpeed)
 				{
 					m_v3Movement*=gc_fActorSlideMoveSpeed/move_length;
@@ -715,7 +708,7 @@ void CActorInstance::__AdjustCollisionMovement(const CGraphicObjectInstance * c_
 
 			/*if (c_pObjectInstance->CollisionDynamicSphere(c_rMainSphere))
 			{
-				const D3DXVECTOR3 & c_rv3Position = c_pObjectInstance->GetPosition();
+				const Vector3 & c_rv3Position = c_pObjectInstance->GetPosition();
 				//if (GetVector3Distance(c_rMainSphere.v3Position, c_rv3Position) <
 				//	GetVector3Distance(c_rMainSphere.v3LastPosition, c_rv3Position))
 				{
@@ -774,18 +767,18 @@ bool CActorInstance::IntersectDefendingSphere()
 		for (; it2 != rSphereInstanceVector.end(); ++it2)
 		{
 			const CDynamicSphereInstance & rInstance = *it2;
-			D3DXVECTOR3 v3SpherePosition = rInstance.v3Position;
+			Vector3 v3SpherePosition = rInstance.v3Position;
 			const float fRadius = rInstance.fRadius;
 
-			D3DXVECTOR3 v3Orig;
-			D3DXVECTOR3 v3Dir;
+			Vector3 v3Orig;
+			Vector3 v3Dir;
 			float fRange;
 			ms_Ray.GetStartPoint(&v3Orig);
 			ms_Ray.GetDirection(&v3Dir, &fRange);
 
-			D3DXVECTOR3 v3Distance = v3Orig - v3SpherePosition;
-			const float b = D3DXVec3Dot(&v3Dir, &v3Distance);
-			const float c = D3DXVec3Dot(&v3Distance, &v3Distance) - fRadius*fRadius;
+			Vector3 v3Distance = v3Orig - v3SpherePosition;
+			const float b = Vec3Dot(&v3Dir, &v3Distance);
+			const float c = Vec3Dot(&v3Distance, &v3Distance) - fRadius*fRadius;
 
 			if (b*b - c >= 0)
 				return true;
@@ -819,7 +812,7 @@ void CActorInstance::__CreateTree(const char * c_szFileName)
 	StringPath(c_szFileName, strFileName); //@fixme030
 	const DWORD dwCRC32 = GetCaseCRC32(strFileName.c_str(), strFileName.size());
 
-	CSpeedTreeForest& rkForest = CSpeedTreeForest::Instance();
+	CSpeedTreeForest& rkForest = CSpeedTreeForestDX11::Instance();
 	m_pkTree=rkForest.CreateInstance(m_x, m_y, m_z, dwCRC32, c_szFileName);
 	m_pkTree->SetPosition(m_x, m_y, m_z);
 	m_pkTree->UpdateBoundingSphere();
@@ -831,7 +824,7 @@ void CActorInstance::__DestroyTree() const
 	if (!m_pkTree)
 		return;
 
-	CSpeedTreeForest::Instance().DeleteInstance(m_pkTree);
+	CSpeedTreeForestDX11::Instance().DeleteInstance(m_pkTree);
 }
 
 void CActorInstance::__SetTreePosition(float fx, float fy, float fz) const
@@ -908,7 +901,7 @@ void CActorInstance::__InitializeStateData()
 
 	m_iRenderMode = RENDER_MODE_NORMAL;
 	m_fAlphaValue = 0.0f;
-	m_AddColor = D3DXCOLOR(0.0f, 0.0f, 0.0f, 1.0f);
+	m_AddColor = Color(0.0f, 0.0f, 0.0f, 1.0f);
 
 	m_dwMtrlColor=0xffffffff;
 	m_dwMtrlAlpha=0xff000000;
@@ -966,7 +959,7 @@ void CActorInstance::__Initialize()
 
 	m_pFlyEventHandler = nullptr;
 
-	m_v3FishingPosition = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
+	m_v3FishingPosition = Vector3(0.0f, 0.0f, 0.0f);
 	m_iFishingEffectID = -1;
 
 	m_pkHorse = nullptr;

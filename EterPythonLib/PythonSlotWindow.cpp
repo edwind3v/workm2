@@ -378,7 +378,7 @@ BOOL CSlotWindow::HasSlot(DWORD dwIndex)
 	return TRUE;
 }
 
-void CSlotWindow::SetSlot(DWORD dwIndex, DWORD dwVirtualNumber, BYTE byWidth, BYTE byHeight, CGraphicImage * pImage, D3DXCOLOR& diffuseColor)
+void CSlotWindow::SetSlot(DWORD dwIndex, DWORD dwVirtualNumber, BYTE byWidth, BYTE byHeight, CGraphicImage * pImage, Color& diffuseColor)
 {
 	TSlot * pSlot;
 	if (!GetSlotPointer(dwIndex, &pSlot))
@@ -505,7 +505,7 @@ void CSlotWindow::SetSlotCoolTime(DWORD dwIndex, float fCoolTime, float fElapsed
 	pSlot->fStartCoolTime = CTimer::Instance().GetCurrentSecond() - fElapsedTime;
 }
 
-void CSlotWindow::ActivateSlot(DWORD dwIndex, const D3DXCOLOR & color)
+void CSlotWindow::ActivateSlot(DWORD dwIndex, const Color & color)
 {
 	TSlot * pSlot;
 	if (!GetSlotPointer(dwIndex, &pSlot))
@@ -1646,26 +1646,26 @@ void CSlotWindow::SetSlotDiffuseColor(DWORD dwIndex, int iColorType)
 	switch (iColorType)
 	{
 	case COLOR_TYPE_ORANGE:
-		pSlot->d3Color = D3DXCOLOR(1.0f, 0.34509805f, 0.035294119f, 0.5f);
+		pSlot->d3Color = Color(1.0f, 0.34509805f, 0.035294119f, 0.5f);
 		break;
 	case COLOR_TYPE_RED:
-		pSlot->d3Color = D3DXCOLOR(1.0f, 0.0f, 0.0f, 0.5f);
+		pSlot->d3Color = Color(1.0f, 0.0f, 0.0f, 0.5f);
 		break;
 	case COLOR_TYPE_GREEN:
-		pSlot->d3Color = D3DXCOLOR(0.0f, 1.0f, 0.0f, 0.5f);
+		pSlot->d3Color = Color(0.0f, 1.0f, 0.0f, 0.5f);
 		break;
 	case COLOR_TYPE_YELLOW:
-		pSlot->d3Color = D3DXCOLOR(1.0f, 1.0f, 0.0f, 0.5f);
+		pSlot->d3Color = Color(1.0f, 1.0f, 0.0f, 0.5f);
 		break;
 	case COLOR_TYPE_SKY:
-		pSlot->d3Color = D3DXCOLOR(0.0f, 1.0f, 1.0f, 0.5f);
+		pSlot->d3Color = Color(0.0f, 1.0f, 1.0f, 0.5f);
 		break;
 	case COLOR_TYPE_PINK:
-		pSlot->d3Color = D3DXCOLOR(1.0f, 0.0f, 1.0f, 0.5f);
+		pSlot->d3Color = Color(1.0f, 0.0f, 1.0f, 0.5f);
 		break;
 	case COLOR_TYPE_WHITE:
 	default:
-		pSlot->d3Color = D3DXCOLOR(1.0f, 1.0f, 1.0f, 0.5f);
+		pSlot->d3Color = Color(1.0f, 1.0f, 1.0f, 0.5f);
 		break;
 	}
 }

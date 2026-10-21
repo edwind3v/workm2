@@ -1,6 +1,6 @@
 #include "StdAfx.h"
 #include "GrpTextInstance.h"
-#include "StateManager.h"
+#include "ShaderManager.h"
 #include "TextPerformance.h"
 #include "IME.h"
 #include "TextTag.h"
@@ -44,7 +44,7 @@ namespace
 		{
 			if (!batch.first || !batch.first->GetD3DTexture())
 				continue;
-			STATEMANAGER.SetTexture(0, batch.first->GetD3DTexture());
+			SHADERMANAGER.SetShaderResource(0, batch.first->GetD3DTexture());
 			for (std::size_t offset = 0; offset < batch.second.size(); )
 			{
 				const UINT count = static_cast<UINT>(std::min<std::size_t>(
@@ -54,7 +54,7 @@ namespace
 				{
 					if (profileWorld) CTextPerformance::Get().Add(CTextPerformance::Draws);
 					if (profileWorld) CTextPerformance::Get().Add(CTextPerformance::UploadBytes, count * sizeof(SPDTVertexRaw));
-					STATEMANAGER.DrawPrimitive(D3DPT_TRIANGLELIST, 0, count / 3);
+					SHADERMANAGER.Draw(TOPOLOGY_TRIANGLELIST, 0, count / 3);
 				}
 				offset += count;
 			}
@@ -717,20 +717,19 @@ void CGraphicTextInstance::Render(RECT * pClipRect)
 			break;
 	}
 
-	STATEMANAGER.SaveRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-	STATEMANAGER.SaveRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
-	DWORD dwFogEnable = STATEMANAGER.GetRenderState(D3DRS_FOGENABLE);
-	DWORD dwLighting = STATEMANAGER.GetRenderState(D3DRS_LIGHTING);
-	STATEMANAGER.SetRenderState(D3DRS_FOGENABLE, FALSE);
-	STATEMANAGER.SetRenderState(D3DRS_LIGHTING, FALSE);
-
-	STATEMANAGER.SetFVF(D3DFVF_XYZ|D3DFVF_DIFFUSE|D3DFVF_TEX1);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG1,	D3DTA_TEXTURE);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG2,	D3DTA_DIFFUSE);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLOROP,	D3DTOP_MODULATE);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG1,	D3DTA_TEXTURE);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG2,	D3DTA_DIFFUSE);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAOP,	D3DTOP_MODULATE);
+	// Native DX11 pixel centers are at half-integers; align glyph edges to pixels.
+	fStanX = floorf(fStanX + 0.5f);
+	fStanY = floorf(fStanY + 0.5f);
+	SHADERMANAGER.PushState();
+	SHADERMANAGER.BeginUI();
+        SHADERMANAGER.SetTwoTextureBlend(false);
+        SHADERMANAGER.SetAlphaTestEnabled(false);
+	SHADERMANAGER.SetFogEnabled(false);
+	SHADERMANAGER.SetLightingEnabled(false);
+	SHADERMANAGER.SetPipelineState(PSTATE_BLENDENABLE, TRUE);
+	SHADERMANAGER.SetPipelineState(PSTATE_SRCBLEND, BLEND_SRCALPHA);
+	SHADERMANAGER.SetPipelineState(PSTATE_DESTBLEND, BLEND_INVSRCALPHA);
+	SHADERMANAGER.SetDiffuseColor(1, 1, 1, 1);
 
 #ifdef ENABLE_FIX_MOBS_LAG
 	{
@@ -762,8 +761,8 @@ void CGraphicTextInstance::Render(RECT * pClipRect)
 				continue;
 			}
 
-			float left = currentX - 0.5f;
-			float top = currentY - 0.5f;
+			float left = currentX;
+			float top = currentY;
 			float right = left + width;
 			float bottom = top + height;
 			float uLeft = info->left;
@@ -913,8 +912,8 @@ void CGraphicTextInstance::Render(RECT * pClipRect)
 				}
 #endif
 
-				fFontSx=fCurXoutLine-0.5f;
-				fFontSy=fCurYoutline-0.5f;
+				fFontSx=fCurXoutLine;
+				fFontSy=fCurYoutline;
 				fFontEx=fFontSx+fFontWidth;
 				fFontEy=fFontSy+fFontHeight;
 
@@ -1086,10 +1085,10 @@ void CGraphicTextInstance::Render(RECT * pClipRect)
 				if (m_pCharInfoVector.size() > 0)
 				{
 					pFontTexture->SelectTexture(m_pCharInfoVector[0]->index);
-					STATEMANAGER.SetTexture(0, pFontTexture->GetD3DTexture());
+					SHADERMANAGER.SetShaderResource(0, pFontTexture->GetD3DTexture());
 				}
 				if (CGraphicBase::SetPDTTextLineStream((SPDTVertexRaw*)akVertex, iSize))
-					STATEMANAGER.DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, iDrawSize);
+					SHADERMANAGER.Draw(TOPOLOGY_TRIANGLESTRIP, 0, iDrawSize);
 			}
 		}
 
@@ -1140,8 +1139,8 @@ void CGraphicTextInstance::Render(RECT * pClipRect)
 			}
 #endif
 
-			fFontSx=fCurX-0.5f;
-			fFontSy=fCurY-0.5f;
+			fFontSx=fCurX;
+			fFontSy=fCurY;
 			fFontEx=fFontSx+fFontWidth;
 			fFontEy=fFontSy+fFontHeight;
 
@@ -1281,10 +1280,10 @@ void CGraphicTextInstance::Render(RECT * pClipRect)
 			if (m_pCharInfoVector.size() > 0)
 			{
 				pFontTexture->SelectTexture(m_pCharInfoVector[0]->index);
-				STATEMANAGER.SetTexture(0, pFontTexture->GetD3DTexture());
+				SHADERMANAGER.SetShaderResource(0, pFontTexture->GetD3DTexture());
 			}
 			if (CGraphicBase::SetPDTTextLineStream((SPDTVertexRaw*)akVertex, iSize))
-				STATEMANAGER.DrawPrimitive(D3DPT_TRIANGLESTRIP, 0, iDrawSize);
+				SHADERMANAGER.Draw(TOPOLOGY_TRIANGLESTRIP, 0, iDrawSize);
 		}
 	}
 
@@ -1367,11 +1366,11 @@ void CGraphicTextInstance::Render(RECT * pClipRect)
 		vertices[2].position = TPosition(sx, ey, 0.0f);
 		vertices[3].position = TPosition(ex, ey, 0.0f);
 
-		STATEMANAGER.SetTexture(0, nullptr);
+		SHADERMANAGER.SetDefaultTexture(0);
 
 		CGraphicBase::SetDefaultIndexBuffer(CGraphicBase::DEFAULT_IB_FILL_RECT);
 		if (CGraphicBase::SetPDTStream(vertices, 4))
-			STATEMANAGER.DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 4, 0, 2, 0);
+			SHADERMANAGER.DrawIndexed(TOPOLOGY_TRIANGLELIST, 0, 4, 0, 2, 0);
 
 		int ulbegin = CIME::GetULBegin();
 		int ulend = CIME::GetULEnd();
@@ -1412,15 +1411,11 @@ void CGraphicTextInstance::Render(RECT * pClipRect)
 			vertices[2].position = TPosition(sx, ey, 0.0f);
 			vertices[3].position = TPosition(ex, ey, 0.0f);
 
-			STATEMANAGER.DrawIndexedPrimitiveUP(D3DPT_TRIANGLELIST, 0, 4, 2, c_FillRectIndices, D3DFMT_INDEX16, vertices, sizeof(TPDTVertex));
+			SHADERMANAGER.DrawIndexedDynamic(TOPOLOGY_TRIANGLELIST, 0, 4, 2, c_FillRectIndices, DXGI_FORMAT_R16_UINT, vertices, sizeof(TPDTVertex));
 		}
 	}
 
-	STATEMANAGER.RestoreRenderState(D3DRS_SRCBLEND);
-	STATEMANAGER.RestoreRenderState(D3DRS_DESTBLEND);
-
-	STATEMANAGER.SetRenderState(D3DRS_FOGENABLE, dwFogEnable);
-	STATEMANAGER.SetRenderState(D3DRS_LIGHTING, dwLighting);
+	SHADERMANAGER.PopState();
 
 	if (!m_hyperlinkVector.empty())
 	{
@@ -1526,7 +1521,7 @@ void CGraphicTextInstance::SetColor(DWORD color)
 
 void CGraphicTextInstance::SetColor(float r, float g, float b, float a)
 {
-	SetColor(D3DXCOLOR(r, g, b, a));
+	SetColor(Color(r, g, b, a));
 }
 
 void CGraphicTextInstance::SetOutLineColor(DWORD color)
@@ -1536,7 +1531,7 @@ void CGraphicTextInstance::SetOutLineColor(DWORD color)
 
 void CGraphicTextInstance::SetOutLineColor(float r, float g, float b, float a)
 {
-	m_dwOutLineColor=D3DXCOLOR(r, g, b, a);
+	m_dwOutLineColor=Color(r, g, b, a);
 }
 
 void CGraphicTextInstance::SetSecret(bool Value)

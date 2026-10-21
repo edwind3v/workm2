@@ -4,19 +4,19 @@
 
 void CDibBar::Invalidate()
 {
-	const RECT rect = {0, 0, m_dwWidth, m_dwHeight};
+	RECT rect = {0, 0, (LONG)m_dwWidth, (LONG)m_dwHeight};
 
-	auto itor = m_kVec_pkBlockTexture.begin();
+	std::vector<CBlockTexture *>::iterator itor = m_kVec_pkBlockTexture.begin();
 	for (; itor != m_kVec_pkBlockTexture.end(); ++itor)
 	{
-		const CBlockTexture * pTexture = *itor;
+		CBlockTexture * pTexture = *itor;
 		pTexture->InvalidateRect(rect);
 	}
 }
 
 void CDibBar::SetClipRect(const RECT & c_rRect)
 {
-	auto itor = m_kVec_pkBlockTexture.begin();
+	std::vector<CBlockTexture *>::iterator itor = m_kVec_pkBlockTexture.begin();
 	for (; itor != m_kVec_pkBlockTexture.end(); ++itor)
 	{
 		CBlockTexture * pTexture = *itor;
@@ -29,17 +29,17 @@ void CDibBar::SetClipRect(const RECT & c_rRect)
 
 void CDibBar::ClearBar()
 {
-	const auto pdwBuf = (DWORD *)m_dib.GetPointer();
+	DWORD  * pdwBuf = (DWORD *)m_dib.GetPointer();
 	memset(pdwBuf, 0, m_dib.GetWidth()*m_dib.GetHeight()*4);
 	Invalidate();
 }
 
 void CDibBar::Render(int ix, int iy)
 {
-	auto itor = m_kVec_pkBlockTexture.begin();
+	std::vector<CBlockTexture *>::iterator itor = m_kVec_pkBlockTexture.begin();
 	for (; itor != m_kVec_pkBlockTexture.end(); ++itor)
 	{
-		const CBlockTexture * pTexture = *itor;
+		CBlockTexture * pTexture = *itor;
 		pTexture->Render(ix, iy);
 	}
 }
@@ -76,15 +76,15 @@ void CDibBar::__DivideTextureSize(DWORD dwSize, DWORD dwMax, DWORD * pdwxStep, D
 CBlockTexture * CDibBar::__BuildTextureBlock(DWORD dwxPos, DWORD dwyPos, DWORD dwImageWidth, DWORD dwImageHeight, DWORD dwTextureWidth, DWORD dwTextureHeight)
 {
 	if (dwTextureWidth == 0 || dwTextureHeight == 0)
-		return nullptr;
+		return NULL;
 
-	const RECT posRect = {dwxPos, dwyPos, dwxPos+dwImageWidth, dwyPos+dwImageHeight};
+	RECT posRect = {(LONG)dwxPos, (LONG)dwyPos, (LONG)(dwxPos+dwImageWidth), (LONG)(dwyPos+dwImageHeight)};
 
-	const auto pBlockTexture = new CBlockTexture;
+	CBlockTexture * pBlockTexture = new CBlockTexture;
 	if (!pBlockTexture->Create(&m_dib, posRect, dwTextureWidth, dwTextureHeight))
 	{
 		delete pBlockTexture;
-		return nullptr;
+		return NULL;
 	}
 
 	return pBlockTexture;
@@ -97,8 +97,8 @@ void CDibBar::__BuildTextureBlockList(DWORD dwWidth, DWORD dwHeight, DWORD dwMax
 	DWORD dwxRest, dwyRest;
 	__DivideTextureSize(dwWidth, dwMax, &dwxStep, &dwxCount, &dwxRest);
 	__DivideTextureSize(dwHeight, dwMax, &dwyStep, &dwyCount, &dwyRest);
-	const DWORD dwxTexRest = __NearTextureSize(dwxRest);
-	const DWORD dwyTexRest = __NearTextureSize(dwyRest);
+	DWORD dwxTexRest = __NearTextureSize(dwxRest);
+	DWORD dwyTexRest = __NearTextureSize(dwyRest);
 
 	for (DWORD y = 0; y < dwyCount; ++y)
 	{
@@ -161,4 +161,4 @@ CDibBar::CDibBar()
 CDibBar::~CDibBar()
 {
 }
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

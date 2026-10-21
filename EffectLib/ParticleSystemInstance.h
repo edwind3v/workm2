@@ -5,7 +5,7 @@
 #include "ParticleProperty.h"
 
 #include "../eterlib/GrpScreen.h"
-#include "../eterlib/StateManager.h"
+#include "../eterlib/ShaderManager.h"
 #include "../eterLib/GrpImageInstance.h"
 #include "EmitterProperty.h"
 
@@ -19,26 +19,16 @@ class CParticleSystemInstance : public CEffectElementBaseInstance
 
 		static CDynamicPool<CParticleSystemInstance>	ms_kPool;
 
-	public:
-		template <typename T>
-		inline void ForEachParticleRendering(T && FunObj)
+		// Batch rendering entry: pre-transformed quad + color
+		struct ParticleBatchEntry
 		{
-			DWORD dwFrameIndex;
-			for(dwFrameIndex=0; dwFrameIndex<m_kVct_pkImgInst.size(); dwFrameIndex++)
-			{
-				FunObj.Flush();
-				STATEMANAGER.SetTexture(0, m_kVct_pkImgInst[dwFrameIndex]->GetTextureReference().GetD3DTexture());
-				auto itor = m_ParticleInstanceListVector[dwFrameIndex].begin();
-				for (; itor != m_ParticleInstanceListVector[dwFrameIndex].end(); ++itor)
-				{
-					if (!InFrustum(*itor))
-					{ FunObj.Flush(); return; }
-					FunObj(*itor);
-				}
-			}
-			FunObj.Flush();
-		}
+			TPTVertex verts[4];  // 80 bytes
+			DWORD     dwColor;   // 4 bytes
+		};
 
+		static std::vector<ParticleBatchEntry> ms_BatchBuffer;
+
+	public:
 		CParticleSystemInstance();
 		virtual ~CParticleSystemInstance();
 
@@ -46,7 +36,7 @@ class CParticleSystemInstance : public CEffectElementBaseInstance
 
 		void CreateParticles(float fElapsedTime);
 
-		inline bool InFrustum(CParticleInstance * pInstance) const
+		inline bool InFrustum(CParticleInstance * pInstance)
 		{
 			if (m_pParticleProperty->m_bAttachFlag)
 				return CScreen::GetFrustum().ViewVolumeTest(Vector3d(
@@ -58,7 +48,7 @@ class CParticleSystemInstance : public CEffectElementBaseInstance
 				return CScreen::GetFrustum().ViewVolumeTest(Vector3d(pInstance->m_v3Position.x,pInstance->m_v3Position.y,pInstance->m_v3Position.z),pInstance->GetRadiusApproximation())!=VS_OUTSIDE;
 		}
 
-		DWORD GetEmissionCount() const;
+		DWORD GetEmissionCount();
 
 	protected:
 		void OnInitialize();
@@ -66,6 +56,15 @@ class CParticleSystemInstance : public CEffectElementBaseInstance
 
 		bool OnUpdate(float fElapsedTime);
 		void OnRender();
+
+		// Batched particle rendering (CPU fallback)
+		void RenderBatched(const Matrix* pAttachMatrix, int facesPerParticle, const float fRotations[]);
+		static void FlushParticleBatch();
+
+		void RenderBatchedCS(const Matrix* pAttachMatrix, int facesPerParticle, const float fRotations[]);
+		static std::vector<ParticleGPUInput> ms_csInputBuffer;
+
+		void ContributeToBatch();
 
 	protected:
 		float m_fEmissionResidue;
@@ -85,4 +84,3 @@ class CParticleSystemInstance : public CEffectElementBaseInstance
 		CParticleProperty * m_pParticleProperty;
 		CEmitterProperty * m_pEmitterProperty;
 };
-

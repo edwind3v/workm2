@@ -71,19 +71,14 @@ void CPythonLoading::JoinThreadLoading()
 
 void CPythonLoading::EndThreadLoading()
 {
-	const bool bWasLoading = ms_thread_load || ms_thread.joinable();
-
 	if (ms_thread.joinable())
 		ms_thread.join();
 
 	ms_thread_load = false;
 	ms_thread_joined = false;
 	m_titles_registered = false;
-	if (!bWasLoading)
-		return;
-
-	CResourceManager::Instance().Destroy();
-	CResourceManager::Instance().DestroyDeletingList();
+	// Shared assets remain owned by the game managers. CPythonResource::Destroy
+	// releases them after those owners, while the graphics device is still alive.
 }
 
 void CPythonLoading::__LoadData()

@@ -7,7 +7,7 @@ CDynamicPool<CAttributeInstance> CAttributeInstance::ms_kPool;
 
 constexpr float c_fStepSize = 50.0f;
 
-bool CAttributeInstance::Picking(const D3DXVECTOR3 & v, const D3DXVECTOR3 & dir, float & out_x, float & out_y) const
+bool CAttributeInstance::Picking(const Vector3 & v, const Vector3 & dir, float & out_x, float & out_y) const
 {
 	if (IsEmpty())
 		return FALSE;
@@ -19,34 +19,34 @@ bool CAttributeInstance::Picking(const D3DXVECTOR3 & v, const D3DXVECTOR3 & dir,
 	for (DWORD i = 0; i < m_v3HeightDataVector.size(); ++i)
 		for (DWORD j = 0; j < m_v3HeightDataVector[i].size(); j+=3)
 		{
-			const D3DXVECTOR3 & cv0 = m_v3HeightDataVector[i][j];
-			const D3DXVECTOR3 & cv2 = m_v3HeightDataVector[i][j+1];
-			const D3DXVECTOR3 & cv1 = m_v3HeightDataVector[i][j+2];
+			const Vector3 & cv0 = m_v3HeightDataVector[i][j];
+			const Vector3 & cv2 = m_v3HeightDataVector[i][j+1];
+			const Vector3 & cv1 = m_v3HeightDataVector[i][j+2];
 
-			D3DXVECTOR3 n;
+			Vector3 n;
 			auto val7 = (cv1-cv0);
 			auto val8 = (cv2-cv0);
-			D3DXVec3Cross(&n,&val7,&val8);
-			D3DXVECTOR3 x;
+			Vec3Cross(&n,&val7,&val8);
+			Vector3 x;
 			float t;
 			auto val = (v-cv0);
-			t = - D3DXVec3Dot(&val,&n)/D3DXVec3Dot(&dir,&n);
+			t = - Vec3Dot(&val,&n)/Vec3Dot(&dir,&n);
 
 			x = v+t*dir;
 
-			D3DXVECTOR3 temp;
+			Vector3 temp;
 			auto val1 = (cv1-cv0);
 			auto val2 = (x-cv0);
-			D3DXVec3Cross(&temp,&val1,&val2);
-			if (D3DXVec3Dot(&temp,&n)<0) continue;
+			Vec3Cross(&temp,&val1,&val2);
+			if (Vec3Dot(&temp,&n)<0) continue;
 			auto val3 = (cv2-cv1);
 			auto val4 = (x-cv1);
-			D3DXVec3Cross(&temp,&val3,&val4);
-			if (D3DXVec3Dot(&temp,&n)<0) continue;
+			Vec3Cross(&temp,&val3,&val4);
+			if (Vec3Dot(&temp,&n)<0) continue;
 			auto val5 = (cv0-cv2);
 			auto val6 = (x-cv2);
-			D3DXVec3Cross(&temp,&val5,&val6);
-			if (D3DXVec3Dot(&temp,&n)<0) continue;
+			Vec3Cross(&temp,&val5,&val6);
+			if (Vec3Dot(&temp,&n)<0) continue;
 
 			if (bPicked)
 			{
@@ -86,9 +86,9 @@ BOOL CAttributeInstance::GetHeight(float fx, float fy, float * pfHeight)
 	for (DWORD i = 0; i < m_v3HeightDataVector.size(); ++i)
 	for (DWORD j = 0; j < m_v3HeightDataVector[i].size(); j+=3)
 	{
-		const D3DXVECTOR3 & c_rv3Vertex0 = m_v3HeightDataVector[i][j];
-		const D3DXVECTOR3 & c_rv3Vertex1 = m_v3HeightDataVector[i][j+1];
-		const D3DXVECTOR3 & c_rv3Vertex2 = m_v3HeightDataVector[i][j+2];
+		const Vector3 & c_rv3Vertex0 = m_v3HeightDataVector[i][j];
+		const Vector3 & c_rv3Vertex1 = m_v3HeightDataVector[i][j+1];
+		const Vector3 & c_rv3Vertex2 = m_v3HeightDataVector[i][j+2];
 
 		if (
 			fx<c_rv3Vertex0.x && fx<c_rv3Vertex1.x && fx<c_rv3Vertex2.x ||
@@ -102,12 +102,12 @@ BOOL CAttributeInstance::GetHeight(float fx, float fy, float * pfHeight)
 						   c_rv3Vertex1.x, c_rv3Vertex1.y,
 						   c_rv3Vertex2.x, c_rv3Vertex2.y, fx, fy))
 		{
-			D3DXVECTOR3 v3Line1 = c_rv3Vertex1 - c_rv3Vertex0;
-			D3DXVECTOR3 v3Line2 = c_rv3Vertex2 - c_rv3Vertex0;
-			D3DXVECTOR3 v3Cross;
+			Vector3 v3Line1 = c_rv3Vertex1 - c_rv3Vertex0;
+			Vector3 v3Line2 = c_rv3Vertex2 - c_rv3Vertex0;
+			Vector3 v3Cross;
 
-			D3DXVec3Cross(&v3Cross, &v3Line1, &v3Line2);
-			D3DXVec3Normalize(&v3Cross, &v3Cross);
+			Vec3Cross(&v3Cross, &v3Line1, &v3Line2);
+			Vec3Normalize(&v3Cross, &v3Cross);
 
 			if (0.0f != v3Cross.z)
 			{
@@ -143,7 +143,7 @@ void CAttributeInstance::SetObjectPointer(CAttributeData * pAttributeData)
 	m_roAttributeData.SetPointer(pAttributeData);
 }
 
-void CAttributeInstance::RefreshObject(const D3DXMATRIX & c_rmatGlobal)
+void CAttributeInstance::RefreshObject(const Matrix & c_rmatGlobal)
 {
 	assert(!m_roAttributeData.IsNull());
 
@@ -166,7 +166,7 @@ void CAttributeInstance::RefreshObject(const D3DXMATRIX & c_rmatGlobal)
 		m_v3HeightDataVector[i].resize(dwVertexCount);
 		for (DWORD j = 0; j < dwVertexCount; ++j)
 		{
-			D3DXVec3TransformCoord(&m_v3HeightDataVector[i][j], &c_pHeightData->v3VertexVector[j], &m_matGlobal);
+			Vec3TransformCoord(&m_v3HeightDataVector[i][j], &c_pHeightData->v3VertexVector[j], &m_matGlobal);
 		}
 	}
 }
@@ -208,7 +208,7 @@ void CAttributeInstance::Clear()
 {
 	m_fHeightRadius = 0.0f;
 	m_fCollisionRadius = 0.0f;
-	D3DXMatrixIdentity(&m_matGlobal);
+	MatrixIdentity(&m_matGlobal);
 
 	m_v3HeightDataVector.clear();
 

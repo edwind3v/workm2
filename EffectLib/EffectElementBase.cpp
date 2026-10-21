@@ -1,11 +1,11 @@
 #include "StdAfx.h"
 #include "EffectElementBase.h"
 
-void CEffectElementBase::GetPosition(float fTime, D3DXVECTOR3 & rPosition)
+void CEffectElementBase::GetPosition(float fTime, Vector3 & rPosition)
 {
 	if (m_TimeEventTablePosition.empty())
 	{
-		rPosition = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
+		rPosition = Vector3(0.0f, 0.0f, 0.0f);
 		return;
 	}
 	if (m_TimeEventTablePosition.size()==1)
@@ -139,7 +139,7 @@ BOOL CEffectElementBase::LoadScript(CTextFileLoader & rTextFileLoader)
 				EffectPosition.m_vecPosition.y = atof(pTokenVector->at(i++).c_str());
 				EffectPosition.m_vecPosition.z = atof(pTokenVector->at(i++).c_str());
 
-				EffectPosition.m_vecControlPoint = D3DXVECTOR3(0.0f,0.0f,0.0f);
+				EffectPosition.m_vecControlPoint = Vector3(0.0f,0.0f,0.0f);
 			}
 			else
 			{

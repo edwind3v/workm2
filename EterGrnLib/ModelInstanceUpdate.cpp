@@ -3,8 +3,6 @@
 #include "ModelInstance.h"
 #include "Model.h"
 #include "../EterBase/MapPerformance.h"
-#include <cstring>
-#include "../eterLib/DX11GrannyProbe.h"
 
 void CGrannyModelInstance::Update(DWORD dwAniFPS)
 {
@@ -43,11 +41,11 @@ void CGrannyModelInstance::UpdateLocalTime(float fElapsedTime)
 	m_fLocalTime += fElapsedTime;
 }
 
-void CGrannyModelInstance::UpdateTransform(D3DXMATRIX * pMatrix, float fSecondsElapsed) const
+void CGrannyModelInstance::UpdateTransform(Matrix * pMatrix, float fSecondsElapsed)
 {
 	if (!m_pgrnModelInstance)
 	{
-		TraceError("CGrannyModelIstance::UpdateTransform - m_pgrnModelInstance = Null");
+		TraceError("CGrannyModelIstance::UpdateTransform - m_pgrnModelInstance = NULL");
 		return;
 	}
 #if GrannyProductMinorVersion==4
@@ -60,47 +58,14 @@ void CGrannyModelInstance::UpdateTransform(D3DXMATRIX * pMatrix, float fSecondsE
 	//Tracef("%f %f %f",pMatrix->_41,pMatrix->_42,pMatrix->_43);
 }
 
-void CGrannyModelInstance::Deform(const D3DXMATRIX* world)
+void CGrannyModelInstance::Deform(const Matrix * c_pWorldMatrix)
 {
-    if (IsEmpty()) return;
-    MapPerformance::Scope profile("actor.deform");
-    UpdateWorldPose();
-    MapPerformance::Measure("actor.mesh_matrices", nullptr, [&] { UpdateWorldMatrices(world); });
-    if (m_pModel->CanDeformPNTVertices())
-    {
-        CGraphicVertexBuffer& buffer = __GetDeformableVertexBufferRef();
-        const auto poseRevision = GetPoseRevision();
-        // LOD variants share a buffer: a pose cache hit alone is insufficient.
-        // Any other writer or device recreation invalidates the uploaded data.
-        if (m_skinnedPoseRevision == poseRevision && m_skinnedBuffer == &buffer &&
-            m_skinnedBufferVersion == buffer.GetContentVersion() && poseRevision != 0)
-        {
-            MapPerformance::Count(MapPerformance::Counter::SkinReuse);
-        }
-        else
-        {
-            TPNTVertex* vertices = nullptr;
-            const bool locked = MapPerformance::Measure("actor.vertex_lock", nullptr, [&] {
-                return buffer.LockDiscardRange(m_pModel->GetDeformVertexCount(), reinterpret_cast<void**>(&vertices));
-            });
-            if (locked)
-            {
-                MapPerformance::Measure("actor.vertex_skin", nullptr, [&] { DeformPNTVertices(vertices); });
-                TryCaptureDX11ModelPreview(vertices);
-                const bool uploaded = MapPerformance::Measure("actor.vertex_unlock", nullptr, [&] { return buffer.Unlock(); });
-                if (uploaded)
-                {
-                    m_skinnedPoseRevision = poseRevision;
-                    m_skinnedBuffer = &buffer;
-                    m_skinnedBufferVersion = buffer.GetContentVersion();
-                    MapPerformance::Count(MapPerformance::Counter::SkinUploads);
-                    MapPerformance::Count(MapPerformance::Counter::SkinnedVertices, m_pModel->GetDeformVertexCount());
-                }
-            }
-            else TraceError("GRANNY DEFORM DYNAMIC BUFFER LOCK ERROR");
-        }
-    }
-    if (graphics::IsDX11PrimaryCharacterCaptureActive()) TryCaptureDX11ModelPreview(nullptr);
+	if (IsEmpty())
+		return;
+
+	UpdateWorldPose();
+	UpdateWorldMatrices(c_pWorldMatrix);
+
 }
 
 //////////////////////////////////////////////////////
@@ -109,7 +74,7 @@ class CGrannyLocalPose
 	public:
 		CGrannyLocalPose()
 		{
-			m_pgrnLocalPose = nullptr;
+			m_pgrnLocalPose = NULL;
 			m_boneCount = 0;
 		}
 
@@ -140,20 +105,13 @@ class CGrannyLocalPose
 };
 //////////////////////////////////////////////////////
 
-void CGrannyModelInstance::UpdateSkeleton(const D3DXMATRIX * c_pWorldMatrix, float /*fLocalTime*/) const
+void CGrannyModelInstance::UpdateSkeleton(const Matrix * c_pWorldMatrix, float /*fLocalTime*/)
 {
 	// DELETED
 	//m_pgrnWorldPose = m_pgrnWorldPoseReal;
 	///////////////////////////////////////////
 	UpdateWorldPose();
-	MapPerformance::Measure("actor.mesh_matrices", nullptr, [&] { UpdateWorldMatrices(c_pWorldMatrix); });
-}
-
-std::uint64_t CGrannyModelInstance::GetPoseRevision() const
-{
-    if (m_ppkSkeletonInst && *m_ppkSkeletonInst && *m_ppkSkeletonInst != this)
-        return (*m_ppkSkeletonInst)->GetPoseRevision();
-    return m_poseRevision;
+	UpdateWorldMatrices(c_pWorldMatrix);
 }
 
 void CGrannyModelInstance::UpdateWorldPose() const
@@ -184,24 +142,23 @@ void CGrannyModelInstance::UpdateWorldPose() const
     MapPerformance::Count(MapPerformance::Counter::PoseSamples);
 }
 
-void CGrannyModelInstance::UpdateWorldMatrices(const D3DXMATRIX* c_pWorldMatrix) const
+void CGrannyModelInstance::UpdateWorldMatrices(const Matrix* c_pWorldMatrix)
 {
 	// NO_MESH_BUG_FIX
 	if (!m_meshMatrices)
 		return;
 	// END_OF_NO_MESH_BUG_FIX
 
-	assert(m_pModel != nullptr);
-	assert(ms_lpd3dMatStack != nullptr);
+	assert(m_pModel != NULL);
 
-	const int meshCount = m_pModel->GetMeshCount();
+	int meshCount = m_pModel->GetMeshCount();
 
 	granny_matrix_4x4 * pgrnMatCompositeBuffer = GrannyGetWorldPoseComposite4x4Array(__GetWorldPosePtr());
-	const auto boneMatrices = (D3DXMATRIX *) pgrnMatCompositeBuffer;
+	Matrix * boneMatrices = (Matrix *) pgrnMatCompositeBuffer;
 
 	for (int i = 0; i < meshCount; ++i)
 	{
-		D3DXMATRIX & rWorldMatrix = m_meshMatrices[i];
+		Matrix & rWorldMatrix = m_meshMatrices[i];
 
 		const CGrannyMesh * pMesh = m_pModel->GetMeshPointer(i);
 
@@ -216,7 +173,7 @@ void CGrannyModelInstance::UpdateWorldMatrices(const D3DXMATRIX* c_pWorldMatrix)
 #endif
 		// END_OF_WORK
 
-		if (pMesh->CanDeformPNTVertices())
+		if (!GrannyMeshIsRigid(pMesh->GetGrannyMeshPointer()))
 		{
 			rWorldMatrix = *c_pWorldMatrix;
 		}
@@ -229,7 +186,7 @@ void CGrannyModelInstance::UpdateWorldMatrices(const D3DXMATRIX* c_pWorldMatrix)
 #else
 #error "unknown granny version"
 #endif
-			D3DXMatrixMultiply(&rWorldMatrix, &boneMatrices[iBone], c_pWorldMatrix);
+			MatrixMultiply(&rWorldMatrix, &boneMatrices[iBone], c_pWorldMatrix);
 		}
 	}
 
@@ -237,14 +194,11 @@ void CGrannyModelInstance::UpdateWorldMatrices(const D3DXMATRIX* c_pWorldMatrix)
 	TEST_matWorld = *c_pWorldMatrix;
 #endif
 }
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec
 
-void CGrannyModelInstance::DeformPNTVertices(void * pvDest) const
+std::uint64_t CGrannyModelInstance::GetPoseRevision() const
 {
-	assert(m_pModel != nullptr);
-	assert(m_pModel->CanDeformPNTVertices());
-
-	// WORK
-	m_pModel->DeformPNTVertices(pvDest, (D3DXMATRIX *) GrannyGetWorldPoseComposite4x4Array(__GetWorldPosePtr()), m_vct_pgrnMeshBinding);
-	// END_OF_WORK
+    if (m_ppkSkeletonInst && *m_ppkSkeletonInst && *m_ppkSkeletonInst != this)
+        return (*m_ppkSkeletonInst)->GetPoseRevision();
+    return m_poseRevision;
 }
-

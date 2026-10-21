@@ -2,16 +2,42 @@
 #include "Material.h"
 #include "Mesh.h"
 #include "../eterbase/Filename.h"
+#include "../eterbase/Timer.h"
 #include "../eterlib/ResourceManager.h"
-#include "../eterlib/StateManager.h"
+#include "../eterlib/ShaderManager.h"
 #include "../eterlib/GrpScreen.h"
+#include "../eterPack/EterPackManager.h"
+#include <map>
 
 CGraphicImageInstance CGrannyMaterial::ms_akSphereMapInstance[SPHEREMAP_NUM];
 
-D3DXVECTOR3	CGrannyMaterial::ms_v3SpecularTrans(0.0f, 0.0f, 0.0f);
-D3DXMATRIX	CGrannyMaterial::ms_matSpecular;
+Vector3	CGrannyMaterial::ms_v3SpecularTrans(0.0f, 0.0f, 0.0f);
+Matrix	CGrannyMaterial::ms_matSpecular;
 
-D3DXCOLOR g_fSpecularColor = D3DXCOLOR(0.0f, 0.0f, 0.0f, 0.0f);
+thread_local ID3D11ShaderResourceView* CGrannyMaterial::ms_pLastTexture[2] = { nullptr, nullptr };
+thread_local CGrannyMaterial* CGrannyMaterial::ms_pLastMaterial = nullptr;
+thread_local bool CGrannyMaterial::ms_bSpecularStateApplied = false;
+thread_local bool CGrannyMaterial::ms_bTwoSideStateApplied = false;
+
+Color g_fSpecularColor = Color(1.0f, 1.0f, 1.0f, 1.0f);
+
+void CGrannyMaterial::ResetRenderStateCache()
+{
+	ms_pLastTexture[0] = nullptr;
+	ms_pLastTexture[1] = nullptr;
+	ms_pLastMaterial = nullptr;
+	ms_bSpecularStateApplied = false;
+	ms_bTwoSideStateApplied = false;
+}
+
+void CGrannyMaterial::RestoreRenderStateCache()
+{
+	ms_bSpecularStateApplied = false;
+	ms_bTwoSideStateApplied = false;
+
+	ms_pLastTexture[0] = nullptr;
+	ms_pLastTexture[1] = nullptr;
+}
 
 void CGrannyMaterial::TranslateSpecularMatrix(float fAddX, float fAddY, float fAddZ)
 {
@@ -30,7 +56,7 @@ void CGrannyMaterial::TranslateSpecularMatrix(float fAddX, float fAddY, float fA
 	if (ms_v3SpecularTrans.z>=SPECULAR_TRANSLATE_MAX)
 		ms_v3SpecularTrans.z=0.0f;
 
-	D3DXMatrixTranslation(&ms_matSpecular,
+	MatrixTranslation(&ms_matSpecular,
 		ms_v3SpecularTrans.x,
 		ms_v3SpecularTrans.y,
 		ms_v3SpecularTrans.z
@@ -39,13 +65,15 @@ void CGrannyMaterial::TranslateSpecularMatrix(float fAddX, float fAddY, float fA
 
 void CGrannyMaterial::ApplyRenderState()
 {
-	assert(m_pfnApplyRenderState!=nullptr && "CGrannyMaterial::SaveRenderState");
+	assert(m_pfnApplyRenderState!=NULL && "CGrannyMaterial::SavePipelineState");
+	SHADERMANAGER.PushState();
 	(this->*m_pfnApplyRenderState)();
 }
 
-void CGrannyMaterial::RestoreRenderState()
+void CGrannyMaterial::RestorePipelineState()
 {
-	assert(m_pfnRestoreRenderState!=nullptr && "CGrannyMaterial::RestoreRenderState");
+	assert(m_pfnRestoreRenderState!=NULL && "CGrannyMaterial::RestorePipelineState");
+	SHADERMANAGER.PopState();
 	(this->*m_pfnRestoreRenderState)();
 }
 
@@ -60,7 +88,7 @@ void CGrannyMaterial::Copy(CGrannyMaterial& rkMtrl)
 CGrannyMaterial::CGrannyMaterial()
 {
 	m_bTwoSideRender = false;
-	m_dwLastCullRenderStateForTwoSideRendering = D3DCULL_CW;
+	m_dwLastCullRenderStateForTwoSideRendering = CULL_FRONT;
 
 	Initialize();
 }
@@ -80,12 +108,12 @@ void CGrannyMaterial::SetImagePointer(int iStage, CGraphicImage* pImage)
 	m_roImage[iStage]=pImage;
 }
 
-bool CGrannyMaterial::IsIn(const char* c_szImageName, int* piStage) const
+bool CGrannyMaterial::IsIn(const char* c_szImageName, int* piStage)
 {
 	std::string strImageName = c_szImageName;
 	CFileNameHelper::StringPath(strImageName);
 
-	const granny_texture * pgrnDiffuseTexture = GrannyGetMaterialTextureByType(m_pgrnMaterial, GrannyDiffuseColorTexture);
+	granny_texture * pgrnDiffuseTexture = GrannyGetMaterialTextureByType(m_pgrnMaterial, GrannyDiffuseColorTexture);
 	if (pgrnDiffuseTexture)
 	{
 		std::string strDiffuseFileName = pgrnDiffuseTexture->FromFileName;
@@ -97,7 +125,7 @@ bool CGrannyMaterial::IsIn(const char* c_szImageName, int* piStage) const
 		}
 	}
 
-	const granny_texture * pgrnOpacityTexture = GrannyGetMaterialTextureByType(m_pgrnMaterial, GrannyOpacityTexture);
+    granny_texture * pgrnOpacityTexture = GrannyGetMaterialTextureByType(m_pgrnMaterial, GrannyOpacityTexture);
 	if (pgrnOpacityTexture)
 	{
 		std::string strOpacityFileName = pgrnOpacityTexture->FromFileName;
@@ -114,8 +142,6 @@ bool CGrannyMaterial::IsIn(const char* c_szImageName, int* piStage) const
 
 void CGrannyMaterial::SetSpecularInfo(BOOL bFlag, float fPower, BYTE uSphereMapIndex)
 {
-	if (m_specularInitialized && m_fSpecularPower == fPower && m_bSphereMapIndex == uSphereMapIndex && m_bSpecularEnable == bFlag) return;
-	m_specularInitialized = true;
 	m_fSpecularPower = fPower;
 	m_bSphereMapIndex = uSphereMapIndex;
 	m_bSpecularEnable = bFlag;
@@ -140,7 +166,7 @@ bool CGrannyMaterial::IsEqual(granny_material* pgrnMaterial) const
 	return false;
 }
 
-LPDIRECT3DTEXTURE9 CGrannyMaterial::GetD3DTexture(int iStage) const
+ID3D11ShaderResourceView* CGrannyMaterial::GetD3DTexture(int iStage) const
 {
 	const CGraphicImage::TRef & ratImage = m_roImage[iStage];
 
@@ -152,12 +178,34 @@ LPDIRECT3DTEXTURE9 CGrannyMaterial::GetD3DTexture(int iStage) const
 	return pTexture->GetD3DTexture();
 }
 
+bool CGrannyMaterial::IsTextureLoaded() const
+{
+	const CGraphicImage::TRef & ratImage = m_roImage[0];
+
+	if (ratImage.IsNull())
+		return false;
+
+	CGraphicImage * pImage = ratImage.GetPointer();
+	if (!pImage)
+		return false;
+
+	if (pImage->IsEmpty())
+		return false;
+
+	// Double-check the D3D texture pointer exists
+	const CGraphicTexture * pTexture = pImage->GetTexturePointer();
+	if (!pTexture || pTexture->IsEmpty())
+		return false;
+
+	return (pTexture->GetD3DTexture() != NULL);
+}
+
 CGraphicImage * CGrannyMaterial::GetImagePointer(int iStage) const
 {
 	const CGraphicImage::TRef & ratImage = m_roImage[iStage];
 
 	if (ratImage.IsNull())
-		return nullptr;
+		return NULL;
 
 	CGraphicImage * pImage = ratImage.GetPointer();
 	return pImage;
@@ -166,7 +214,7 @@ CGraphicImage * CGrannyMaterial::GetImagePointer(int iStage) const
 const CGraphicTexture* CGrannyMaterial::GetDiffuseTexture() const
 {
 	if (m_roImage[0].IsNull())
-		return nullptr;
+		return NULL;
 
 	return m_roImage[0].GetPointer()->GetTexturePointer();
 }
@@ -174,27 +222,37 @@ const CGraphicTexture* CGrannyMaterial::GetDiffuseTexture() const
 const CGraphicTexture* CGrannyMaterial::GetOpacityTexture() const
 {
 	if (m_roImage[1].IsNull())
-		return nullptr;
+		return NULL;
 
 	return m_roImage[1].GetPointer()->GetTexturePointer();
 }
 
+BOOL CGrannyMaterial::__IsSpecularEnable() const
+{
+	return m_bSpecularEnable;
+}
+
+float CGrannyMaterial::__GetSpecularPower() const
+{
+	return m_fSpecularPower;
+}
+
 extern const std::string& GetModelLocalPath();
 
-CGraphicImage* CGrannyMaterial::__GetImagePointer(const char* fileName) const
+CGraphicImage* CGrannyMaterial::__GetImagePointer(const char* fileName)
 {
 	assert(*fileName != '\0');
 
 	CResourceManager& rkResMgr = CResourceManager::Instance();
 
 	// SUPPORT_LOCAL_TEXTURE
-	const int fileName_len = strlen(fileName);
+	int fileName_len = (int)(strlen(fileName));
 	if (fileName_len > 2 && fileName[1] != ':')
 	{
 		char localFileName[256];
 		const std::string& modelLocalPath = GetModelLocalPath();
 
-		const int localFileName_len = modelLocalPath.length() + 1 + fileName_len;
+		int localFileName_len = (int)(modelLocalPath.length() + 1 + fileName_len);
 		if (localFileName_len < sizeof(localFileName) - 1)
 		{
 			_snprintf(localFileName, sizeof(localFileName), "%s%s", GetModelLocalPath().c_str(), fileName);
@@ -212,8 +270,8 @@ bool CGrannyMaterial::CreateFromGrannyMaterialPointer(granny_material * pgrnMate
 {
 	m_pgrnMaterial = pgrnMaterial;
 
-	const granny_texture * pgrnDiffuseTexture = nullptr;
-	const granny_texture * pgrnOpacityTexture = nullptr;
+	granny_texture * pgrnDiffuseTexture = NULL;
+	granny_texture * pgrnOpacityTexture = NULL;
 
 	if (pgrnMaterial)
 	{
@@ -238,18 +296,18 @@ bool CGrannyMaterial::CreateFromGrannyMaterialPointer(granny_material * pgrnMate
 #if GrannyProductMinorVersion==4
 			granny_variant twoSideResult = GrannyFindMatchingMember(pgrnMaterial->ExtendedData.Type, pgrnMaterial->ExtendedData.Object, "Two-sided");
 
-			if (nullptr != twoSideResult.Type)
+			if (NULL != twoSideResult.Type)
 				GrannyConvertSingleObject(twoSideResult.Type, twoSideResult.Object, TwoSidedFieldType, &twoSided);
 #elif GrannyProductMinorVersion==7
 			granny_variant twoSideResult;
 			bool findMatchResult = GrannyFindMatchingMember(pgrnMaterial->ExtendedData.Type, pgrnMaterial->ExtendedData.Object, "Two-sided", &twoSideResult);
-			if (nullptr != twoSideResult.Type && findMatchResult)
+			if (NULL != twoSideResult.Type && findMatchResult)
 				GrannyConvertSingleObject(twoSideResult.Type, twoSideResult.Object, TwoSidedFieldType, &twoSided);
 #elif GrannyProductMinorVersion==11 || GrannyProductMinorVersion==9 || GrannyProductMinorVersion==8
 			granny_variant twoSideResult;
 			bool gfmm_bool = GrannyFindMatchingMember(pgrnMaterial->ExtendedData.Type, pgrnMaterial->ExtendedData.Object, "Two-sided", &twoSideResult);
-			if (nullptr != twoSideResult.Type)
-				GrannyConvertSingleObject(twoSideResult.Type, twoSideResult.Object, TwoSidedFieldType, &twoSided, nullptr);
+			if (NULL != twoSideResult.Type)
+				GrannyConvertSingleObject(twoSideResult.Type, twoSideResult.Object, TwoSidedFieldType, &twoSided, 0);
 #else
 #error "unknown granny version"
 #endif
@@ -264,107 +322,127 @@ bool CGrannyMaterial::CreateFromGrannyMaterialPointer(granny_material * pgrnMate
 	if (pgrnOpacityTexture)
 		m_roImage[1].SetPointer(__GetImagePointer(pgrnOpacityTexture->FromFileName));
 
+	bool bHasOpacityMap = false;
 	if (!m_roImage[1].IsNull())
-		m_eType = TYPE_BLEND_PNT;
-	else
-		m_eType = TYPE_DIFFUSE_PNT;
+	{
+		const char * c_szOpacityFileName = m_roImage[1].GetPointer()->GetFileName();
+		if (c_szOpacityFileName && '\0' != *c_szOpacityFileName)
+			bHasOpacityMap = CEterPackManager::Instance().isExist(c_szOpacityFileName);
+
+		if (!bHasOpacityMap)
+			m_roImage[1] = NULL;
+	}
+
+	m_eType = bHasOpacityMap ? TYPE_BLEND_PNT : TYPE_DIFFUSE_PNT;
 
 	return true;
 }
 
 void CGrannyMaterial::Initialize()
 {
-	m_roImage[0] = nullptr;
-	m_roImage[1] = nullptr;
+	m_roImage[0] = NULL;
+	m_roImage[1] = NULL;
 
 	SetSpecularInfo(FALSE, 0.0f, 0);
 }
 
 void CGrannyMaterial::__ApplyDiffuseRenderState()
 {
-	STATEMANAGER.SetTexture(0, GetD3DTexture(0));
+	ID3D11ShaderResourceView* pTexture = GetD3DTexture(0);
+
+	SHADERMANAGER.SetShaderResource(0, pTexture);
+
+	if (SHADERMANAGER.IsInitialized())
+		SHADERMANAGER.SetSpecularColor(0.0f, 0.0f, 0.0f);
 
 	if (m_bTwoSideRender)
 	{
-		m_dwLastCullRenderStateForTwoSideRendering = STATEMANAGER.GetRenderState(D3DRS_CULLMODE);
-		STATEMANAGER.SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+		//m_dwLastCullRenderStateForTwoSideRendering = SHADERMANAGER.GetPipelineState(PSTATE_CULLMODE);
+		SHADERMANAGER.SetPipelineState(PSTATE_CULLMODE, CULL_NONE);
 	}
+
 }
 
 void CGrannyMaterial::__RestoreDiffuseRenderState()
 {
-	if (m_bTwoSideRender)
-	{
-		STATEMANAGER.SetRenderState(D3DRS_CULLMODE, m_dwLastCullRenderStateForTwoSideRendering);
-	}
+	//if (m_bTwoSideRender)
+	//{
+	//	SHADERMANAGER.SetPipelineState(PSTATE_CULLMODE, m_dwLastCullRenderStateForTwoSideRendering);
+	//}
 }
 
 void CGrannyMaterial::__ApplySpecularRenderState()
 {
-	if (TRUE == STATEMANAGER.GetRenderState(D3DRS_ALPHABLENDENABLE))
+	if (TRUE == SHADERMANAGER.GetPipelineState(PSTATE_BLENDENABLE))
 	{
 		__ApplyDiffuseRenderState();
 		return;
 	}
 
-	const CGraphicTexture* pkTexture=ms_akSphereMapInstance[m_bSphereMapIndex].GetTexturePointer();
+	ID3D11ShaderResourceView* pTexture = GetD3DTexture(0);
+	if (!pTexture && !m_roImage[0].IsNull())
+	{
+		CGraphicImage* pImage = m_roImage[0].GetPointer();
+		if (pImage)
+		{
+			static std::map<CGraphicImage*, DWORD> s_mapLastReloadTimeSpec;
+			DWORD dwCurrentTime = ELTimer_GetMSec();
+			DWORD dwLastReload = 0;
 
-	STATEMANAGER.SetTexture(0, GetD3DTexture(0));
+			auto it = s_mapLastReloadTimeSpec.find(pImage);
+			if (it != s_mapLastReloadTimeSpec.end())
+				dwLastReload = it->second;
 
-	if (pkTexture)
-		STATEMANAGER.SetTexture(1, pkTexture->GetD3DTexture());
-	else
-		STATEMANAGER.SetTexture(1, nullptr);
+			if (dwLastReload == 0)
+			{
+				s_mapLastReloadTimeSpec[pImage] = dwCurrentTime;
+				pImage->Reload();
+				pTexture = GetD3DTexture(0);
+			}
+		}
+	}
+	SHADERMANAGER.SetShaderResource(0, pTexture);
 
-	STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, D3DXCOLOR(g_fSpecularColor.r, g_fSpecularColor.g, g_fSpecularColor.b, __GetSpecularPower()));
-	STATEMANAGER.SaveTextureStageState(1, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACEREFLECTIONVECTOR);
-	STATEMANAGER.SaveTextureStageState(0, D3DTSS_COLORARG1,	D3DTA_TEXTURE);
-	STATEMANAGER.SaveTextureStageState(0, D3DTSS_COLORARG2,	D3DTA_DIFFUSE);
-	STATEMANAGER.SaveTextureStageState(0, D3DTSS_COLOROP,	D3DTOP_MODULATE);
-	STATEMANAGER.SaveTextureStageState(0, D3DTSS_ALPHAARG1,	D3DTA_TEXTURE);
-	STATEMANAGER.SaveTextureStageState(0, D3DTSS_ALPHAARG2,	D3DTA_TFACTOR);
-	STATEMANAGER.SaveTextureStageState(0, D3DTSS_ALPHAOP,	D3DTOP_MODULATE);
+	if (SHADERMANAGER.IsInitialized())
+	{
+		CGraphicTexture* pkSphere = ms_akSphereMapInstance[m_bSphereMapIndex].GetTexturePointer();
+		SHADERMANAGER.SetShaderResource(6, pkSphere ? pkSphere->GetD3DTexture() : NULL);
 
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_COLORARG1,	D3DTA_CURRENT);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_COLORARG2,	D3DTA_TEXTURE);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_COLOROP,	D3DTOP_MODULATEALPHA_ADDCOLOR);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_ALPHAARG1,	D3DTA_CURRENT);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_ALPHAOP,	D3DTOP_SELECTARG1);
+		SHADERMANAGER.SetSpecularColor(g_fSpecularColor.r, g_fSpecularColor.g, g_fSpecularColor.b);
+		SHADERMANAGER.SetSpecularPower(__GetSpecularPower());
 
-	STATEMANAGER.SetTransform(D3DTS_TEXTURE1, &ms_matSpecular);
-	STATEMANAGER.SaveTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
-	STATEMANAGER.SaveSamplerState(1, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
-	STATEMANAGER.SaveSamplerState(1, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
+		static const float s_fSpecIntensity = 1.5f;
+		static const float s_fSpecPower = 64.0f;
+		SHADERMANAGER.SetSpecularTune(s_fSpecIntensity, s_fSpecPower);
+	}
+
+
+	if (m_bTwoSideRender)
+	{
+		//m_dwLastCullRenderStateForTwoSideRendering = SHADERMANAGER.GetPipelineState(PSTATE_CULLMODE);
+		SHADERMANAGER.SetPipelineState(PSTATE_CULLMODE, CULL_NONE);
+	}
 }
 
 void CGrannyMaterial::__RestoreSpecularRenderState()
 {
-	if (TRUE == STATEMANAGER.GetRenderState(D3DRS_ALPHABLENDENABLE))
-	{
-		__RestoreDiffuseRenderState();
-		return;
-	}
+	//if (TRUE == SHADERMANAGER.GetPipelineState(PSTATE_BLENDENABLE))
+	//{
+	//	__RestoreDiffuseRenderState();
+	//	return;
+	//}
 
-	STATEMANAGER.RestoreTextureStageState(1, D3DTSS_TEXTURETRANSFORMFLAGS);
-	STATEMANAGER.RestoreSamplerState(1, D3DSAMP_ADDRESSU);
-	STATEMANAGER.RestoreSamplerState(1, D3DSAMP_ADDRESSV);
 
-	STATEMANAGER.RestoreTextureStageState(1, D3DTSS_TEXCOORDINDEX);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
-
-	STATEMANAGER.RestoreTextureStageState(0, D3DTSS_COLORARG1);
-	STATEMANAGER.RestoreTextureStageState(0, D3DTSS_COLORARG2);
-	STATEMANAGER.RestoreTextureStageState(0, D3DTSS_COLOROP);
-	STATEMANAGER.RestoreTextureStageState(0, D3DTSS_ALPHAARG1);
-	STATEMANAGER.RestoreTextureStageState(0, D3DTSS_ALPHAARG2);
-	STATEMANAGER.RestoreTextureStageState(0, D3DTSS_ALPHAOP);
+	//if (m_bTwoSideRender)
+	//{
+	//	SHADERMANAGER.SetPipelineState(PSTATE_CULLMODE, m_dwLastCullRenderStateForTwoSideRendering);
+	//}
 }
 
 void CGrannyMaterial::CreateSphereMap(UINT uMapIndex, const char* c_szSphereMapImageFileName)
 {
 	CResourceManager& rkResMgr = CResourceManager::Instance();
-	const auto pImage = (CGraphicImage *)rkResMgr.GetResourcePointer(c_szSphereMapImageFileName);
+	CGraphicImage * pImage = (CGraphicImage *)rkResMgr.GetResourcePointer(c_szSphereMapImageFileName);
 	ms_akSphereMapInstance[uMapIndex].SetImagePointer(pImage);
 }
 
@@ -397,7 +475,7 @@ void CGrannyMaterialPalette::Clear()
 	m_mtrlVector.clear();
 }
 
-CGrannyMaterial& CGrannyMaterialPalette::GetMaterialRef(DWORD mtrlIndex) const
+CGrannyMaterial& CGrannyMaterialPalette::GetMaterialRef(DWORD mtrlIndex)
 {
 	assert(mtrlIndex<m_mtrlVector.size());
 	return *m_mtrlVector[mtrlIndex].GetPointer();
@@ -405,7 +483,7 @@ CGrannyMaterial& CGrannyMaterialPalette::GetMaterialRef(DWORD mtrlIndex) const
 
 void CGrannyMaterialPalette::SetMaterialImagePointer(const char* c_szImageName, CGraphicImage* pImage)
 {
-	const DWORD size=m_mtrlVector.size();
+	DWORD size=(DWORD)(m_mtrlVector.size());
 	DWORD i;
 	for (i=0; i<size; ++i)
 	{
@@ -414,7 +492,7 @@ void CGrannyMaterialPalette::SetMaterialImagePointer(const char* c_szImageName, 
 		int iStage;
 		if (roMtrl->IsIn(c_szImageName, &iStage))
 		{
-			const auto pkNewMtrl=new CGrannyMaterial;
+			CGrannyMaterial* pkNewMtrl=new CGrannyMaterial;
 			pkNewMtrl->Copy(*roMtrl.GetPointer());
 			pkNewMtrl->SetImagePointer(iStage, pImage);
 			roMtrl=pkNewMtrl;
@@ -436,7 +514,7 @@ void CGrannyMaterialPalette::SetMaterialData(const char* c_szMtrlName, const SMa
 			int iStage;
 			if (roMtrl->IsIn(c_szMtrlName, &iStage))
 			{
-				const auto pkNewMtrl=new CGrannyMaterial;
+				CGrannyMaterial* pkNewMtrl=new CGrannyMaterial;
 				pkNewMtrl->Copy(*roMtrl.GetPointer());
 				pkNewMtrl->SetImagePointer(iStage, c_rkMaterialData.pImage);
 				pkNewMtrl->SetSpecularInfo(c_rkMaterialData.isSpecularEnable, c_rkMaterialData.fSpecularPower, c_rkMaterialData.bSphereMapIndex);
@@ -451,21 +529,21 @@ void CGrannyMaterialPalette::SetMaterialData(const char* c_szMtrlName, const SMa
 		std::vector<CGrannyMaterial::TRef>::iterator i;
 		for (i=m_mtrlVector.begin(); i!=m_mtrlVector.end(); ++i)
 		{
-			const CGrannyMaterial::TRef& roMtrl=*i;
+			CGrannyMaterial::TRef& roMtrl=*i;
 			roMtrl->SetSpecularInfo(c_rkMaterialData.isSpecularEnable, c_rkMaterialData.fSpecularPower, c_rkMaterialData.bSphereMapIndex);
 		}
 	}
 }
 
-void CGrannyMaterialPalette::SetSpecularInfo(const char* c_szMtrlName, BOOL bEnable, float fPower) const
+void CGrannyMaterialPalette::SetSpecularInfo(const char* c_szMtrlName, BOOL bEnable, float fPower)
 {
-	const DWORD size=m_mtrlVector.size();
+	DWORD size=(DWORD)(m_mtrlVector.size());
 	DWORD i;
 	if (c_szMtrlName)
 	{
 		for (i=0; i<size; ++i)
 		{
-			const CGrannyMaterial::TRef& roMtrl=m_mtrlVector[i];
+			CGrannyMaterial::TRef& roMtrl=m_mtrlVector[i];
 
 			int iStage;
 			if (roMtrl->IsIn(c_szMtrlName, &iStage))
@@ -479,7 +557,7 @@ void CGrannyMaterialPalette::SetSpecularInfo(const char* c_szMtrlName, BOOL bEna
 	{
 		for (i=0; i<size; ++i)
 		{
-			const CGrannyMaterial::TRef& roMtrl=m_mtrlVector[i];
+			CGrannyMaterial::TRef& roMtrl=m_mtrlVector[i];
 			roMtrl->SetSpecularInfo(bEnable, fPower, 0);
 		}
 	}
@@ -487,24 +565,24 @@ void CGrannyMaterialPalette::SetSpecularInfo(const char* c_szMtrlName, BOOL bEna
 
 DWORD CGrannyMaterialPalette::RegisterMaterial(granny_material* pgrnMaterial)
 {
-	const DWORD size=m_mtrlVector.size();
+	DWORD size=(DWORD)(m_mtrlVector.size());
 	DWORD i;
 	for (i=0; i<size; ++i)
 	{
-		const CGrannyMaterial::TRef& roMtrl=m_mtrlVector[i];
+		CGrannyMaterial::TRef& roMtrl=m_mtrlVector[i];
 		if (roMtrl->IsEqual(pgrnMaterial))
 			return i;
 	}
 
-	const auto pkNewMtrl=new CGrannyMaterial;
+	CGrannyMaterial* pkNewMtrl=new CGrannyMaterial;
 	pkNewMtrl->CreateFromGrannyMaterialPointer(pgrnMaterial);
-	m_mtrlVector.emplace_back(pkNewMtrl);
+	m_mtrlVector.push_back(pkNewMtrl);
 
 	return size;
 }
 
 DWORD CGrannyMaterialPalette::GetMaterialCount() const
 {
-	return m_mtrlVector.size();
+	return (DWORD)(m_mtrlVector.size());
 }
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

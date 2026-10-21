@@ -166,13 +166,13 @@ BOOL NRaceData::LoadEffectData(CTextFileLoader & rTextFileLoader, TAttachingEffe
 
 	if (!rTextFileLoader.GetTokenPosition("effectposition",&pEffectData->v3Position))
 	{
-		pEffectData->v3Position = D3DXVECTOR3(0.0f,0.0f,0.0f);
+		pEffectData->v3Position = Vector3(0.0f,0.0f,0.0f);
 	}
 
 	if (!rTextFileLoader.GetTokenPosition("effectrotation",&pEffectData->v3Rotation))
 	{
-		//pEffectData->qRotation = D3DXQUATERNION(0.0f,0.0f,0.0f,1.0f);
-		pEffectData->v3Rotation = D3DXVECTOR3(0.0f,0.0f,0.0f);
+		//pEffectData->qRotation = Quaternion(0.0f,0.0f,0.0f,1.0f);
+		pEffectData->v3Rotation = Vector3(0.0f,0.0f,0.0f);
 	}
 
 	/*if (!*/

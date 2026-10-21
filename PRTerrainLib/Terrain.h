@@ -84,14 +84,14 @@ class CTerrainImpl
 		virtual ~CTerrainImpl();
 
 		TTerrainSplatPatch &	GetTerrainSplatPatch() {return m_TerrainSplatPatch;}
-		DWORD					GetNumTextures() const { return ms_pTextureSet->GetTextureCount(); }
-		TTerrainTexture &		GetTexture(const long & c_rlTextureNum) const { return ms_pTextureSet->GetTexture(c_rlTextureNum); }
+		DWORD					GetNumTextures()						{ return ms_pTextureSet->GetTextureCount(); }
+		TTerrainTexture &		GetTexture(const long & c_rlTextureNum)	{ return ms_pTextureSet->GetTexture(c_rlTextureNum); }
 // 		int						GetHeightTileMapRatio()					{ return m_iHeightTileRatio; }
 
 		bool					LoadWaterMap(const char * c_szWaterMapName);
 		bool					LoadWaterMapFile(const char * c_szWaterMapName);
 
-		LPDIRECT3DTEXTURE9		GetShadowTexture() const { return m_lpShadowTexture; }
+		ID3D11ShaderResourceView*	GetShadowTexture()						{ return m_lpShadowTexture; }
 
 		DWORD					GetShadowMapColor(float fx, float fy) const;
 
@@ -109,7 +109,7 @@ class CTerrainImpl
 		__forceinline WORD		GetHeightMapValue(short sx, short sy) const;
 
 	protected:
-		LPDIRECT3DTEXTURE9		m_lpAlphaTexture[MAXTERRAINTEXTURES];
+		ID3D11ShaderResourceView*	m_lpAlphaTexture[MAXTERRAINTEXTURES];
 		WORD					m_awRawHeightMap[HEIGHTMAP_RAW_YSIZE*HEIGHTMAP_RAW_XSIZE];
 
 		BYTE 					m_abyTileMap[TILEMAP_RAW_YSIZE*TILEMAP_RAW_XSIZE];
@@ -138,7 +138,7 @@ class CTerrainImpl
 
 		//////////////////////////////////////////////////////////////////////////
 		// Shadow Map
-		LPDIRECT3DTEXTURE9		m_lpShadowTexture;
+		ID3D11ShaderResourceView*	m_lpShadowTexture;
 		WORD					m_awShadowMap[SHADOWMAP_YSIZE*SHADOWMAP_XSIZE];	// 16bit R5 G6 B5
 
 	protected:
@@ -152,4 +152,4 @@ __forceinline WORD CTerrainImpl::GetHeightMapValue(short sx, short sy) const
 }
 
 #endif // !defined(AFX_TERRAIN_H__1C9108E1_69A7_4392_9B68_0E6CD4E1BFBA__INCLUDED_)
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

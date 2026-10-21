@@ -1,22 +1,37 @@
 #include "StdAfx.h"
 #include "../eterBase/Random.h"
-#include "../eterLib/StateManager.h"
+#include "../eterLib/ShaderManager.h"
+#include "../eterLib/ShaderInit.h"
+#include "../eterLib/GrpBase.h"
 #include "ParticleSystemData.h"
 #include "ParticleSystemInstance.h"
 #include "ParticleInstance.h"
-#include "../EterBase/MapPerformance.h"
-#include <array>
+#include "EffectInstance.h"
+#include "GpuParticlePool.h"
+
+#include <algorithm>
+
+extern void BeginParticleShaderRender();
+extern void EndParticleShaderRender();
 
 CDynamicPool<CParticleSystemInstance>	CParticleSystemInstance::ms_kPool;
+std::vector<CParticleSystemInstance::ParticleBatchEntry> CParticleSystemInstance::ms_BatchBuffer;
+std::vector<ParticleGPUInput> CParticleSystemInstance::ms_csInputBuffer;
 
 using namespace NEffectUpdateDecorator;
 
 void CParticleSystemInstance::DestroySystem()
 {
 	ms_kPool.Destroy();
+	ms_BatchBuffer.clear();
+	ms_BatchBuffer.shrink_to_fit();
+	ms_csInputBuffer.clear();
+	ms_csInputBuffer.shrink_to_fit();
+
+	// Shutdown GPU particle pool
+	CGpuParticlePool::Instance().Shutdown();
 
 	CParticleInstance::DestroySystem();
-	//CRayParticleInstance::DestroySystem();
 }
 
 CParticleSystemInstance* CParticleSystemInstance::New()
@@ -30,7 +45,7 @@ void CParticleSystemInstance::Delete(CParticleSystemInstance* pkPSInst)
 	ms_kPool.Free(pkPSInst);
 }
 
-DWORD CParticleSystemInstance::GetEmissionCount() const
+DWORD CParticleSystemInstance::GetEmissionCount()
 {
 	return m_dwCurrentEmissionCount;
 }
@@ -40,21 +55,21 @@ void CParticleSystemInstance::CreateParticles(float fElapsedTime)
 	float fEmissionCount;
 	m_pEmitterProperty->GetEmissionCountPerSecond(m_fLocalTime, &fEmissionCount);
 
-	const float fCreatingValue = fEmissionCount * (fElapsedTime / 1.0f) + m_fEmissionResidue;
+	float fCreatingValue = fEmissionCount * (fElapsedTime / 1.0f) + m_fEmissionResidue;
 	int iCreatingCount = int(fCreatingValue);
 	m_fEmissionResidue = fCreatingValue - iCreatingCount;
 
-	const int icurEmissionCount = GetEmissionCount();
-	const int iMaxEmissionCount = int(m_pEmitterProperty->GetMaxEmissionCount());
-	const int iNextEmissionCount = int(icurEmissionCount + iCreatingCount);
+	int icurEmissionCount = GetEmissionCount();
+	int iMaxEmissionCount = int(m_pEmitterProperty->GetMaxEmissionCount());
+	int iNextEmissionCount = int(icurEmissionCount + iCreatingCount);
 	iCreatingCount -= max(0, iNextEmissionCount - iMaxEmissionCount);
 
 	float fLifeTime = 0.0f;
 	float fEmittingSize = 0.0f;
-	D3DXVECTOR3 _v3TimePosition;
-	D3DXVECTOR3 _v3Velocity;
+	Vector3 _v3TimePosition;
+	Vector3 _v3Velocity;
 	float fVelocity = 0.0f;
-	D3DXVECTOR2 v2HalfSize;
+	Vector2 v2HalfSize;
 	float fLieRotation = 0;
 	if (iCreatingCount)
 	{
@@ -79,16 +94,16 @@ void CParticleSystemInstance::CreateParticles(float fElapsedTime)
 
 		if (BILLBOARD_TYPE_LIE == m_pParticleProperty->m_byBillboardType && mc_pmatLocal)
 		{
-			const float fsx = mc_pmatLocal->_32;
-			const float fcx = sqrtf(1.0f - fsx * fsx);
+			float fsx = mc_pmatLocal->_32;
+			float fcx = sqrtf(1.0f - fsx * fsx);
 
 			if (fcx >= 0.00001f)
-				fLieRotation = D3DXToDegree(atan2f(-mc_pmatLocal->_12, mc_pmatLocal->_22));
+				fLieRotation = ToDegree(atan2f(-mc_pmatLocal->_12, mc_pmatLocal->_22));
 		}
 
 	}
 
-	CParticleInstance * pFirstInstance = nullptr;
+	CParticleInstance * pFirstInstance = 0;
 
 	for (int i = 0; i < iCreatingCount; ++i)
 	{
@@ -115,7 +130,7 @@ void CParticleSystemInstance::CreateParticles(float fElapsedTime)
 				pInstance->m_v3Position.x = frandom(-500.0f, 500.0f);
 				pInstance->m_v3Position.y = frandom(-500.0f, 500.0f);
 				pInstance->m_v3Position.z = 0.0f;
-				D3DXVec3Normalize(&pInstance->m_v3Position, &pInstance->m_v3Position);
+				Vec3Normalize(&pInstance->m_v3Position, &pInstance->m_v3Position);
 
 				if (m_pEmitterProperty->isEmitFromEdge())
 				{
@@ -137,7 +152,7 @@ void CParticleSystemInstance::CreateParticles(float fElapsedTime)
 				pInstance->m_v3Position.x = frandom(-500.0f, 500.0f);
 				pInstance->m_v3Position.y = frandom(-500.0f, 500.0f);
 				pInstance->m_v3Position.z = frandom(-500.0f, 500.0f);
-				D3DXVec3Normalize(&pInstance->m_v3Position, &pInstance->m_v3Position);
+				Vec3Normalize(&pInstance->m_v3Position, &pInstance->m_v3Position);
 
 				if (m_pEmitterProperty->isEmitFromEdge())
 				{
@@ -151,17 +166,16 @@ void CParticleSystemInstance::CreateParticles(float fElapsedTime)
 		}
 
 		// Position
-		D3DXVECTOR3 v3TimePosition=_v3TimePosition;
+		Vector3 v3TimePosition=_v3TimePosition;
 
 		pInstance->m_v3Position += v3TimePosition;
 
 		if (mc_pmatLocal && !m_pParticleProperty->m_bAttachFlag)
 		{
-			D3DXVec3TransformCoord(&pInstance->m_v3Position,&pInstance->m_v3Position,mc_pmatLocal);
-			D3DXVec3TransformCoord(&v3TimePosition, &v3TimePosition, mc_pmatLocal);
+			Vec3TransformCoord(&pInstance->m_v3Position,&pInstance->m_v3Position,mc_pmatLocal);
+			Vec3TransformCoord(&v3TimePosition, &v3TimePosition, mc_pmatLocal);
 		}
 		pInstance->m_v3StartPosition = v3TimePosition;
-		//pInstance->m_v3LastPosition = pInstance->m_v3Position;
 
 		// Direction & Velocity
 		pInstance->m_v3Velocity.x = 0.0f;
@@ -171,7 +185,7 @@ void CParticleSystemInstance::CreateParticles(float fElapsedTime)
 		if (CEmitterProperty::EMITTER_ADVANCED_TYPE_INNER == m_pEmitterProperty->GetEmitterAdvancedType())
 		{
 			auto val = (pInstance->m_v3Position-v3TimePosition);
-			D3DXVec3Normalize(&pInstance->m_v3Velocity, &val);
+			Vec3Normalize(&pInstance->m_v3Velocity, &val);
 			pInstance->m_v3Velocity *= -100.0f;
 		}
 		else if (CEmitterProperty::EMITTER_ADVANCED_TYPE_OUTER == m_pEmitterProperty->GetEmitterAdvancedType())
@@ -185,15 +199,15 @@ void CParticleSystemInstance::CreateParticles(float fElapsedTime)
 			else
 			{
 				auto val = (pInstance->m_v3Position-v3TimePosition);
-				D3DXVec3Normalize(&pInstance->m_v3Velocity, &val);
+				Vec3Normalize(&pInstance->m_v3Velocity, &val);
 				pInstance->m_v3Velocity *= 100.0f;
 			}
 		}
 
-		D3DXVECTOR3 v3Velocity = _v3Velocity;
+		Vector3 v3Velocity = _v3Velocity;
 		if (mc_pmatLocal && !m_pParticleProperty->m_bAttachFlag)
 		{
-			D3DXVec3TransformNormal(&v3Velocity, &v3Velocity, mc_pmatLocal);
+			Vec3TransformNormal(&v3Velocity, &v3Velocity, mc_pmatLocal);
 		}
 
 		pInstance->m_v3Velocity += v3Velocity;
@@ -247,7 +261,6 @@ void CParticleSystemInstance::CreateParticles(float fElapsedTime)
 			pInstance->m_v3LastPosition = pInstance->m_v3Position - (pInstance->m_v3Velocity * fElapsedTime);
 			pInstance->m_v2Scale.x = m_pParticleProperty->m_TimeEventScaleX.front().m_Value;
 			pInstance->m_v2Scale.y= m_pParticleProperty->m_TimeEventScaleY.front().m_Value;
-			//pInstance->m_v2Scale = m_pParticleProperty->m_TimeEventScaleXY.front().m_Value;
 #ifdef WORLD_EDITOR
 			pInstance->m_Color.r = m_pParticleProperty->m_TimeEventColorRed.front().m_Value;
 			pInstance->m_Color.g = m_pParticleProperty->m_TimeEventColorGreen.front().m_Value;
@@ -275,7 +288,6 @@ void CParticleSystemInstance::CreateParticles(float fElapsedTime)
 
 bool CParticleSystemInstance::OnUpdate(float fElapsedTime)
 {
-	MapPerformance::Scope updateProfile("effects.particles_update");
 	bool bMakeParticle = true;
 
 	/////
@@ -300,20 +312,20 @@ bool CParticleSystemInstance::OnUpdate(float fElapsedTime)
 	/////
 
 	int dwFrameIndex;
-	const int dwFrameCount = m_pParticleProperty->GetTextureAnimationFrameCount();
+	int dwFrameCount = m_pParticleProperty->GetTextureAnimationFrameCount();
 
 	float fAngularVelocity;
 	m_pEmitterProperty->GetEmittingAngularVelocity(m_fLocalTime,&fAngularVelocity);
 
 	if (fAngularVelocity && !m_pParticleProperty->m_bAttachFlag)
 	{
-		const auto val = D3DXVECTOR3(0.0f,0.0f,1.0f);
-		D3DXVec3TransformNormal(&m_pParticleProperty->m_v3ZAxis,&val,mc_pmatLocal);
+		auto val = Vector3(0.0f,0.0f,1.0f);
+		Vec3TransformNormal(&m_pParticleProperty->m_v3ZAxis,&val,mc_pmatLocal);
 	}
 
 	for (dwFrameIndex = 0; dwFrameIndex < dwFrameCount; dwFrameIndex++)
 	{
-		auto itor = m_ParticleInstanceListVector[dwFrameIndex].begin();
+		TParticleInstanceList::iterator itor = m_ParticleInstanceListVector[dwFrameIndex].begin();
 		for (; itor != m_ParticleInstanceListVector[dwFrameIndex].end();)
 		{
 			CParticleInstance * pInstance = *itor;
@@ -329,12 +341,8 @@ bool CParticleSystemInstance::OnUpdate(float fElapsedTime)
 			{
 				if (pInstance->m_byFrameIndex != dwFrameIndex)
 				{
-                    // Move the existing list node; texture animation used to
-                    // allocate and free a node for every migrated particle.
-                    auto moved = itor++;
-                    auto& destination = m_ParticleInstanceListVector[dwFrameCount+pInstance->m_byFrameIndex];
-                    destination.splice(destination.end(), m_ParticleInstanceListVector[dwFrameIndex], moved);
-                    MapPerformance::Count(MapPerformance::Counter::ParticleMoves);
+					m_ParticleInstanceListVector[dwFrameCount+pInstance->m_byFrameIndex].push_back(*itor);
+					itor = m_ParticleInstanceListVector[dwFrameIndex].erase(itor);
 				}
 				else
 					++itor;
@@ -353,121 +361,311 @@ bool CParticleSystemInstance::OnUpdate(float fElapsedTime)
 	return true;
 }
 
-namespace NParticleRenderer
+//////////////////////////////////////////////////////////////////////////
+// Batched Particle Rendering
+//////////////////////////////////////////////////////////////////////////
+
+void CParticleSystemInstance::RenderBatched(const Matrix* pAttachMatrix, int facesPerParticle, const float fRotations[])
 {
-struct Batch
+	for (DWORD dwFrameIndex = 0; dwFrameIndex < m_kVct_pkImgInst.size(); dwFrameIndex++)
+	{
+		SHADERMANAGER.SetShaderResource(0, m_kVct_pkImgInst[dwFrameIndex]->GetTextureReference().GetD3DTexture());
+
+		ms_BatchBuffer.clear();
+
+		TParticleInstanceList::iterator itor = m_ParticleInstanceListVector[dwFrameIndex].begin();
+		for (; itor != m_ParticleInstanceListVector[dwFrameIndex].end(); ++itor)
+		{
+			CParticleInstance* pInstance = *itor;
+
+			if (!InFrustum(pInstance))
+				continue;
+
+			DWORD dwColor = pInstance->GetColor();
+
+			for (int face = 0; face < facesPerParticle; face++)
+			{
+				if (fRotations[face] == 0.0f)
+					pInstance->Transform(pAttachMatrix);
+				else
+					pInstance->Transform(pAttachMatrix, fRotations[face]);
+
+				ParticleBatchEntry entry;
+				memcpy(entry.verts, pInstance->GetParticleMeshPointer(), sizeof(TPTVertex) * 4);
+				entry.dwColor = dwColor;
+				ms_BatchBuffer.push_back(entry);
+			}
+		}
+
+		FlushParticleBatch();
+	}
+}
+
+void CParticleSystemInstance::FlushParticleBatch()
 {
-    struct Vertex { D3DXVECTOR3 position; DWORD diffuse; D3DXVECTOR2 texCoord; };
-    static constexpr unsigned QuadCapacity = 128;
-    static constexpr unsigned Capacity = QuadCapacity * 4;
-    Vertex vertices[Capacity];
-    unsigned count = 0;
-    DWORD lastColor = 0;
-    bool hasColor = false;
-    bool enabled = true;
-    void Flush()
-    {
-        if (!count) return;
-        MapPerformance::Scope submit("effects.particle_submit");
-        static const auto indices = [] {
-            std::array<WORD, QuadCapacity * 6> result{};
-            static constexpr unsigned corners[6] = {0, 1, 2, 2, 1, 3};
-            for (unsigned quad = 0; quad < QuadCapacity; ++quad)
-                for (unsigned corner = 0; corner < 6; ++corner)
-                    result[quad * 6 + corner] = static_cast<WORD>(quad * 4 + corners[corner]);
-            return result;
-        }();
-        STATEMANAGER.DrawIndexedPrimitiveUP(D3DPT_TRIANGLELIST, 0, count, count / 2,
-            indices.data(), D3DFMT_INDEX16, vertices, sizeof(Vertex));
-        MapPerformance::Count(MapPerformance::Counter::ParticleBatches);
-        count = 0;
-    }
-    void Append(CParticleInstance* particle)
-    {
-        if (count + 4 > Capacity) Flush();
-        const TPTVertex* quad = particle->GetParticleMeshPointer();
-        const DWORD color = particle->GetColor();
-        if (!enabled)
-        {
-            STATEMANAGER.DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(TPTVertex));
-            MapPerformance::Count(MapPerformance::Counter::ParticleQuads);
-            MapPerformance::Count(MapPerformance::Counter::ParticleBatches);
-            return;
-        }
-        for (unsigned corner = 0; corner < 4; ++corner)
-        {
-            auto& out = vertices[count++];
-            out.position = quad[corner].position;
-            out.diffuse = color;
-            out.texCoord = quad[corner].texCoord;
-        }
-        lastColor = color; hasColor = true;
-        MapPerformance::Count(MapPerformance::Counter::ParticleQuads);
-    }
-};
-struct Renderer
+	if (ms_BatchBuffer.empty())
+		return;
+
+	static const UINT MAX_BATCH_QUADS = 512;
+
+	std::stable_sort(ms_BatchBuffer.begin(), ms_BatchBuffer.end(),
+		[](const ParticleBatchEntry& a, const ParticleBatchEntry& b) {
+			return a.dwColor < b.dwColor;
+		});
+
+	size_t totalQuads = ms_BatchBuffer.size();
+	size_t offset = 0;
+
+	while (offset < totalQuads)
+	{
+		size_t chunkSize = totalQuads - offset;
+		if (chunkSize > MAX_BATCH_QUADS)
+			chunkSize = MAX_BATCH_QUADS;
+
+		UINT dataBytes = (UINT)(chunkSize * 4 * sizeof(TPTVertex));
+
+		// Map dynamic VB and copy all quad vertices contiguously
+		CShaderManager::MappedDynamicVB mapped;
+		if (!SHADERMANAGER.MapDynamicVB(dataBytes, mapped))
+		{
+			offset += chunkSize;
+			continue;
+		}
+
+		TPTVertex* pDest = (TPTVertex*)mapped.pData;
+		for (size_t i = 0; i < chunkSize; i++)
+		{
+			memcpy(pDest, ms_BatchBuffer[offset + i].verts, sizeof(TPTVertex) * 4);
+			pDest += 4;
+		}
+
+		SHADERMANAGER.UnmapDynamicVB();
+		SHADERMANAGER.AdvanceDynamicVBOffset(dataBytes);
+
+		// Bind multi-rect index buffer
+		CGraphicBase::SetDefaultIndexBuffer(CGraphicBase::DEFAULT_IB_FILL_RECT_MULTI);
+
+		// Draw per color group
+		UINT stride = sizeof(TPTVertex);
+		UINT vbByteOffset = mapped.byteOffset;
+		size_t groupStart = 0;
+		DWORD currentColor = ms_BatchBuffer[offset].dwColor;
+
+		for (size_t i = 1; i <= chunkSize; i++)
+		{
+			bool isEnd = (i == chunkSize);
+			bool colorChanged = !isEnd && (ms_BatchBuffer[offset + i].dwColor != currentColor);
+
+			if (isEnd || colorChanged)
+			{
+				UINT groupSize = (UINT)(i - groupStart);
+				SHADERMANAGER.SetParticleColor(currentColor);
+				SHADERMANAGER.DrawBatchedQuads(stride, vbByteOffset, (UINT)groupStart, groupSize);
+
+				if (!isEnd)
+				{
+					groupStart = i;
+					currentColor = ms_BatchBuffer[offset + i].dwColor;
+				}
+			}
+		}
+
+		offset += chunkSize;
+	}
+}
+
+void CParticleSystemInstance::ContributeToBatch()
 {
-    Batch& batch;
-    const D3DXMATRIX* matrix;
-    unsigned faces;
-    Renderer(Batch& batch, const D3DXMATRIX* matrix, unsigned faces) : batch(batch), matrix(matrix), faces(faces) {}
-    void Flush() const { batch.Flush(); }
-    void operator()(CParticleInstance* particle) const
-    {
-        if (faces == 2)
-        {
-            particle->Transform(matrix, D3DXToRadian(-30.0f), !batch.enabled); batch.Append(particle);
-            particle->Transform(matrix, D3DXToRadian(+30.0f), !batch.enabled); batch.Append(particle);
-        }
-        else if (faces == 3)
-        {
-            particle->Transform(matrix, !batch.enabled); batch.Append(particle);
-            particle->Transform(matrix, D3DXToRadian(-60.0f), !batch.enabled); batch.Append(particle);
-            particle->Transform(matrix, D3DXToRadian(+60.0f), !batch.enabled); batch.Append(particle);
-        }
-        else
-        {
-            particle->Transform(matrix, !batch.enabled); batch.Append(particle);
-        }
-    }
-};
+	SHADERMANAGER.StatsNotePSIContribution();
+
+	// Determine face count + rotations like OnRender would
+	int facesPerParticle = 1;
+	float rotations[3] = { 0.0f, 0.0f, 0.0f };
+	if (m_pParticleProperty->m_byBillboardType == BILLBOARD_TYPE_2FACE)
+	{
+		facesPerParticle = 2;
+		rotations[0] = ToRadian(-30.0f);
+		rotations[1] = ToRadian(30.0f);
+	}
+	else if (m_pParticleProperty->m_byBillboardType == BILLBOARD_TYPE_3FACE)
+	{
+		facesPerParticle = 3;
+		rotations[0] = 0.0f;
+		rotations[1] = ToRadian(-60.0f);
+		rotations[2] = ToRadian(60.0f);
+	}
+
+	const UINT psiFlags = (UINT)m_pParticleProperty->m_byBillboardType
+		| (m_pParticleProperty->m_bStretchFlag ? 0x10 : 0);
+	// (no 0x20 attach flag here — attach PSIs take the per-PSI path)
+
+	for (DWORD dwFrameIndex = 0; dwFrameIndex < m_kVct_pkImgInst.size(); ++dwFrameIndex)
+	{
+		ID3D11ShaderResourceView* pTex = m_kVct_pkImgInst[dwFrameIndex]
+			->GetTextureReference().GetD3DTexture();
+		if (!pTex)
+			continue;
+
+		CShaderManager::ParticleBatchKey key = {};
+		key.pTexture = pTex;
+		key.srcBlend = m_pParticleProperty->m_bySrcBlendType;
+		key.destBlend = m_pParticleProperty->m_byDestBlendType;
+		key.colorOp = m_pParticleProperty->m_byColorOperationType;
+		key.facesPerParticle = (BYTE)facesPerParticle;
+		key.stretchFlag = m_pParticleProperty->m_bStretchFlag ? 1 : 0;
+		key.rot0 = rotations[0];
+		key.rot1 = rotations[1];
+		key.rot2 = rotations[2];
+
+		TParticleInstanceList::iterator itor = m_ParticleInstanceListVector[dwFrameIndex].begin();
+		for (; itor != m_ParticleInstanceListVector[dwFrameIndex].end(); ++itor)
+		{
+			CParticleInstance* pInstance = *itor;
+			if (!InFrustum(pInstance))
+				continue;
+
+			ParticleGPUInput input;
+			input.posX = pInstance->m_v3Position.x;
+			input.posY = pInstance->m_v3Position.y;
+			input.posZ = pInstance->m_v3Position.z;
+			input.lastPosX = pInstance->m_v3LastPosition.x;
+			input.lastPosY = pInstance->m_v3LastPosition.y;
+			input.lastPosZ = pInstance->m_v3LastPosition.z;
+			input.halfW = pInstance->m_v2HalfSize.x;
+			input.halfH = pInstance->m_v2HalfSize.y;
+			input.scaleX = pInstance->m_v2Scale.x;
+			input.scaleY = pInstance->m_v2Scale.y;
+			input.rotation = ToRadian(pInstance->m_fRotation);
+			input.color = pInstance->GetColor();
+			input.flags = psiFlags;
+			input._pad[0] = 0.0f;
+			input._pad[1] = 0.0f;
+			input._pad[2] = 0.0f;
+
+			SHADERMANAGER.AddParticleToBatch(key, input);
+		}
+	}
+}
+
+void CParticleSystemInstance::RenderBatchedCS(const Matrix* pAttachMatrix, int facesPerParticle, const float fRotations[])
+{
+	for (DWORD dwFrameIndex = 0; dwFrameIndex < m_kVct_pkImgInst.size(); dwFrameIndex++)
+	{
+		SHADERMANAGER.SetShaderResource(0, m_kVct_pkImgInst[dwFrameIndex]->GetTextureReference().GetD3DTexture());
+
+		ms_csInputBuffer.clear();
+
+		TParticleInstanceList::iterator itor = m_ParticleInstanceListVector[dwFrameIndex].begin();
+		for (; itor != m_ParticleInstanceListVector[dwFrameIndex].end(); ++itor)
+		{
+			CParticleInstance* pInstance = *itor;
+
+			if (!InFrustum(pInstance))
+				continue;
+
+			ParticleGPUInput input;
+			input.posX = pInstance->m_v3Position.x;
+			input.posY = pInstance->m_v3Position.y;
+			input.posZ = pInstance->m_v3Position.z;
+			input.lastPosX = pInstance->m_v3LastPosition.x;
+			input.lastPosY = pInstance->m_v3LastPosition.y;
+			input.lastPosZ = pInstance->m_v3LastPosition.z;
+			input.halfW = pInstance->m_v2HalfSize.x;
+			input.halfH = pInstance->m_v2HalfSize.y;
+			input.scaleX = pInstance->m_v2Scale.x;
+			input.scaleY = pInstance->m_v2Scale.y;
+			input.rotation = ToRadian(pInstance->m_fRotation);
+			input.color = pInstance->GetColor();
+			input.flags = (UINT)m_pParticleProperty->m_byBillboardType
+				| (m_pParticleProperty->m_bStretchFlag ? 0x10 : 0)
+				| (m_pParticleProperty->m_bAttachFlag ? 0x20 : 0);
+			input._pad[0] = 0.0f;
+			input._pad[1] = 0.0f;
+			input._pad[2] = 0.0f;
+			ms_csInputBuffer.push_back(input);
+		}
+
+		if (ms_csInputBuffer.empty())
+			continue;
+
+		UINT totalParticles = (UINT)ms_csInputBuffer.size();
+		float fRots[3] = { fRotations[0],
+			facesPerParticle > 1 ? fRotations[1] : 0.0f,
+			facesPerParticle > 2 ? fRotations[2] : 0.0f };
+
+		UINT offset = 0;
+		while (offset < totalParticles)
+		{
+			UINT chunkSize = min(totalParticles - offset, CShaderManager::MAX_CS_PARTICLES);
+
+			if (!SHADERMANAGER.DispatchParticleBillboardCS(
+					ms_csInputBuffer.data() + offset, chunkSize,
+					(UINT)facesPerParticle, fRots, pAttachMatrix))
+				break;
+
+			UINT quadCount = chunkSize * (UINT)facesPerParticle;
+			SHADERMANAGER.DrawParticleCSOutput(quadCount);
+			offset += chunkSize;
+		}
+	}
 }
 
 void CParticleSystemInstance::OnRender()
 {
-    MapPerformance::Scope profile("effects.particles_render");
-    CScreen::Identity();
-    STATEMANAGER.SetRenderState(D3DRS_SRCBLEND, m_pParticleProperty->m_bySrcBlendType);
-    STATEMANAGER.SetRenderState(D3DRS_DESTBLEND, m_pParticleProperty->m_byDestBlendType);
-    STATEMANAGER.SetTextureStageState(0, D3DTSS_COLOROP, m_pParticleProperty->m_byColorOperationType);
-    // Each quad's old texture-factor color is constant across its vertices.
-    // Diffuse color preserves it while allowing differently colored quads in
-    // one ordered draw. Restore the state expected by following effect meshes.
-    DWORD oldColorArg = 0, oldAlphaArg = 0, secondColorOp = 0;
-    STATEMANAGER.GetTextureStageState(0, D3DTSS_COLORARG1, &oldColorArg);
-    STATEMANAGER.GetTextureStageState(0, D3DTSS_ALPHAARG1, &oldAlphaArg);
-    STATEMANAGER.GetTextureStageState(1, D3DTSS_COLOROP, &secondColorOp);
-    const DWORD oldLighting = STATEMANAGER.GetRenderState(D3DRS_LIGHTING);
-    DWORD oldFVF = 0; STATEMANAGER.GetFVF(&oldFVF);
-    NParticleRenderer::Batch batch;
-    batch.enabled = oldColorArg == D3DTA_TFACTOR && oldAlphaArg == D3DTA_TFACTOR && secondColorOp == D3DTOP_DISABLE;
-    if (batch.enabled)
-    {
-        STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_DIFFUSE);
-        STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_DIFFUSE);
-        STATEMANAGER.SetRenderState(D3DRS_LIGHTING, FALSE);
-        STATEMANAGER.SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1);
-    }
-    const unsigned type = m_pParticleProperty->m_byBillboardType;
-    const unsigned faces = type == BILLBOARD_TYPE_2FACE ? 2u : type == BILLBOARD_TYPE_3FACE ? 3u : 1u;
-    if (type <= BILLBOARD_TYPE_3FACE)
-        ForEachParticleRendering(NParticleRenderer::Renderer(batch, m_pParticleProperty->m_bAttachFlag ? mc_pmatLocal : nullptr, faces));
-    batch.Flush();
-    if (batch.hasColor) STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, batch.lastColor);
-    STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG1, oldColorArg);
-    STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG1, oldAlphaArg);
-    STATEMANAGER.SetRenderState(D3DRS_LIGHTING, oldLighting);
-    STATEMANAGER.SetFVF(oldFVF);
+	CScreen::Identity();
+
+	if (CEffectInstance::ms_bBatchRenderState
+		&& SHADERMANAGER.IsParticleBatchingActive()
+		&& SHADERMANAGER.IsComputeParticlesAvailable()
+		&& !m_pParticleProperty->m_bAttachFlag)
+	{
+		ContributeToBatch();
+		return;
+	}
+
+	if (!CEffectInstance::ms_bBatchRenderState)
+		BeginParticleShaderRender();
+	else
+		SHADERMANAGER.BeginParticle();
+
+	SHADERMANAGER.SetPipelineState(PSTATE_SRCBLEND, m_pParticleProperty->m_bySrcBlendType);
+	SHADERMANAGER.SetPipelineState(PSTATE_DESTBLEND, m_pParticleProperty->m_byDestBlendType);
+	SHADERMANAGER.SetParticleColorOp(m_pParticleProperty->m_byColorOperationType);
+
+	const Matrix* pAttachMatrix = m_pParticleProperty->m_bAttachFlag ? mc_pmatLocal : NULL;
+
+	bool bUseCS = SHADERMANAGER.IsComputeParticlesAvailable();
+
+	if (bUseCS)
+		SHADERMANAGER.BeginParticlePCT();
+
+	if (m_pParticleProperty->m_byBillboardType < BILLBOARD_TYPE_2FACE)
+	{
+		float rotations[] = { 0.0f };
+		if (bUseCS)
+			RenderBatchedCS(pAttachMatrix, 1, rotations);
+		else
+			RenderBatched(pAttachMatrix, 1, rotations);
+	}
+	else if (m_pParticleProperty->m_byBillboardType == BILLBOARD_TYPE_2FACE)
+	{
+		float rotations[] = { ToRadian(-30.0f), ToRadian(30.0f) };
+		if (bUseCS)
+			RenderBatchedCS(pAttachMatrix, 2, rotations);
+		else
+			RenderBatched(pAttachMatrix, 2, rotations);
+	}
+	else if (m_pParticleProperty->m_byBillboardType == BILLBOARD_TYPE_3FACE)
+	{
+		float rotations[] = { 0.0f, ToRadian(-60.0f), ToRadian(60.0f) };
+		if (bUseCS)
+			RenderBatchedCS(pAttachMatrix, 3, rotations);
+		else
+			RenderBatched(pAttachMatrix, 3, rotations);
+	}
+
+	if (!CEffectInstance::ms_bBatchRenderState)
+		EndParticleShaderRender();
 }
 
 void CParticleSystemInstance::OnSetDataPointer(CEffectElementBase * pElement)
@@ -533,4 +731,3 @@ CParticleSystemInstance::~CParticleSystemInstance()
 	assert(m_ParticleInstanceListVector.empty());
 	assert(m_kVct_pkImgInst.empty());
 }
-

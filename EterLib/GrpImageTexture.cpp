@@ -1,24 +1,91 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
+#include <climits>
 #include "../eterBase/MappedFile.h"
 #include "../eterPack/EterPackManager.h"
+#include "../eterImageLib/TGAImage.h"
 #include "GrpImageTexture.h"
-#include "../EterBase/MapPerformance.h"
+#include "JpegFile.h"
+#include <vector>
+#include <wincodec.h>
+#include <stb_image.h>
 
-bool CGraphicImageTexture::Lock(int* pRetPitch, void** ppRetPixels, int level) const
+#pragma comment(lib, "windowscodecs.lib")
+
+// Helper to check if file extension matches
+
+
+
+
+// Helper function to get bytes per pixel for a format
+static UINT GetBytesPerPixel(DXGI_FORMAT format)
 {
-	D3DLOCKED_RECT lockedRect;
-	if (FAILED(m_lpd3dTexture->LockRect(level, &lockedRect, nullptr, 0)))
+	switch (format)
+	{
+	case DXGI_FORMAT_R32G32B32A32_FLOAT:	return 16;
+	case DXGI_FORMAT_R16G16B16A16_FLOAT:	return 8;
+	case DXGI_FORMAT_R8G8B8A8_UNORM:
+	case DXGI_FORMAT_B8G8R8A8_UNORM:
+	case DXGI_FORMAT_B8G8R8X8_UNORM:		return 4;
+	case DXGI_FORMAT_B5G6R5_UNORM:
+	case DXGI_FORMAT_B5G5R5A1_UNORM:
+	case DXGI_FORMAT_B4G4R4A4_UNORM:
+	case DXGI_FORMAT_R8G8_UNORM:			return 2;
+	case DXGI_FORMAT_R8_UNORM:
+	case DXGI_FORMAT_A8_UNORM:				return 1;
+	default:								return 4;
+	}
+}
+
+bool CGraphicImageTexture::Lock(int* pRetPitch, void** ppRetPixels, int level)
+{
+	if (!m_pTexture || !ms_pContext)
 		return false;
 
-	*pRetPitch = lockedRect.Pitch;
-	*ppRetPixels = (void*)lockedRect.pBits;
+	D3D11_TEXTURE2D_DESC texDesc;
+	m_pTexture->GetDesc(&texDesc);
+	if (texDesc.Format == DXGI_FORMAT_BC1_UNORM ||
+		texDesc.Format == DXGI_FORMAT_BC2_UNORM ||
+		texDesc.Format == DXGI_FORMAT_BC3_UNORM)
+		return false;
+
+	// Create a staging texture if not already created
+	if (!m_pStagingTexture)
+	{
+		D3D11_TEXTURE2D_DESC desc;
+		m_pTexture->GetDesc(&desc);
+
+		D3D11_TEXTURE2D_DESC stagingDesc = desc;
+		stagingDesc.Usage = D3D11_USAGE_STAGING;
+		stagingDesc.BindFlags = 0;
+		stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
+		stagingDesc.MiscFlags = 0;
+
+		if (FAILED(ms_pDevice->CreateTexture2D(&stagingDesc, nullptr, &m_pStagingTexture)))
+			return false;
+
+		// Copy current texture to staging
+		ms_pContext->CopyResource(m_pStagingTexture, m_pTexture);
+	}
+
+	D3D11_MAPPED_SUBRESOURCE mapped;
+	if (FAILED(ms_pContext->Map(m_pStagingTexture, level, D3D11_MAP_READ_WRITE, 0, &mapped)))
+		return false;
+
+	*pRetPitch = mapped.RowPitch;
+	*ppRetPixels = mapped.pData;
 	return true;
 }
 
-void CGraphicImageTexture::Unlock(int level) const
+void CGraphicImageTexture::Unlock(int level)
 {
-	assert(m_lpd3dTexture != nullptr);
-	m_lpd3dTexture->UnlockRect(level);
+	if (!m_pStagingTexture || !ms_pContext)
+		return;
+
+	ms_pContext->Unmap(m_pStagingTexture, level);
+
+	// Copy staging back to GPU texture
+	ms_pContext->CopyResource(m_pTexture, m_pStagingTexture);
 }
 
 void CGraphicImageTexture::Initialize()
@@ -26,30 +93,57 @@ void CGraphicImageTexture::Initialize()
 	CGraphicTexture::Initialize();
 
 	m_stFileName = "";
-
-	m_d3dFmt=D3DFMT_UNKNOWN;
-	m_dwFilter=0;
+	m_dxgiFmt = DXGI_FORMAT_UNKNOWN;
+	m_dwFilter = 0;
+	m_pStagingTexture = nullptr;
 }
 
 void CGraphicImageTexture::Destroy()
 {
-	CGraphicTexture::Destroy();
+	if (m_pStagingTexture)
+	{
+		m_pStagingTexture->Release();
+		m_pStagingTexture = nullptr;
+	}
 
+	CGraphicTexture::Destroy();
 	Initialize();
 }
 
 bool CGraphicImageTexture::CreateDeviceObjects()
 {
-	assert(ms_lpd3dDevice != nullptr);
-	assert(m_lpd3dTexture == nullptr);
+	assert(ms_pDevice != NULL);
+	assert(m_pTexture == NULL);
 
 	if (m_stFileName.empty())
 	{
-		DWORD usage = 0;
-		if (m_d3dFmt == D3DFMT_A8R8G8B8 || m_d3dFmt == D3DFMT_A4R4G4B4)
-			usage = D3DUSAGE_DYNAMIC;
+		D3D11_TEXTURE2D_DESC desc = {};
+		desc.Width = m_width;
+		desc.Height = m_height;
+		desc.MipLevels = 1;
+		desc.ArraySize = 1;
+		desc.Format = m_dxgiFmt;
+		desc.SampleDesc.Count = 1;
+		desc.SampleDesc.Quality = 0;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		desc.CPUAccessFlags = 0;
+		desc.MiscFlags = 0;
 
-		if (FAILED(ms_lpd3dDevice->CreateTexture(m_width, m_height, 1, usage, m_d3dFmt, D3DPOOL_DEFAULT, &m_lpd3dTexture, nullptr)))
+		UINT pixelSize = GetBytesPerPixel(m_dxgiFmt);
+		UINT rowPitch = m_width * pixelSize;
+		UINT totalSize = rowPitch * m_height;
+		std::vector<BYTE> initData(totalSize, 0);  // All zeros = transparent black
+
+		D3D11_SUBRESOURCE_DATA subresourceData = {};
+		subresourceData.pSysMem = initData.data();
+		subresourceData.SysMemPitch = rowPitch;
+		subresourceData.SysMemSlicePitch = 0;
+
+		if (FAILED(ms_pDevice->CreateTexture2D(&desc, &subresourceData, &m_pTexture)))
+			return false;
+
+		if (!CreateShaderResourceView())
 			return false;
 	}
 	else
@@ -60,8 +154,7 @@ bool CGraphicImageTexture::CreateDeviceObjects()
 		if (!CEterPackManager::Instance().Get(mappedFile, m_stFileName.c_str(), &c_pvMap))
 			return false;
 
-		//@fixme002
-		if (!CreateFromMemoryFile(mappedFile.Size(), c_pvMap, m_d3dFmt, m_dwFilter))
+		if (!CreateFromMemoryFile(mappedFile.Size(), c_pvMap, m_dxgiFmt, m_stFileName.c_str(), m_dwFilter))
 		{
 			TraceError("CGraphicImageTexture::CreateDeviceObjects: CreateFromMemoryFile: texture not found(%s)", m_stFileName.c_str());
 			return false;
@@ -73,207 +166,153 @@ bool CGraphicImageTexture::CreateDeviceObjects()
 	return true;
 }
 
-bool CGraphicImageTexture::Create(UINT width, UINT height, D3DFORMAT d3dFmt, DWORD dwFilter)
+bool CGraphicImageTexture::Create(UINT width, UINT height, DXGI_FORMAT dxgiFmt, DWORD dwFilter)
 {
-	assert(ms_lpd3dDevice != nullptr);
+	assert(ms_pDevice != NULL);
 	Destroy();
 
 	m_width = width;
 	m_height = height;
-	m_d3dFmt = d3dFmt;
+	m_dxgiFmt = dxgiFmt;
 	m_dwFilter = dwFilter;
 
 	return CreateDeviceObjects();
 }
 
-void CGraphicImageTexture::CreateFromTexturePointer(const CGraphicTexture * c_pSrcTexture)
+void CGraphicImageTexture::CreateFromTexturePointer(const CGraphicTexture* c_pSrcTexture)
 {
-	if (m_lpd3dTexture)
-		m_lpd3dTexture->Release();
+	if (m_pTexture)
+	{
+		m_pTexture->Release();
+		m_pTexture = nullptr;
+	}
+	if (m_pSRV)
+	{
+		m_pSRV->Release();
+		m_pSRV = nullptr;
+	}
 
 	m_width = c_pSrcTexture->GetWidth();
 	m_height = c_pSrcTexture->GetHeight();
-	m_lpd3dTexture = c_pSrcTexture->GetD3DTexture();
+	m_pTexture = c_pSrcTexture->GetTexture();
+	m_pSRV = c_pSrcTexture->GetSRV();
 
-	if (m_lpd3dTexture)
-		m_lpd3dTexture->AddRef();
+	if (m_pTexture)
+		m_pTexture->AddRef();
+	if (m_pSRV)
+		m_pSRV->AddRef();
 
 	m_bEmpty = false;
 }
+
+
 
 bool CGraphicImageTexture::CreateDDSTexture(CDXTCImage& image, const BYTE*)
 {
     MapPerformance::Scope profile("texture.dds_upload", m_stFileName.c_str());
-    // Keep driver-format conversion in the existing D3DX fallback.
-    if (!ms_bSupportDXT) return false;
-    const D3DFORMAT format = image.m_CompFormat == PF_DXT5 ? D3DFMT_DXT5 :
-        image.m_CompFormat == PF_DXT3 ? D3DFMT_DXT3 : D3DFMT_DXT1;
+    const bool compressed = image.m_CompFormat != PF_ARGB;
+    const DXGI_FORMAT format = image.m_CompFormat == PF_DXT1 ? DXGI_FORMAT_BC1_UNORM :
+        image.m_CompFormat == PF_DXT3 ? DXGI_FORMAT_BC2_UNORM :
+        image.m_CompFormat == PF_DXT5 ? DXGI_FORMAT_BC3_UNORM : DXGI_FORMAT_B8G8R8A8_UNORM;
     const UINT bias = IsLowTextureMemory() && image.m_dwMipMapCount > 1 ? 1 : 0;
     const UINT levels = image.m_dwMipMapCount - bias;
-    const UINT width = max(1U, static_cast<UINT>(image.m_nWidth) >> bias);
-    const UINT height = max(1U, static_cast<UINT>(image.m_nHeight) >> bias);
-    IDirect3DTexture9* staging = nullptr;
-    IDirect3DTexture9* texture = nullptr;
-    HRESULT hr = MapPerformance::Measure("texture.dds_allocate", m_stFileName.c_str(), [&] {
-        return ms_lpd3dDevice->CreateTexture(width, height, levels, 0, format,
-            D3DPOOL_DEFAULT, &texture, nullptr);
-    });
-    if (SUCCEEDED(hr)) hr = ms_lpd3dDevice->CreateTexture(width, height, levels, 0, format,
-        D3DPOOL_SYSTEMMEM, &staging, nullptr);
-    if (SUCCEEDED(hr))
+    const UINT width = max(1U, UINT(image.m_nWidth) >> bias);
+    const UINT height = max(1U, UINT(image.m_nHeight) >> bias);
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = width; desc.Height = height; desc.MipLevels = levels; desc.ArraySize = 1;
+    desc.Format = format; desc.SampleDesc.Count = 1; desc.Usage = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    std::vector<D3D11_SUBRESOURCE_DATA> data(levels);
+    std::vector<std::vector<DWORD>> converted(compressed ? 0 : levels);
+    auto channel = [](DWORD value, DWORD mask, BYTE missing) -> BYTE {
+        if (!mask) return missing;
+        unsigned shift = 0; while (!(mask & 1)) { ++shift; mask >>= 1; }
+        return BYTE((uint64_t((value >> shift) & mask) * 255) / mask);
+    };
+    for (UINT mip = 0; mip < levels; ++mip)
     {
-        MapPerformance::Scope copy("texture.dds_copy", m_stFileName.c_str());
-        for (UINT level = 0; level < levels; ++level)
+        const UINT source = mip + bias, w = max(1U, width >> mip), h = max(1U, height >> mip);
+        if (!image.m_pbCompBufferByLevels[source]) return false;
+        data[mip].pSysMem = image.m_pbCompBufferByLevels[source];
+        data[mip].SysMemPitch = image.m_compRowBytes[source];
+        if (!compressed)
         {
-            D3DLOCKED_RECT locked{};
-            hr = staging->LockRect(level, &locked, nullptr, 0);
-            if (FAILED(hr)) break;
-            const bool copied = image.Copy(level + bias, static_cast<BYTE*>(locked.pBits), locked.Pitch);
-            hr = staging->UnlockRect(level);
-            if (!copied) hr = D3DERR_INVALIDCALL;
-            if (FAILED(hr)) break;
+            converted[mip].resize(size_t(w) * h);
+            const UINT bytesPerPixel = image.m_xddPixelFormat.dwRGBBitCount / 8;
+            for (UINT y = 0; y < h; ++y)
+                for (UINT x = 0; x < w; ++x)
+                {
+                    DWORD value = 0;
+                    memcpy(&value, image.m_pbCompBufferByLevels[source] + size_t(y) * image.m_compRowBytes[source] + x * bytesPerPixel, bytesPerPixel);
+                    const auto& pf = image.m_xddPixelFormat;
+                    BYTE r = channel(value, pf.dwRBitMask, 0), g = channel(value, pf.dwGBitMask, 0), b = channel(value, pf.dwBBitMask, 0);
+                    BYTE a = channel(value, pf.dwRGBAlphaBitMask, 255);
+                    if (r == 255 && g == 0 && b == 255) a = 0;
+                    converted[mip][size_t(y) * w + x] = PackColor(a, r, g, b);
+                }
+            data[mip].pSysMem = converted[mip].data();
+            data[mip].SysMemPitch = w * 4;
         }
     }
-    if (SUCCEEDED(hr)) hr = MapPerformance::Measure("texture.dds_transfer", m_stFileName.c_str(), [&] {
-        return ms_lpd3dDevice->UpdateTexture(staging, texture);
+    const HRESULT hr = MapPerformance::Measure("texture.dds_transfer", m_stFileName.c_str(), [&] {
+        return ms_pDevice->CreateTexture2D(&desc, data.data(), &m_pTexture);
     });
-    if (staging) staging->Release();
-    if (FAILED(hr))
-    {
-        if (texture) texture->Release();
-        return false;
-    }
-    m_lpd3dTexture = texture;
-    m_width = width; m_height = height; m_bEmpty = false;
+    if (FAILED(hr)) return false;
+    if (!CreateShaderResourceView()) { m_pTexture->Release(); m_pTexture = nullptr; return false; }
+    m_width = width; m_height = height; m_Format = format; m_bEmpty = false;
     return true;
 }
 
-bool CGraphicImageTexture::CreateFromMemoryFile(UINT bufSize, const void * c_pvBuf, D3DFORMAT d3dFmt, DWORD dwFilter)
+bool CGraphicImageTexture::CreateFromMemoryFile(UINT size, const void* bytes, DXGI_FORMAT, const char* fileName, DWORD)
 {
-	assert(ms_lpd3dDevice != nullptr);
-	assert(m_lpd3dTexture == nullptr);
-
-	CDXTCImage image;
-    MapPerformance::Scope profile("texture.load", m_stFileName.c_str());
-
-	const bool parsedDDS = image.LoadHeaderFromMemory((const BYTE*)c_pvBuf, bufSize);
-    const UINT fallbackBias = parsedDDS && IsLowTextureMemory() && image.m_dwMipMapCount > 1 ? 1 : 0;
-    if (parsedDDS && CreateDDSTexture(image, (const BYTE*)c_pvBuf))
-	{
-		return true;
-	}
-	else
-	{
-        MapPerformance::Scope fallback("texture.legacy_upload", m_stFileName.c_str());
-		D3DXIMAGE_INFO imageInfo;
-		if (FAILED(D3DXGetImageInfoFromFileInMemory(c_pvBuf, bufSize, &imageInfo)))
-		{
-			TraceError("CreateFromMemoryFile: Cannot GetImageInfo from texture");
-			return false;
-		}
-        if (parsedDDS)
-        {
-            imageInfo.Width = max(1U, imageInfo.Width >> fallbackBias);
-            imageInfo.Height = max(1U, imageInfo.Height >> fallbackBias);
-            if (!ms_bSupportDXT) d3dFmt = image.m_CompFormat == PF_DXT1 ? D3DFMT_A1R5G5B5 : D3DFMT_A4R4G4B4;
-        }
-		if (FAILED(D3DXCreateTextureFromFileInMemoryEx(
-					ms_lpd3dDevice,
-					c_pvBuf,
-					bufSize,
-					imageInfo.Width,
-					imageInfo.Height,
-                    parsedDDS ? image.m_dwMipMapCount - fallbackBias : D3DX_DEFAULT,
-					0,
-					d3dFmt,
-					D3DPOOL_DEFAULT,
-					dwFilter,
-					dwFilter,
-					0xffff00ff,
-					nullptr,
-					nullptr,
-					&m_lpd3dTexture)))
-		{
-			TraceError("CreateFromMemoryFile: Cannot create texture");
-			return false;
-		}
-
-		m_width = imageInfo.Width;
-		m_height = imageInfo.Height;
-        if (parsedDDS) { m_bEmpty = false; return true; }
-
-		D3DFORMAT format=imageInfo.Format;
-		switch(imageInfo.Format) {
-			case D3DFMT_A8R8G8B8:
-				format = D3DFMT_A4R4G4B4;
-				break;
-
-			case D3DFMT_X8R8G8B8:
-			case D3DFMT_R8G8B8:
-				format = D3DFMT_A1R5G5B5;
-				break;
-		}
-
-		UINT uTexBias=0;
-
-		extern bool GRAPHICS_CAPS_HALF_SIZE_IMAGE;
-		if (GRAPHICS_CAPS_HALF_SIZE_IMAGE)
-			uTexBias=1;
-
-		if (IsLowTextureMemory())
-		if (uTexBias || format!=imageInfo.Format)
-		{
-			IDirect3DTexture9* pkTexSrc=m_lpd3dTexture;
-			IDirect3DTexture9* pkTexDst;
-
-			if (SUCCEEDED(D3DXCreateTexture(
-				ms_lpd3dDevice,
-				imageInfo.Width>>uTexBias,
-				imageInfo.Height>>uTexBias,
-				imageInfo.MipLevels,
-				0,
-				format,
-				D3DPOOL_DEFAULT,
-				&pkTexDst)))
-			{
-				m_lpd3dTexture=pkTexDst;
-
-				for(int i=0; i<imageInfo.MipLevels; ++i) {
-					IDirect3DSurface9* ppsSrc = nullptr;
-					IDirect3DSurface9* ppsDst = nullptr;
-
-					if (SUCCEEDED(pkTexSrc->GetSurfaceLevel(i, &ppsSrc)))
-					{
-						if (SUCCEEDED(pkTexDst->GetSurfaceLevel(i, &ppsDst)))
-						{
-							D3DXLoadSurfaceFromSurface(ppsDst, nullptr, nullptr, ppsSrc, nullptr, nullptr, D3DX_FILTER_LINEAR, 0);
-							ppsDst->Release();
-						}
-						ppsSrc->Release();
-					}
-				}
-
-				pkTexSrc->Release();
-			}
-		}
-	}
-
-	m_bEmpty = false;
-	return true;
+    MapPerformance::Scope profile("texture.load", fileName);
+    if (!ms_pDevice || !ms_pContext || !bytes || !size || size > INT_MAX || m_pTexture) return false;
+    if (size >= 4 && memcmp(bytes, "DDS ", 4) == 0)
+    {
+        CDXTCImage image;
+        return image.LoadHeaderFromMemory(static_cast<const BYTE*>(bytes), int(size)) && CreateDDSTexture(image, static_cast<const BYTE*>(bytes));
+    }
+    int w = 0, h = 0, channels = 0;
+    const auto* input = static_cast<const stbi_uc*>(bytes);
+    if (!stbi_info_from_memory(input, int(size), &w, &h, &channels) ||
+        w <= 0 || h <= 0 || w > 16384 || h > 16384 || uint64_t(w) * h * 4 > 256ULL * 1024 * 1024) return false;
+    stbi_uc* pixels = MapPerformance::Measure("texture.image_decode", fileName, [&] {
+        return stbi_load_from_memory(input, int(size), &w, &h, &channels, 4);
+    });
+    if (!pixels) return false;
+    for (size_t i = 0, count = size_t(w) * h; i < count; ++i)
+        if (pixels[i * 4] == 255 && pixels[i * 4 + 1] == 0 && pixels[i * 4 + 2] == 255) pixels[i * 4 + 3] = 0;
+    UINT support = 0;
+    const bool generateMips = SUCCEEDED(ms_pDevice->CheckFormatSupport(DXGI_FORMAT_R8G8B8A8_UNORM, &support)) &&
+        (support & D3D11_FORMAT_SUPPORT_MIP_AUTOGEN) && (w > 1 || h > 1);
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = w; desc.Height = h; desc.MipLevels = generateMips ? 0 : 1; desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_DEFAULT; desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    if (generateMips) { desc.BindFlags |= D3D11_BIND_RENDER_TARGET; desc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS; }
+    D3D11_SUBRESOURCE_DATA data{}; data.pSysMem = pixels; data.SysMemPitch = UINT(w) * 4;
+    HRESULT hr = ms_pDevice->CreateTexture2D(&desc, generateMips ? nullptr : &data, &m_pTexture);
+    if (SUCCEEDED(hr) && generateMips) ms_pContext->UpdateSubresource(m_pTexture, 0, nullptr, pixels, UINT(w) * 4, 0);
+    stbi_image_free(pixels);
+    if (FAILED(hr)) return false;
+    if (!CreateShaderResourceView()) { m_pTexture->Release(); m_pTexture = nullptr; return false; }
+    if (generateMips) ms_pContext->GenerateMips(m_pSRV);
+    m_width = w; m_height = h; m_Format = DXGI_FORMAT_R8G8B8A8_UNORM; m_bEmpty = false;
+    return true;
 }
 
-void CGraphicImageTexture::SetFileName(const char * c_szFileName)
+void CGraphicImageTexture::SetFileName(const char* c_szFileName)
 {
-	m_stFileName=c_szFileName;
+	m_stFileName = c_szFileName;
 }
 
-bool CGraphicImageTexture::CreateFromDiskFile(const char * c_szFileName, D3DFORMAT d3dFmt, DWORD dwFilter)
+bool CGraphicImageTexture::CreateFromDiskFile(const char* c_szFileName, DXGI_FORMAT dxgiFmt, DWORD dwFilter)
 {
 	Destroy();
 
 	SetFileName(c_szFileName);
 
-	m_d3dFmt = d3dFmt;
+	m_dxgiFmt = dxgiFmt;
 	m_dwFilter = dwFilter;
 	return CreateDeviceObjects();
 }
@@ -287,4 +326,3 @@ CGraphicImageTexture::~CGraphicImageTexture()
 {
 	Destroy();
 }
-

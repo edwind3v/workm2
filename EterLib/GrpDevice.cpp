@@ -1,9 +1,15 @@
 #include "StdAfx.h"
 #include "GrpDevice.h"
 #include "GrpTextInstance.h"
-#include "DX11Probe.h"
+#include "MatrixStack.h"
+#include "ShaderManager.h"
+#include "VTFInstanceManager.h"
+#include "VolumetricFog.h"
 #include "../eterBase/Stl.h"
 #include "../eterBase/Debug.h"
+
+#include <dxgi1_2.h>
+#include <intrin.h>
 
 bool GRAPHICS_CAPS_CAN_NOT_DRAW_LINE = false;
 bool GRAPHICS_CAPS_CAN_NOT_DRAW_SHADOW = false;
@@ -11,12 +17,20 @@ bool GRAPHICS_CAPS_HALF_SIZE_IMAGE = false;
 bool GRAPHICS_CAPS_CAN_NOT_TEXTURE_ADDRESS_BORDER = false;
 bool GRAPHICS_CAPS_SOFTWARE_TILING = false;
 
-D3DPRESENT_PARAMETERS g_kD3DPP;
-bool g_isBrowserMode=false;
+bool g_isBrowserMode = false;
 RECT g_rcBrowser;
 
+static CShaderManager gs_kShaderManager;
+
+static CVTFInstanceManager gs_kVTFInstanceManager;
+static CVolumetricFog gs_kVolumetricFog;
+
+bool CPU_HAS_SSE2 = true;
+
+
 CGraphicDevice::CGraphicDevice()
-: m_uBackBufferCount(0)
+	: m_uBackBufferCount(1)
+	, m_bWindowed(true)
 {
 	__Initialize();
 }
@@ -28,703 +42,1147 @@ CGraphicDevice::~CGraphicDevice()
 
 void CGraphicDevice::__Initialize()
 {
-	ms_iD3DAdapterInfo=D3DADAPTER_DEFAULT;
-	ms_iD3DDevInfo=D3DADAPTER_DEFAULT;
-	ms_iD3DModeInfo=D3DADAPTER_DEFAULT;
+	ms_iD3DAdapterInfo = 0;
+	ms_iD3DDevInfo = 0;
+	ms_iD3DModeInfo = 0;
 
-	ms_lpd3d			= nullptr;
-	ms_lpd3dDevice		= nullptr;
-	ms_lpd3dMatStack	= nullptr;
+	ms_pDevice = nullptr;
+	ms_pContext = nullptr;
+	ms_pSwapChain = nullptr;
+	ms_pRenderTargetView = nullptr;
+	ms_pDepthStencilView = nullptr;
+	ms_pDepthStencilBuffer = nullptr;
+	ms_pMatrixStack = nullptr;
+
+#ifdef ENABLE_MSAA
+	ms_pMSAARenderTarget = nullptr;
+	ms_pMSAARenderTargetView = nullptr;
+	ms_pMSAADepthStencilBuffer = nullptr;
+	ms_pMSAADepthStencilView = nullptr;
+	ms_uMSAASampleCount = 1;
+#endif
+
+#ifdef ENABLE_SSAO
+	ms_pDepthStencilSRV = nullptr;
+	ms_pDepthStencilViewReadOnly = nullptr;
+#ifdef ENABLE_MSAA
+	ms_pMSAADepthStencilSRV = nullptr;
+#endif
+	ms_pResolvedDepthTex = nullptr;
+	ms_pResolvedDepthRTV = nullptr;
+	ms_pResolvedDepthSRV = nullptr;
+	ms_pSSAO_RT = nullptr;
+	ms_pSSAO_RTV = nullptr;
+	ms_pSSAO_SRV = nullptr;
+	ms_pSSAOBlur_RT = nullptr;
+	ms_pSSAOBlur_RTV = nullptr;
+	ms_pSSAOBlur_SRV = nullptr;
+	ms_bSSAOEnabled = true;
+#endif
+
+#ifdef ENABLE_BLOOM
+	ms_pSceneTexture = nullptr;
+	ms_pSceneTextureRTV = nullptr;
+	ms_pSceneTextureSRV = nullptr;
+	ms_pBloomRTA = nullptr;
+	ms_pBloomRTA_RTV = nullptr;
+	ms_pBloomRTA_SRV = nullptr;
+	ms_pBloomRTB = nullptr;
+	ms_pBloomRTB_RTV = nullptr;
+	ms_pBloomRTB_SRV = nullptr;
+	ms_bBloomEnabled = true;
+#ifdef ENABLE_GODRAYS
+	ms_pGodRaysRT = nullptr;
+	ms_pGodRaysRTV = nullptr;
+	ms_pGodRaysSRV = nullptr;
+#endif
+#endif
+
 
 	ms_dwWavingEndTime = 0;
 	ms_dwFlashingEndTime = 0;
 
-	m_pStateManager		= nullptr;
-#ifdef ENABLE_FIX_MOBS_LAG
-	m_isPDTResetPending = false;
-#endif
+	ZeroMemory(&m_SwapChainDesc, sizeof(m_SwapChainDesc));
 
 	__InitializeDefaultIndexBufferList();
 	__InitializePDTVertexBufferList();
 }
 
-void CGraphicDevice::RegisterWarningString(UINT uiMsg, const char * c_szString)
+void CGraphicDevice::RegisterWarningString(UINT uiMsg, const char* c_szString)
 {
 	m_kMap_strWarningMessage[uiMsg] = c_szString;
 }
 
 void CGraphicDevice::__WarningMessage(HWND hWnd, UINT uiMsg)
 {
-	if (!m_kMap_strWarningMessage.contains(uiMsg))
+	if (m_kMap_strWarningMessage.end() == m_kMap_strWarningMessage.find(uiMsg))
 		return;
-	MessageBox(hWnd, m_kMap_strWarningMessage[uiMsg].c_str(), "Warning", MB_OK|MB_TOPMOST);
+	MessageBox(hWnd, m_kMap_strWarningMessage[uiMsg].c_str(), "Warning", MB_OK | MB_TOPMOST);
 }
 
-void CGraphicDevice::MoveWebBrowserRect(const RECT& c_rcWebPage) const
+void CGraphicDevice::MoveWebBrowserRect(const RECT& c_rcWebPage)
 {
-	g_rcBrowser=c_rcWebPage;
+	g_rcBrowser = c_rcWebPage;
 }
 
-void CGraphicDevice::EnableWebBrowserMode(const RECT& c_rcWebPage) const
+void CGraphicDevice::EnableWebBrowserMode(const RECT& c_rcWebPage)
 {
-	if (!ms_lpd3dDevice)
-		return;
-
-	D3DPRESENT_PARAMETERS& rkD3DPP=ms_d3dPresentParameter;
-
-	g_isBrowserMode=true;
-
-	if (D3DSWAPEFFECT_COPY==rkD3DPP.SwapEffect)
-		return;
-
-	g_kD3DPP=rkD3DPP;
-	g_rcBrowser=c_rcWebPage;
-
-	//rkD3DPP.Windowed=TRUE;
-	rkD3DPP.SwapEffect=D3DSWAPEFFECT_COPY;
-	rkD3DPP.BackBufferCount = 1;
-	rkD3DPP.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
-	rkD3DPP.MultiSampleType = D3DMULTISAMPLE_NONE;
-	rkD3DPP.MultiSampleQuality = 0;
-
-#ifdef ENABLE_FIX_MOBS_LAG
-	if (!__ResetDeviceWithPDTBuffers())
-		return;
-#else
-	IDirect3DDevice9Ex& rkD3DDev=*ms_lpd3dDevice;
-	const HRESULT hr=rkD3DDev.ResetEx(&rkD3DPP, nullptr);
-	if (FAILED(hr))
-		return;
-#endif
-
-#ifndef ENABLE_FIX_MOBS_LAG
-	rkD3DDev.SetMaximumFrameLatency(1);
-	STATEMANAGER.SetDefaultState();
-#endif
+	g_isBrowserMode = true;
+	g_rcBrowser = c_rcWebPage;
 }
 
-void CGraphicDevice::DisableWebBrowserMode() const
+void CGraphicDevice::DisableWebBrowserMode()
 {
-	if (!ms_lpd3dDevice)
-		return;
-
-	D3DPRESENT_PARAMETERS& rkD3DPP=ms_d3dPresentParameter;
-
-	g_isBrowserMode=false;
-
-	rkD3DPP=g_kD3DPP;
-
-#ifdef ENABLE_FIX_MOBS_LAG
-	if (!__ResetDeviceWithPDTBuffers())
-		return;
-#else
-	IDirect3DDevice9Ex& rkD3DDev=*ms_lpd3dDevice;
-	const HRESULT hr=rkD3DDev.ResetEx(&rkD3DPP, nullptr);
-	if (FAILED(hr))
-		return;
-#endif
-
-#ifndef ENABLE_FIX_MOBS_LAG
-	rkD3DDev.SetMaximumFrameLatency(1);
-	STATEMANAGER.SetDefaultState();
-#endif
+	g_isBrowserMode = false;
 }
 
-bool CGraphicDevice::ResizeBackBuffer(UINT uWidth, UINT uHeight) const
+bool CGraphicDevice::ResizeBuffers(UINT uWidth, UINT uHeight)
 {
-	if (!ms_lpd3dDevice)
+#ifdef ENABLE_SSAO
+	const bool restoreSSAO = ms_bSSAOEnabled;
+#endif
+	if (!ms_pSwapChain || !ms_pDevice || !uWidth || !uHeight)
 		return false;
 
-	D3DPRESENT_PARAMETERS& rkD3DPP=ms_d3dPresentParameter;
-	if (rkD3DPP.Windowed)
+	if (m_SwapChainDesc.BufferDesc.Width == uWidth &&
+		m_SwapChainDesc.BufferDesc.Height == uHeight)
+		return true;
+
+	// Release existing back buffer resources
+	__ReleaseBackBufferResources();
+
+	// Resize swap chain buffers.
+	HRESULT hr = ms_pSwapChain->ResizeBuffers(
+		0,
+		uWidth,
+		uHeight,
+		m_SwapChainDesc.BufferDesc.Format,
+		m_SwapChainDesc.Flags
+	);
+
+	if (FAILED(hr))
 	{
-		if (rkD3DPP.BackBufferWidth!=uWidth || rkD3DPP.BackBufferHeight!=uHeight)
-		{
-			rkD3DPP.BackBufferWidth=uWidth;
-			rkD3DPP.BackBufferHeight=uHeight;
-
-#ifdef ENABLE_FIX_MOBS_LAG
-			if (!__ResetDeviceWithPDTBuffers())
-				return false;
-#else
-			IDirect3DDevice9Ex& rkD3DDev=*ms_lpd3dDevice;
-			const HRESULT hr=rkD3DDev.ResetEx(&rkD3DPP, nullptr);
-			if (FAILED(hr))
-			{
-				return false;
-			}
-#endif
-
-#ifndef ENABLE_FIX_MOBS_LAG
-			rkD3DDev.SetMaximumFrameLatency(1);
-			STATEMANAGER.SetDefaultState();
-#endif
-		}
+		TraceError("CGraphicDevice::ResizeBuffers - ResizeBuffers failed: 0x%08X", hr);
+		return false;
 	}
+
+	// Update stored dimensions
+	m_SwapChainDesc.BufferDesc.Width = uWidth;
+	m_SwapChainDesc.BufferDesc.Height = uHeight;
+	ms_iWidth = uWidth;
+	ms_iHeight = uHeight;
+
+	// Recreate render target view
+	if (!__CreateRenderTargetView())
+		return false;
+
+	// Recreate depth stencil view
+	if (!__CreateDepthStencilView(uWidth, uHeight))
+		return false;
+
+#ifdef ENABLE_MSAA
+	// Recreate MSAA resources at new size
+	__CreateMSAARenderTarget(uWidth, uHeight);
+#endif
+
+#ifdef ENABLE_BLOOM
+	// Recreate bloom resources at new size
+	if (!__CreateBloomResources(uWidth, uHeight))
+	{
+		Tracef("ResizeBuffers: Bloom resources not available at new size\n");
+		ms_bBloomEnabled = false;
+	}
+#endif
+
+#ifdef ENABLE_SSAO
+	if (!__CreateSSAOResources(uWidth, uHeight))
+	{
+		Tracef("ResizeBuffers: SSAO resources not available at new size\n");
+		ms_bSSAOEnabled = false;
+	}
+#endif
+
+
+	// Update viewport
+	ms_Viewport.Width = (float)uWidth;
+	ms_Viewport.Height = (float)uHeight;
+	ms_pContext->RSSetViewports(1, &ms_Viewport);
+#ifdef ENABLE_SSAO
+	ms_bSSAOEnabled = restoreSSAO && ms_pSSAO_RTV != nullptr;
+#endif
+
+	// Rebind render targets (MSAA if available)
+	ID3D11RenderTargetView* pRTV = GetRenderTargetView();
+	ID3D11DepthStencilView* pDSV = GetDepthStencilView();
+	ms_pContext->OMSetRenderTargets(1, &pRTV, pDSV);
+
+	if (SHADERMANAGER.IsInitialized())
+		SHADERMANAGER.SetDefaultState();
 
 	return true;
 }
 
-DWORD CGraphicDevice::CreatePNTStreamVertexShader() const
+CGraphicDevice::EDeviceState CGraphicDevice::GetDeviceState()
 {
-	assert(ms_lpd3dDevice != nullptr);
-	return D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1;
-}
-
-DWORD CGraphicDevice::CreatePNT2StreamVertexShader() const
-{
-	assert(ms_lpd3dDevice != nullptr);
-	return D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1 | D3DFVF_TEX2;
-}
-
-#ifdef ENABLE_FIX_MOBS_LAG
-CGraphicDevice::EDeviceState CGraphicDevice::GetDeviceState() const
-{
-	if (!ms_lpd3dDevice)
+	if (!ms_pDevice)
 		return DEVICESTATE_NULL;
 
-	const HRESULT state = ms_lpd3dDevice->CheckDeviceState(ms_hWnd);
-	if (state == D3DERR_DEVICENOTRESET || state == S_PRESENT_MODE_CHANGED)
-		return DEVICESTATE_NEEDS_RESET;
-	if (FAILED(state) || state == S_PRESENT_OCCLUDED)
+	// Check for device removal (driver crash/update)
+	HRESULT hr = ms_pDevice->GetDeviceRemovedReason();
+	if (FAILED(hr))
 		return DEVICESTATE_BROKEN;
-
-	// Retry a failed allocation even if ResetEx itself already succeeded.
-	return (m_smallPdtVertexBuffer && m_largePdtVertexBuffer && !m_isPDTResetPending)
-		? DEVICESTATE_OK : DEVICESTATE_NEEDS_RESET;
-}
-#else
-CGraphicDevice::EDeviceState CGraphicDevice::GetDeviceState() const
-{
-	if (!ms_lpd3dDevice)
-		return DEVICESTATE_NULL;
-
-	HRESULT hr;
-
-	if (ms_d3dPresentParameter.Windowed)
-	{
-		if (FAILED(hr = ms_lpd3dDevice->CheckDeviceState(ms_hWnd)))
-		{
-			if (D3DERR_DEVICELOST == hr || D3DERR_DEVICENOTRESET == hr)
-				return DEVICESTATE_NEEDS_RESET;
-			return DEVICESTATE_BROKEN;
-		}
-	}
-	else
-	{
-		if (FAILED(hr = ms_lpd3dDevice->TestCooperativeLevel()))
-		{
-			if (D3DERR_DEVICELOST == hr)
-				return DEVICESTATE_BROKEN;
-
-			if (D3DERR_DEVICENOTRESET == hr)
-				return DEVICESTATE_NEEDS_RESET;
-
-			return DEVICESTATE_BROKEN;
-		}
-	}
 
 	return DEVICESTATE_OK;
 }
 
-#endif
-
-void CGraphicDevice::LostDevice()
+bool CGraphicDevice::__CreateRenderTargetView()
 {
-	__DestroyPDTVertexBufferList();
-}
-
-void CGraphicDevice::ResetDevice()
-{
-	m_pStateManager->SetDefaultState();
-	__CreatePDTVertexBufferList();
-}
-
-#ifdef ENABLE_FIX_MOBS_LAG
-bool CGraphicDevice::__ResetDeviceWithPDTBuffers() const
-{
-	if (!ms_lpd3dDevice || !m_pStateManager)
-		return false;
-
-	// Keep explicit resize/browser resets pending if the device is unavailable.
-	m_isPDTResetPending = true;
-	const HRESULT state = ms_lpd3dDevice->CheckDeviceState(ms_hWnd);
-	if (state == S_PRESENT_OCCLUDED ||
-		(FAILED(state) && state != D3DERR_DEVICENOTRESET))
-		return false;
-
-	if (state == S_PRESENT_MODE_CHANGED && ms_d3dPresentParameter.Windowed)
+	// Get the back buffer
+	ID3D11Texture2D* pBackBuffer = nullptr;
+	HRESULT hr = ms_pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&pBackBuffer);
+	if (FAILED(hr))
 	{
-		D3DDISPLAYMODEEX desktopMode = {};
-		desktopMode.Size = sizeof(desktopMode);
-		if (FAILED(ms_lpd3d->GetAdapterDisplayModeEx(ms_iD3DAdapterInfo, &desktopMode, nullptr)))
-			return false;
-		ms_d3dPresentParameter.BackBufferFormat = desktopMode.Format;
-	}
-	__DestroyPDTVertexBufferList();
-	D3DDISPLAYMODEEX displayModeReset = {};
-	if (!ms_d3dPresentParameter.Windowed)
-	{
-		displayModeReset.Size = sizeof(D3DDISPLAYMODEEX);
-		displayModeReset.Width = ms_d3dPresentParameter.BackBufferWidth;
-		displayModeReset.Height = ms_d3dPresentParameter.BackBufferHeight;
-		displayModeReset.Format = ms_d3dPresentParameter.BackBufferFormat;
-		displayModeReset.RefreshRate = ms_d3dPresentParameter.FullScreen_RefreshRateInHz;
-		displayModeReset.ScanLineOrdering = D3DSCANLINEORDERING_PROGRESSIVE;
-	}
-	const HRESULT result = ms_lpd3dDevice->ResetEx(&ms_d3dPresentParameter,
-		ms_d3dPresentParameter.Windowed ? nullptr : &displayModeReset);
-	if (FAILED(result))
-	{
-		TraceError("Failed to reset device (0x%08X)", static_cast<unsigned>(result));
+		TraceError("Failed to get back buffer: 0x%08X", hr);
 		return false;
 	}
-	if (ms_d3dPresentParameter.Windowed)
-		ms_lpd3dDevice->SetMaximumFrameLatency(1);
-	m_isPDTResetPending = false;
-	m_pStateManager->SetDefaultState();
-	return __CreatePDTVertexBufferList();
-}
 
-bool CGraphicDevice::Reset() const
-{
-	if (!ms_lpd3dDevice || !m_pStateManager)
-		return false;
+	// Create render target view
+	hr = ms_pDevice->CreateRenderTargetView(pBackBuffer, nullptr, &ms_pRenderTargetView);
+	pBackBuffer->Release();
 
-	const HRESULT state = ms_lpd3dDevice->CheckDeviceState(ms_hWnd);
-	if (state == D3DERR_DEVICENOTRESET || state == S_PRESENT_MODE_CHANGED)
-		return __ResetDeviceWithPDTBuffers();
-	if (FAILED(state) || state == S_PRESENT_OCCLUDED)
-		return false;
-	if (m_isPDTResetPending)
-		return __ResetDeviceWithPDTBuffers();
-
-	if (!m_smallPdtVertexBuffer || !m_largePdtVertexBuffer)
+	if (FAILED(hr))
 	{
-		if (!__CreatePDTVertexBufferList())
-			return false;
-		m_pStateManager->SetDefaultState();
+		TraceError("Failed to create render target view: 0x%08X", hr);
+		return false;
 	}
+
 	return true;
 }
-#else
-bool CGraphicDevice::Reset() const
+
+bool CGraphicDevice::__CreateDepthStencilView(int width, int height)
 {
+	// Create depth stencil texture
+	D3D11_TEXTURE2D_DESC depthStencilDesc;
+	ZeroMemory(&depthStencilDesc, sizeof(depthStencilDesc));
+	depthStencilDesc.Width = width;
+	depthStencilDesc.Height = height;
+	depthStencilDesc.MipLevels = 1;
+	depthStencilDesc.ArraySize = 1;
+#ifdef ENABLE_SSAO
+	depthStencilDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+	depthStencilDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+#else
+	depthStencilDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	depthStencilDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+#endif
+	depthStencilDesc.SampleDesc.Count = 1;
+	depthStencilDesc.SampleDesc.Quality = 0;
+	depthStencilDesc.Usage = D3D11_USAGE_DEFAULT;
+	depthStencilDesc.CPUAccessFlags = 0;
+	depthStencilDesc.MiscFlags = 0;
+
+	HRESULT hr = ms_pDevice->CreateTexture2D(&depthStencilDesc, nullptr, &ms_pDepthStencilBuffer);
+	if (FAILED(hr))
+	{
+		TraceError("Failed to create depth stencil buffer: 0x%08X", hr);
+		return false;
+	}
+
+	// Create depth stencil view
+	D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc;
+	ZeroMemory(&dsvDesc, sizeof(dsvDesc));
+	dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+	dsvDesc.Texture2D.MipSlice = 0;
+
+	hr = ms_pDevice->CreateDepthStencilView(ms_pDepthStencilBuffer, &dsvDesc, &ms_pDepthStencilView);
+	if (FAILED(hr))
+	{
+		TraceError("Failed to create depth stencil view: 0x%08X", hr);
+		return false;
+	}
+
+#ifdef ENABLE_SSAO
+	// Create SRV for reading depth in SSAO shader
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+	ZeroMemory(&srvDesc, sizeof(srvDesc));
+	srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Texture2D.MipLevels = 1;
+	srvDesc.Texture2D.MostDetailedMip = 0;
+
+	hr = ms_pDevice->CreateShaderResourceView(ms_pDepthStencilBuffer, &srvDesc, &ms_pDepthStencilSRV);
+	if (FAILED(hr))
+	{
+		TraceError("Failed to create depth stencil SRV: 0x%08X", hr);
+		return false;
+	}
+
+	D3D11_DEPTH_STENCIL_VIEW_DESC dsvReadOnlyDesc = {};
+	dsvReadOnlyDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	dsvReadOnlyDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+	dsvReadOnlyDesc.Texture2D.MipSlice = 0;
+	dsvReadOnlyDesc.Flags = D3D11_DSV_READ_ONLY_DEPTH | D3D11_DSV_READ_ONLY_STENCIL;
+	hr = ms_pDevice->CreateDepthStencilView(ms_pDepthStencilBuffer, &dsvReadOnlyDesc, &ms_pDepthStencilViewReadOnly);
+	if (FAILED(hr))
+	{
+		TraceError("Failed to create read-only depth stencil view: 0x%08X", hr);
+		// Non-fatal — SSR will fall back to synth sky if this is missing.
+		ms_pDepthStencilViewReadOnly = nullptr;
+	}
+#endif
+
+	return true;
+}
+
+void CGraphicDevice::__ReleaseBackBufferResources()
+{
+	if (ms_pContext)
+		ms_pContext->OMSetRenderTargets(0, nullptr, nullptr);
+
+
+#ifdef ENABLE_SSAO
+	ms_bSSAOEnabled = false;
+	__ReleaseSSAOResources();
+#endif
+
+#ifdef ENABLE_BLOOM
+	__ReleaseBloomResources();
+#endif
+
+#ifdef ENABLE_MSAA
+	__ReleaseMSAAResources();
+#endif
+
+	if (ms_pRenderTargetView)
+	{
+		ms_pRenderTargetView->Release();
+		ms_pRenderTargetView = nullptr;
+	}
+
+	if (ms_pDepthStencilView)
+	{
+		ms_pDepthStencilView->Release();
+		ms_pDepthStencilView = nullptr;
+	}
+
+#ifdef ENABLE_SSAO
+	if (ms_pDepthStencilSRV)
+	{
+		ms_pDepthStencilSRV->Release();
+		ms_pDepthStencilSRV = nullptr;
+	}
+	if (ms_pDepthStencilViewReadOnly)
+	{
+		ms_pDepthStencilViewReadOnly->Release();
+		ms_pDepthStencilViewReadOnly = nullptr;
+	}
+#endif
+
+	if (ms_pDepthStencilBuffer)
+	{
+		ms_pDepthStencilBuffer->Release();
+		ms_pDepthStencilBuffer = nullptr;
+	}
+}
+
+#ifdef ENABLE_MSAA
+void CGraphicDevice::__ReleaseMSAAResources()
+{
+	if (ms_pMSAARenderTargetView)
+	{
+		ms_pMSAARenderTargetView->Release();
+		ms_pMSAARenderTargetView = nullptr;
+	}
+
+	if (ms_pMSAARenderTarget)
+	{
+		ms_pMSAARenderTarget->Release();
+		ms_pMSAARenderTarget = nullptr;
+	}
+
+	if (ms_pMSAADepthStencilView)
+	{
+		ms_pMSAADepthStencilView->Release();
+		ms_pMSAADepthStencilView = nullptr;
+	}
+
+#ifdef ENABLE_SSAO
+	if (ms_pMSAADepthStencilSRV)
+	{
+		ms_pMSAADepthStencilSRV->Release();
+		ms_pMSAADepthStencilSRV = nullptr;
+	}
+#endif
+
+	if (ms_pMSAADepthStencilBuffer)
+	{
+		ms_pMSAADepthStencilBuffer->Release();
+		ms_pMSAADepthStencilBuffer = nullptr;
+	}
+}
+
+bool CGraphicDevice::__CreateMSAARenderTarget(int width, int height)
+{
+	if (!ms_pDevice)
+		return false;
+
+	// Determine sample count with fallback
+	UINT sampleCount = m_requestedMSAASamples;
+	UINT qualityLevels = 0;
+
+	while (sampleCount > 1)
+	{
+		HRESULT hr = ms_pDevice->CheckMultisampleQualityLevels(
+			DXGI_FORMAT_B8G8R8A8_UNORM, sampleCount, &qualityLevels);
+
+		if (SUCCEEDED(hr) && qualityLevels > 0)
+			break;
+
+		sampleCount /= 2;  // Fall back: 4 -> 2 -> 1
+	}
+
+	ms_uMSAASampleCount = sampleCount;
+
+	if (sampleCount <= 1)
+	{
+		Tracef("MSAA: No multisampling support, running at 1x\n");
+		return true;  // Not an error, just no MSAA
+	}
+
+	Tracef("MSAA: Using %ux multisampling (quality levels: %u)\n", sampleCount, qualityLevels);
+
+	// Create MSAA color texture
+	D3D11_TEXTURE2D_DESC colorDesc;
+	ZeroMemory(&colorDesc, sizeof(colorDesc));
+	colorDesc.Width = width;
+	colorDesc.Height = height;
+	colorDesc.MipLevels = 1;
+	colorDesc.ArraySize = 1;
+	colorDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+	colorDesc.SampleDesc.Count = sampleCount;
+	colorDesc.SampleDesc.Quality = 0;
+	colorDesc.Usage = D3D11_USAGE_DEFAULT;
+	colorDesc.BindFlags = D3D11_BIND_RENDER_TARGET;
+
+	HRESULT hr = ms_pDevice->CreateTexture2D(&colorDesc, nullptr, &ms_pMSAARenderTarget);
+	if (FAILED(hr))
+	{
+		TraceError("MSAA: Failed to create color texture: 0x%08X", hr);
+		ms_uMSAASampleCount = 1;
+		return false;
+	}
+
+	// Create MSAA RTV
+	D3D11_RENDER_TARGET_VIEW_DESC rtvDesc;
+	ZeroMemory(&rtvDesc, sizeof(rtvDesc));
+	rtvDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+	rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DMS;
+
+	hr = ms_pDevice->CreateRenderTargetView(ms_pMSAARenderTarget, &rtvDesc, &ms_pMSAARenderTargetView);
+	if (ms_pContext && ms_pMSAARenderTargetView) { const float c[4] = {0.0f,0.0f,0.0f,0.0f}; ms_pContext->ClearRenderTargetView(ms_pMSAARenderTargetView, c); }
+	if (FAILED(hr))
+	{
+		TraceError("MSAA: Failed to create RTV: 0x%08X", hr);
+		__ReleaseMSAAResources();
+		ms_uMSAASampleCount = 1;
+		return false;
+	}
+
+	// Create MSAA depth stencil texture
+	D3D11_TEXTURE2D_DESC depthDesc;
+	ZeroMemory(&depthDesc, sizeof(depthDesc));
+	depthDesc.Width = width;
+	depthDesc.Height = height;
+	depthDesc.MipLevels = 1;
+	depthDesc.ArraySize = 1;
+#ifdef ENABLE_SSAO
+	depthDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+	depthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+#else
+	depthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	depthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+#endif
+	depthDesc.SampleDesc.Count = sampleCount;
+	depthDesc.SampleDesc.Quality = 0;
+	depthDesc.Usage = D3D11_USAGE_DEFAULT;
+
+	hr = ms_pDevice->CreateTexture2D(&depthDesc, nullptr, &ms_pMSAADepthStencilBuffer);
+	if (FAILED(hr))
+	{
+		TraceError("MSAA: Failed to create depth texture: 0x%08X", hr);
+		__ReleaseMSAAResources();
+		ms_uMSAASampleCount = 1;
+		return false;
+	}
+
+	// Create MSAA DSV
+	D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc;
+	ZeroMemory(&dsvDesc, sizeof(dsvDesc));
+	dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DMS;
+
+	hr = ms_pDevice->CreateDepthStencilView(ms_pMSAADepthStencilBuffer, &dsvDesc, &ms_pMSAADepthStencilView);
+	if (FAILED(hr))
+	{
+		TraceError("MSAA: Failed to create DSV: 0x%08X", hr);
+		__ReleaseMSAAResources();
+		ms_uMSAASampleCount = 1;
+		return false;
+	}
+
+#ifdef ENABLE_SSAO
+	// Create MSAA depth SRV for depth resolve shader
+	{
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+		ZeroMemory(&srvDesc, sizeof(srvDesc));
+		srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DMS;
+
+		hr = ms_pDevice->CreateShaderResourceView(ms_pMSAADepthStencilBuffer, &srvDesc, &ms_pMSAADepthStencilSRV);
+		if (FAILED(hr))
+		{
+			TraceError("MSAA: Failed to create depth SRV: 0x%08X", hr);
+			// Non-fatal for SSAO, just disable it
+		}
+	}
+#endif
+
+	return true;
+}
+#endif
+
+#ifdef ENABLE_BLOOM
+bool CGraphicDevice::__CreateBloomResources(int width, int height)
+{
+	if (!ms_pDevice)
+		return false;
+
+	__ReleaseBloomResources();
+
 	HRESULT hr;
 
-	D3DDISPLAYMODEEX displayModeReset = {};
-	if (!ms_d3dPresentParameter.Windowed)
+	D3D11_TEXTURE2D_DESC texDesc = {};
+	texDesc.Width = width;
+	texDesc.Height = height;
+	texDesc.MipLevels = 1;
+	texDesc.ArraySize = 1;
+	texDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+	texDesc.SampleDesc.Count = 1;
+	texDesc.SampleDesc.Quality = 0;
+	texDesc.Usage = D3D11_USAGE_DEFAULT;
+	texDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+
+	hr = ms_pDevice->CreateTexture2D(&texDesc, nullptr, &ms_pSceneTexture);
+	if (FAILED(hr))
 	{
-		displayModeReset.Size = sizeof(D3DDISPLAYMODEEX);
-		displayModeReset.Width = ms_d3dPresentParameter.BackBufferWidth;
-		displayModeReset.Height = ms_d3dPresentParameter.BackBufferHeight;
-		displayModeReset.Format = ms_d3dPresentParameter.BackBufferFormat;
-		displayModeReset.RefreshRate = ms_d3dPresentParameter.FullScreen_RefreshRateInHz;
-		displayModeReset.ScanLineOrdering = D3DSCANLINEORDERING_PROGRESSIVE;
+		TraceError("Bloom: Failed to create scene texture: 0x%08X", hr);
+		return false;
 	}
 
-	if (FAILED(hr = ms_lpd3dDevice->ResetEx(&ms_d3dPresentParameter, ms_d3dPresentParameter.Windowed ? nullptr : &displayModeReset)))
-		return false;
-
-	if (ms_d3dPresentParameter.Windowed)
-		ms_lpd3dDevice->SetMaximumFrameLatency(1);
-
-	return true;
-}
-
-#endif
-
-static LPDIRECT3DSURFACE9 s_lpStencil;
-static DWORD   s_MaxTextureWidth, s_MaxTextureHeight;
-
-LPDIRECT3D9EX CGraphicDevice::GetDirectx9()
-{
-	return ms_lpd3d;
-}
-
-LPDIRECT3DDEVICE9EX CGraphicDevice::GetDevice()
-{
-	return ms_lpd3dDevice;
-}
-
-BOOL EL3D_ConfirmDevice(D3DCAPS9& rkD3DCaps, UINT uBehavior, D3DFORMAT /*eD3DFmt*/)
-{
-	if (uBehavior & D3DCREATE_PUREDEVICE)
-        return FALSE;
-
-	if (uBehavior & D3DCREATE_HARDWARE_VERTEXPROCESSING)
+	hr = ms_pDevice->CreateRenderTargetView(ms_pSceneTexture, nullptr, &ms_pSceneTextureRTV);
+	if (ms_pContext && ms_pSceneTextureRTV) { const float c[4] = {0.0f,0.0f,0.0f,0.0f}; ms_pContext->ClearRenderTargetView(ms_pSceneTextureRTV, c); }
+	if (FAILED(hr))
 	{
-		// DirectionalLight
-		if (!(rkD3DCaps.VertexProcessingCaps & D3DVTXPCAPS_DIRECTIONALLIGHTS))
-			return FALSE;
+		TraceError("Bloom: Failed to create scene texture RTV: 0x%08X", hr);
+		__ReleaseBloomResources();
+		return false;
+	}
 
-		// PositionalLight
-		if (!(rkD3DCaps.VertexProcessingCaps & D3DVTXPCAPS_POSITIONALLIGHTS))
-			return FALSE;
+	hr = ms_pDevice->CreateShaderResourceView(ms_pSceneTexture, nullptr, &ms_pSceneTextureSRV);
+	if (FAILED(hr))
+	{
+		TraceError("Bloom: Failed to create scene texture SRV: 0x%08X", hr);
+		__ReleaseBloomResources();
+		return false;
+	}
 
-		// Software T&L Support - ATI NOT SUPPORT CLIP, USE DIRECTX SOFTWARE PROCESSING CLIPPING
-		if (GRAPHICS_CAPS_SOFTWARE_TILING)
+	// Bloom RT A (1/4 resolution)
+	UINT bloomW = max(1u, (UINT)width / 4);
+	UINT bloomH = max(1u, (UINT)height / 4);
+
+	texDesc.Width = bloomW;
+	texDesc.Height = bloomH;
+
+	hr = ms_pDevice->CreateTexture2D(&texDesc, nullptr, &ms_pBloomRTA);
+	if (FAILED(hr))
+	{
+		TraceError("Bloom: Failed to create bloom RTA texture: 0x%08X", hr);
+		__ReleaseBloomResources();
+		return false;
+	}
+
+	hr = ms_pDevice->CreateRenderTargetView(ms_pBloomRTA, nullptr, &ms_pBloomRTA_RTV);
+	if (ms_pContext && ms_pBloomRTA_RTV) { const float c[4] = {0.0f,0.0f,0.0f,0.0f}; ms_pContext->ClearRenderTargetView(ms_pBloomRTA_RTV, c); }
+	if (FAILED(hr))
+	{
+		TraceError("Bloom: Failed to create bloom RTA RTV: 0x%08X", hr);
+		__ReleaseBloomResources();
+		return false;
+	}
+
+	hr = ms_pDevice->CreateShaderResourceView(ms_pBloomRTA, nullptr, &ms_pBloomRTA_SRV);
+	if (FAILED(hr))
+	{
+		TraceError("Bloom: Failed to create bloom RTA SRV: 0x%08X", hr);
+		__ReleaseBloomResources();
+		return false;
+	}
+
+	// Bloom RT B (1/4 resolution)
+	hr = ms_pDevice->CreateTexture2D(&texDesc, nullptr, &ms_pBloomRTB);
+	if (FAILED(hr))
+	{
+		TraceError("Bloom: Failed to create bloom RTB texture: 0x%08X", hr);
+		__ReleaseBloomResources();
+		return false;
+	}
+
+	hr = ms_pDevice->CreateRenderTargetView(ms_pBloomRTB, nullptr, &ms_pBloomRTB_RTV);
+	if (ms_pContext && ms_pBloomRTB_RTV) { const float c[4] = {0.0f,0.0f,0.0f,0.0f}; ms_pContext->ClearRenderTargetView(ms_pBloomRTB_RTV, c); }
+	if (FAILED(hr))
+	{
+		TraceError("Bloom: Failed to create bloom RTB RTV: 0x%08X", hr);
+		__ReleaseBloomResources();
+		return false;
+	}
+
+	hr = ms_pDevice->CreateShaderResourceView(ms_pBloomRTB, nullptr, &ms_pBloomRTB_SRV);
+	if (FAILED(hr))
+	{
+		TraceError("Bloom: Failed to create bloom RTB SRV: 0x%08X", hr);
+		__ReleaseBloomResources();
+		return false;
+	}
+
+	Tracef("Bloom: Resources created (%dx%d scene, %dx%d bloom)\n", width, height, bloomW, bloomH);
+
+#ifdef ENABLE_GODRAYS
+	// God rays RT (same 1/4 resolution as bloom RTs)
+	texDesc.Width = bloomW;
+	texDesc.Height = bloomH;
+
+	hr = ms_pDevice->CreateTexture2D(&texDesc, nullptr, &ms_pGodRaysRT);
+	if (FAILED(hr))
+	{
+		TraceError("GodRays: Failed to create RT texture: 0x%08X", hr);
+		// Non-fatal: god rays will just be disabled
+	}
+	else
+	{
+		hr = ms_pDevice->CreateRenderTargetView(ms_pGodRaysRT, nullptr, &ms_pGodRaysRTV);
+		if (ms_pContext && ms_pGodRaysRTV) { const float c[4] = {0.0f,0.0f,0.0f,0.0f}; ms_pContext->ClearRenderTargetView(ms_pGodRaysRTV, c); }
+		if (FAILED(hr))
 		{
-			if (!(rkD3DCaps.PrimitiveMiscCaps & D3DPMISCCAPS_CLIPTLVERTS))
-				return FALSE;
+			TraceError("GodRays: Failed to create RTV: 0x%08X", hr);
+			ms_pGodRaysRT->Release(); ms_pGodRaysRT = nullptr;
 		}
 		else
 		{
-			// Shadow/Terrain
-			if (!(rkD3DCaps.VertexProcessingCaps & D3DVTXPCAPS_TEXGEN))
-				return FALSE;
+			hr = ms_pDevice->CreateShaderResourceView(ms_pGodRaysRT, nullptr, &ms_pGodRaysSRV);
+			if (FAILED(hr))
+			{
+				TraceError("GodRays: Failed to create SRV: 0x%08X", hr);
+				ms_pGodRaysRTV->Release(); ms_pGodRaysRTV = nullptr;
+				ms_pGodRaysRT->Release(); ms_pGodRaysRT = nullptr;
+			}
 		}
 	}
+#endif
 
-	s_MaxTextureWidth = rkD3DCaps.MaxTextureWidth;
-	s_MaxTextureHeight = rkD3DCaps.MaxTextureHeight;
-
-	return TRUE;
+	return true;
 }
 
-DWORD GetMaxTextureWidth()
+void CGraphicDevice::__ReleaseBloomResources()
 {
-	return s_MaxTextureWidth;
+#ifdef ENABLE_GODRAYS
+	if (ms_pGodRaysSRV) { ms_pGodRaysSRV->Release(); ms_pGodRaysSRV = nullptr; }
+	if (ms_pGodRaysRTV) { ms_pGodRaysRTV->Release(); ms_pGodRaysRTV = nullptr; }
+	if (ms_pGodRaysRT) { ms_pGodRaysRT->Release(); ms_pGodRaysRT = nullptr; }
+#endif
+	if (ms_pSceneTextureSRV) { ms_pSceneTextureSRV->Release(); ms_pSceneTextureSRV = nullptr; }
+	if (ms_pSceneTextureRTV) { ms_pSceneTextureRTV->Release(); ms_pSceneTextureRTV = nullptr; }
+	if (ms_pSceneTexture) { ms_pSceneTexture->Release(); ms_pSceneTexture = nullptr; }
+	if (ms_pBloomRTA_SRV) { ms_pBloomRTA_SRV->Release(); ms_pBloomRTA_SRV = nullptr; }
+	if (ms_pBloomRTA_RTV) { ms_pBloomRTA_RTV->Release(); ms_pBloomRTA_RTV = nullptr; }
+	if (ms_pBloomRTA) { ms_pBloomRTA->Release(); ms_pBloomRTA = nullptr; }
+	if (ms_pBloomRTB_SRV) { ms_pBloomRTB_SRV->Release(); ms_pBloomRTB_SRV = nullptr; }
+	if (ms_pBloomRTB_RTV) { ms_pBloomRTB_RTV->Release(); ms_pBloomRTB_RTV = nullptr; }
+	if (ms_pBloomRTB) { ms_pBloomRTB->Release(); ms_pBloomRTB = nullptr; }
 }
+#endif
 
-DWORD GetMaxTextureHeight()
+#ifdef ENABLE_SSAO
+bool CGraphicDevice::__CreateSSAOResources(int width, int height)
 {
-	return s_MaxTextureHeight;
-}
-
-bool CGraphicDevice::__IsInDriverBlackList(D3D_CAdapterInfo& rkD3DAdapterInfo) const
-{
-	const D3DADAPTER_IDENTIFIER9& rkD3DAdapterIdentifier=rkD3DAdapterInfo.GetIdentifier();
-
-	char szSrcDriver[256];
-	strncpy(szSrcDriver, rkD3DAdapterIdentifier.Driver, sizeof(szSrcDriver)-1);
-	const DWORD dwSrcHighVersion=rkD3DAdapterIdentifier.DriverVersion.QuadPart>>32;
-	const DWORD dwSrcLowVersion=rkD3DAdapterIdentifier.DriverVersion.QuadPart&0xffffffff;
-
-	bool ret=false;
-
-	FILE* fp=fopen("grpblk.txt", "r");
-	if (fp)
-	{
-		DWORD dwChkHighVersion;
-		DWORD dwChkLowVersion;
-
-		char szChkDriver[256];
-
-		char szLine[256];
-		while (fgets(szLine, sizeof(szLine)-1, fp))
-		{
-			sscanf(szLine, "%s %x %x", szChkDriver, &dwChkHighVersion, &dwChkLowVersion);
-
-			if (strcmp(szSrcDriver, szChkDriver)==0)
-				if (dwSrcHighVersion==dwChkHighVersion)
-					if (dwSrcLowVersion==dwChkLowVersion)
-					{
-						ret=true;
-						break;
-					}
-
-			szLine[0]='\0';
-		}
-		fclose(fp);
-	}
-
-	return ret;
-}
-
-static bool FindMultisampleSettings(
-	IDirect3D9Ex* pD3D,
-	UINT adapter,
-	D3DDEVTYPE deviceType,
-	D3DFORMAT backBufferFormat,
-	D3DFORMAT depthStencilFormat,
-	bool windowed,
-	int antialiasingLevel,
-	D3DMULTISAMPLE_TYPE* pOutMultiSampleType,
-	DWORD* pOutMultiSampleQuality)
-{
-	*pOutMultiSampleType = D3DMULTISAMPLE_NONE;
-	*pOutMultiSampleQuality = 0;
-
-	if (antialiasingLevel == 0)
+	if (!ms_pDevice)
 		return false;
 
-	D3DMULTISAMPLE_TYPE desiredType;
-	switch (antialiasingLevel)
+	__ReleaseSSAOResources();
+
+	HRESULT hr;
+	UINT halfW = max(1u, (UINT)width / 2);
+	UINT halfH = max(1u, (UINT)height / 2);
+
 	{
-	case 1: desiredType = D3DMULTISAMPLE_2_SAMPLES; break;
-	case 2: desiredType = D3DMULTISAMPLE_4_SAMPLES; break;
-	case 3: desiredType = D3DMULTISAMPLE_8_SAMPLES; break;
-	default: return false;
+		D3D11_TEXTURE2D_DESC desc = {};
+		desc.Width = width;
+		desc.Height = height;
+		desc.MipLevels = 1;
+		desc.ArraySize = 1;
+		desc.Format = DXGI_FORMAT_R32_FLOAT;
+		desc.SampleDesc.Count = 1;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+
+		hr = ms_pDevice->CreateTexture2D(&desc, nullptr, &ms_pResolvedDepthTex);
+		if (FAILED(hr))
+		{
+			TraceError("SSAO: Failed to create resolved depth texture: 0x%08X", hr);
+			return false;
+		}
+
+		hr = ms_pDevice->CreateRenderTargetView(ms_pResolvedDepthTex, nullptr, &ms_pResolvedDepthRTV);
+		if (ms_pContext && ms_pResolvedDepthRTV) { const float c[4] = {0.0f,0.0f,0.0f,0.0f}; ms_pContext->ClearRenderTargetView(ms_pResolvedDepthRTV, c); }
+		if (FAILED(hr)) { __ReleaseSSAOResources(); return false; }
+
+		hr = ms_pDevice->CreateShaderResourceView(ms_pResolvedDepthTex, nullptr, &ms_pResolvedDepthSRV);
+		if (FAILED(hr)) { __ReleaseSSAOResources(); return false; }
 	}
 
-	DWORD qualityLevels = 0;
-	HRESULT hr = pD3D->CheckDeviceMultiSampleType(
-		adapter,
-		deviceType,
-		backBufferFormat,
-		windowed,
-		desiredType,
-		&qualityLevels);
-
-	if (SUCCEEDED(hr) && qualityLevels > 0)
+	// SSAO RT (half resolution, R8_UNORM)
 	{
-		HRESULT hrDepth = pD3D->CheckDeviceMultiSampleType(
-			adapter,
-			deviceType,
-			depthStencilFormat,
-			windowed,
-			desiredType,
-			nullptr);
+		D3D11_TEXTURE2D_DESC desc = {};
+		desc.Width = halfW;
+		desc.Height = halfH;
+		desc.MipLevels = 1;
+		desc.ArraySize = 1;
+		desc.Format = DXGI_FORMAT_R8_UNORM;
+		desc.SampleDesc.Count = 1;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
 
-		if (SUCCEEDED(hrDepth))
+		hr = ms_pDevice->CreateTexture2D(&desc, nullptr, &ms_pSSAO_RT);
+		if (FAILED(hr)) { __ReleaseSSAOResources(); return false; }
+
+		hr = ms_pDevice->CreateRenderTargetView(ms_pSSAO_RT, nullptr, &ms_pSSAO_RTV);
+		if (ms_pContext && ms_pSSAO_RTV) { const float c[4] = {0.0f,0.0f,0.0f,0.0f}; ms_pContext->ClearRenderTargetView(ms_pSSAO_RTV, c); }
+		if (FAILED(hr)) { __ReleaseSSAOResources(); return false; }
+
+		hr = ms_pDevice->CreateShaderResourceView(ms_pSSAO_RT, nullptr, &ms_pSSAO_SRV);
+		if (FAILED(hr)) { __ReleaseSSAOResources(); return false; }
+	}
+
+	// SSAO Blur RT (half resolution, R8_UNORM)
+	{
+		D3D11_TEXTURE2D_DESC desc = {};
+		desc.Width = halfW;
+		desc.Height = halfH;
+		desc.MipLevels = 1;
+		desc.ArraySize = 1;
+		desc.Format = DXGI_FORMAT_R8_UNORM;
+		desc.SampleDesc.Count = 1;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+
+		hr = ms_pDevice->CreateTexture2D(&desc, nullptr, &ms_pSSAOBlur_RT);
+		if (FAILED(hr)) { __ReleaseSSAOResources(); return false; }
+
+		hr = ms_pDevice->CreateRenderTargetView(ms_pSSAOBlur_RT, nullptr, &ms_pSSAOBlur_RTV);
+		if (ms_pContext && ms_pSSAOBlur_RTV) { const float c[4] = {0.0f,0.0f,0.0f,0.0f}; ms_pContext->ClearRenderTargetView(ms_pSSAOBlur_RTV, c); }
+		if (FAILED(hr)) { __ReleaseSSAOResources(); return false; }
+
+		hr = ms_pDevice->CreateShaderResourceView(ms_pSSAOBlur_RT, nullptr, &ms_pSSAOBlur_SRV);
+		if (FAILED(hr)) { __ReleaseSSAOResources(); return false; }
+	}
+
+	Tracef("SSAO: Resources created (%dx%d half-res, %dx%d resolved depth)\n", halfW, halfH, width, height);
+	return true;
+}
+
+void CGraphicDevice::__ReleaseSSAOResources()
+{
+	if (ms_pSSAOBlur_SRV) { ms_pSSAOBlur_SRV->Release(); ms_pSSAOBlur_SRV = nullptr; }
+	if (ms_pSSAOBlur_RTV) { ms_pSSAOBlur_RTV->Release(); ms_pSSAOBlur_RTV = nullptr; }
+	if (ms_pSSAOBlur_RT) { ms_pSSAOBlur_RT->Release(); ms_pSSAOBlur_RT = nullptr; }
+	if (ms_pSSAO_SRV) { ms_pSSAO_SRV->Release(); ms_pSSAO_SRV = nullptr; }
+	if (ms_pSSAO_RTV) { ms_pSSAO_RTV->Release(); ms_pSSAO_RTV = nullptr; }
+	if (ms_pSSAO_RT) { ms_pSSAO_RT->Release(); ms_pSSAO_RT = nullptr; }
+	if (ms_pResolvedDepthSRV) { ms_pResolvedDepthSRV->Release(); ms_pResolvedDepthSRV = nullptr; }
+	if (ms_pResolvedDepthRTV) { ms_pResolvedDepthRTV->Release(); ms_pResolvedDepthRTV = nullptr; }
+	if (ms_pResolvedDepthTex) { ms_pResolvedDepthTex->Release(); ms_pResolvedDepthTex = nullptr; }
+}
+#endif
+
+
+bool CGraphicDevice::__IsInDriverBlackList(D3D_CAdapterInfo& rkD3DAdapterInfo)
+{
+	// Keep the blacklist check for compatibility
+	DXGI_ADAPTER_DESC adapterDesc;
+
+	IDXGIDevice* pDXGIDevice = nullptr;
+	IDXGIAdapter* pDXGIAdapter = nullptr;
+
+	if (SUCCEEDED(ms_pDevice->QueryInterface(__uuidof(IDXGIDevice), (void**)&pDXGIDevice)))
+	{
+		if (SUCCEEDED(pDXGIDevice->GetAdapter(&pDXGIAdapter)))
 		{
-			*pOutMultiSampleType = desiredType;
-			*pOutMultiSampleQuality = qualityLevels - 1;
-			return true;
+			pDXGIAdapter->GetDesc(&adapterDesc);
+			pDXGIAdapter->Release();
 		}
+		pDXGIDevice->Release();
+	}
+
+	// Check against blacklist file
+	FILE* fp = fopen("grpblk.txt", "r");
+	if (fp)
+	{
+		char szLine[256];
+		while (fgets(szLine, sizeof(szLine) - 1, fp))
+		{
+			// Simple vendor ID check
+			DWORD dwVendorId = 0;
+			if (sscanf(szLine, "%x", &dwVendorId) == 1)
+			{
+				if (adapterDesc.VendorId == dwVendorId)
+				{
+					fclose(fp);
+					return true;
+				}
+			}
+		}
+		fclose(fp);
 	}
 
 	return false;
 }
 
-int CGraphicDevice::Create(HWND hWnd, int iHres, int iVres, bool Windowed, int /*iBit*/, int iReflashRate, int Antialiasing)
+int CGraphicDevice::Create(HWND hWnd, int iHres, int iVres, bool Windowed, int /*iBit*/, int iRefreshRate)
 {
 	int iRet = CREATE_OK;
 
 	Destroy();
 
-	ms_iWidth	= iHres;
-	ms_iHeight	= iVres;
+	ms_iWidth = iHres;
+	ms_iHeight = iVres;
+	ms_hWnd = hWnd;
+	ms_hDC = GetDC(hWnd);
+	m_bWindowed = Windowed;
 
-	ms_hWnd		= hWnd;
-	ms_hDC		= GetDC(hWnd);
-	ms_lpd3d = nullptr;
-	HRESULT hrEx = Direct3DCreate9Ex(D3D_SDK_VERSION, &ms_lpd3d);
+	{
+		RECT clientRect;
+		GetClientRect(hWnd, &clientRect);
+		HBRUSH hBlackBrush = (HBRUSH)GetStockObject(BLACK_BRUSH);
+		FillRect(ms_hDC, &clientRect, hBlackBrush);
+	}
 
-	if (FAILED(hrEx) || !ms_lpd3d)
+	D3D_FEATURE_LEVEL featureLevels[] = {
+		D3D_FEATURE_LEVEL_11_0
+	};
+	UINT numFeatureLevels = ARRAYSIZE(featureLevels);
+
+	UINT createDeviceFlags = 0;
+
+	const UINT uFlipBufferCount = (m_uBackBufferCount < 2) ? 2 : (UINT)m_uBackBufferCount;
+
+	DXGI_SWAP_CHAIN_DESC swapChainDesc;
+	ZeroMemory(&swapChainDesc, sizeof(swapChainDesc));
+	swapChainDesc.BufferCount = uFlipBufferCount;
+	swapChainDesc.BufferDesc.Width = iHres;
+	swapChainDesc.BufferDesc.Height = iVres;
+	swapChainDesc.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+	swapChainDesc.BufferDesc.RefreshRate.Numerator = iRefreshRate > 0 ? iRefreshRate : 60;
+	swapChainDesc.BufferDesc.RefreshRate.Denominator = 1;
+	swapChainDesc.BufferDesc.ScanlineOrdering = DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED;
+	swapChainDesc.BufferDesc.Scaling = DXGI_MODE_SCALING_UNSPECIFIED;
+	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+	swapChainDesc.OutputWindow = hWnd;
+	swapChainDesc.SampleDesc.Count = 1;
+	swapChainDesc.SampleDesc.Quality = 0;
+	swapChainDesc.Windowed = Windowed ? TRUE : FALSE;
+	swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+	swapChainDesc.Flags = 0;
+
+	// Check for force WARP mode via config file
+	bool bForceWARP = false;
+	FILE* fpConfig = fopen("d3d11_warp.txt", "r");
+	if (fpConfig)
+	{
+		bForceWARP = true;
+		fclose(fpConfig);
+	}
+
+	D3D_DRIVER_TYPE driverType = bForceWARP ? D3D_DRIVER_TYPE_WARP : D3D_DRIVER_TYPE_HARDWARE;
+	const char* driverName = bForceWARP ? "WARP" : "Hardware";
+
+	// ── Step 1: create the DEVICE only (the swap chain is created separately, below) ────────────
+	HRESULT hr = D3D11CreateDevice(
+		nullptr, driverType, nullptr, createDeviceFlags,
+		featureLevels, numFeatureLevels, D3D11_SDK_VERSION,
+		&ms_pDevice, &ms_FeatureLevel, &ms_pContext);
+
+	if (FAILED(hr) && !bForceWARP)
+	{
+		TraceError("DX11 hardware device creation failed (hr=0x%08X): feature level 11.0 is required.", hr);
+		Destroy();
 		return CREATE_NO_DIRECTX;
-
-	if (!ms_kD3DDetector.Build(*ms_lpd3d, EL3D_ConfirmDevice))
-		return CREATE_ENUM;
-
-	// @fixme018 commented 800x600 block
-	// if (!ms_kD3DDetector.Find(800, 600, 32, TRUE, &ms_iD3DModeInfo, &ms_iD3DDevInfo, &ms_iD3DAdapterInfo))
-	// 	return CREATE_DETECT;
-
-	std::string stDevList;
-	ms_kD3DDetector.GetString(&stDevList);
-
-	//Tracen(stDevList.c_str());
-	//Tracenf("adapter %d, device %d, mode %d", ms_iD3DAdapterInfo, ms_iD3DDevInfo, ms_iD3DModeInfo);
-
-	D3D_CAdapterInfo * pkD3DAdapterInfo = ms_kD3DDetector.GetD3DAdapterInfop(ms_iD3DAdapterInfo);
-	if (!pkD3DAdapterInfo)
-	{
-		Tracenf("adapter %d is EMPTY", ms_iD3DAdapterInfo);
-		return CREATE_DETECT;
 	}
-
-	if (__IsInDriverBlackList(*pkD3DAdapterInfo))
+	if (FAILED(hr))
 	{
-		iRet |= CREATE_BAD_DRIVER;
-		__WarningMessage(hWnd, CREATE_BAD_DRIVER);
-	}
+		TraceError("CGraphicDevice::Create - %s device failed (0x%08X), trying fallback...", driverName, hr);
 
-	const D3D_SModeInfo * pkD3DModeInfo = pkD3DAdapterInfo->GetD3DModeInfop(ms_iD3DDevInfo, ms_iD3DModeInfo);
-	if (!pkD3DModeInfo)
-	{
-		Tracenf("device %d, mode %d is EMPTY", ms_iD3DDevInfo, ms_iD3DModeInfo);
-		return CREATE_DETECT;
-	}
+		// Try the opposite driver type as fallback
+		D3D_DRIVER_TYPE fallbackType = bForceWARP ? D3D_DRIVER_TYPE_HARDWARE : D3D_DRIVER_TYPE_WARP;
+		const char* fallbackName = bForceWARP ? "Hardware" : "WARP";
 
-	const D3DADAPTER_IDENTIFIER9& rkD3DAdapterId=pkD3DAdapterInfo->GetIdentifier();
-	if (Windowed &&
-		strnicmp(rkD3DAdapterId.Driver, "3dfx", 4)==0 &&
-		22 == pkD3DAdapterInfo->GetDesktopD3DDisplayModer().Format)
-	{
-		return CREATE_FORMAT;
-	}
+		hr = D3D11CreateDevice(
+			nullptr, fallbackType, nullptr, createDeviceFlags,
+			featureLevels, numFeatureLevels, D3D11_SDK_VERSION,
+			&ms_pDevice, &ms_FeatureLevel, &ms_pContext);
 
-	if (pkD3DModeInfo->m_dwD3DBehavior==D3DCREATE_SOFTWARE_VERTEXPROCESSING)
-	{
-		iRet |= CREATE_NO_TNL;
-
-		// DISABLE_NOTIFY_NOT_SUPPORT_TNL_MESSAGE
-		//__WarningMessage(hWnd, CREATE_NO_TNL);
-		// END_OF_DISABLE_NOTIFY_NOT_SUPPORT_TNL_MESSAGE
-	}
-
-	std::string stModeInfo;
-	pkD3DModeInfo->GetString(&stModeInfo);
-
-	//Tracen(stModeInfo.c_str());
-
-	int ErrorCorrection = 0;
-
-RETRY:
-	ZeroMemory(&ms_d3dPresentParameter, sizeof(ms_d3dPresentParameter));
-
-	ms_d3dPresentParameter.Windowed							= Windowed;
-	ms_d3dPresentParameter.BackBufferWidth					= iHres;
-	ms_d3dPresentParameter.BackBufferHeight					= iVres;
-	ms_d3dPresentParameter.hDeviceWindow					= hWnd;
-	ms_d3dPresentParameter.BackBufferCount					= m_uBackBufferCount;
-	ms_d3dPresentParameter.SwapEffect						= D3DSWAPEFFECT_DISCARD;
-
-	if (Windowed)
-	{
-		ms_d3dPresentParameter.BackBufferFormat				= pkD3DAdapterInfo->GetDesktopD3DDisplayModer().Format;
-	}
-	else
-	{
-		ms_d3dPresentParameter.BackBufferFormat				= pkD3DModeInfo->m_eD3DFmtPixel;
-		ms_d3dPresentParameter.FullScreen_RefreshRateInHz	= iReflashRate;
-	}
-
-	ms_d3dPresentParameter.PresentationInterval				= D3DPRESENT_INTERVAL_IMMEDIATE;
-	ms_d3dPresentParameter.EnableAutoDepthStencil			= TRUE;
-	ms_d3dPresentParameter.AutoDepthStencilFormat			= pkD3DModeInfo->m_eD3DFmtDepthStencil;
-
-	D3DMULTISAMPLE_TYPE multiSampleType = D3DMULTISAMPLE_NONE;
-	DWORD multiSampleQuality = 0;
-
-	if (FindMultisampleSettings(
-		ms_lpd3d,
-		ms_iD3DAdapterInfo,
-		D3DDEVTYPE_HAL,
-		ms_d3dPresentParameter.BackBufferFormat,
-		ms_d3dPresentParameter.AutoDepthStencilFormat,
-		Windowed,
-		Antialiasing,
-		&multiSampleType,
-		&multiSampleQuality))
-	{
-		ms_d3dPresentParameter.MultiSampleType = multiSampleType;
-		ms_d3dPresentParameter.MultiSampleQuality = multiSampleQuality;
-		ms_d3dPresentParameter.Flags = 0;
-	}
-	else
-	{
-		ms_d3dPresentParameter.MultiSampleType = D3DMULTISAMPLE_NONE;
-		ms_d3dPresentParameter.MultiSampleQuality = 0;
-		ms_d3dPresentParameter.Flags = D3DPRESENTFLAG_LOCKABLE_BACKBUFFER;
-	}
-
-	ms_dwD3DBehavior = pkD3DModeInfo->m_dwD3DBehavior;
-
-	D3DDISPLAYMODEEX fmEx;
-	ZeroMemory(&fmEx, sizeof(fmEx));
-	if (!Windowed)
-	{
-		fmEx.Size = sizeof(D3DDISPLAYMODEEX);
-		fmEx.Width = iHres;
-		fmEx.Height = iVres;
-		fmEx.RefreshRate = iReflashRate;
-		fmEx.Format = pkD3DModeInfo->m_eD3DFmtPixel;
-		fmEx.ScanLineOrdering = D3DSCANLINEORDERING_PROGRESSIVE;
-	}
-
-	if (FAILED(ms_hLastResult = ms_lpd3d->CreateDeviceEx(
-				ms_iD3DAdapterInfo,
-				D3DDEVTYPE_HAL,
-				hWnd,
-				pkD3DModeInfo->m_dwD3DBehavior,
-				&ms_d3dPresentParameter,
-				Windowed ? nullptr : &fmEx,
-				&ms_lpd3dDevice)))
-	{
-		switch (ms_hLastResult)
+		if (FAILED(hr))
 		{
-			case D3DERR_INVALIDCALL:
-				Tracen("IDirect3DDevice.CreateDeviceEx - ERROR D3DERR_INVALIDCALL\nThe method call is invalid. For example, a method's parameter may have an invalid value.");
-				break;
-			case D3DERR_NOTAVAILABLE:
-				Tracen("IDirect3DDevice.CreateDeviceEx - ERROR D3DERR_NOTAVAILABLE\nThis device does not support the queried technique. ");
-				break;
-			case D3DERR_OUTOFVIDEOMEMORY:
-				Tracen("IDirect3DDevice.CreateDeviceEx - ERROR D3DERR_OUTOFVIDEOMEMORY\nDirect3D does not have enough display memory to perform the operation");
-				break;
-			default:
-				Tracenf("IDirect3DDevice.CreateDeviceEx - ERROR %d", ms_hLastResult);
-				break;
+			TraceError("CGraphicDevice::Create - %s also failed: 0x%08X", fallbackName, hr);
+			return CREATE_DEVICE;
+		}
+	}
+
+	if (ms_FeatureLevel < D3D_FEATURE_LEVEL_11_0)
+	{
+		TraceError("CGraphicDevice::Create - Feature level 11.0 required (Shader Model 5.0)");
+		Destroy();
+		return CREATE_DEVICE;
+	}
+
+	// ── Step 2: DXGI factory from the device (IDXGIFactory2 = DXGI 1.2 → flip model available) ──
+	IDXGIFactory2* pFactory2 = nullptr;
+	{
+		IDXGIDevice* pDXGIDevice = nullptr;
+		IDXGIAdapter* pDXGIAdapter = nullptr;
+		if (SUCCEEDED(ms_pDevice->QueryInterface(__uuidof(IDXGIDevice), (void**)&pDXGIDevice)))
+		{
+			if (SUCCEEDED(pDXGIDevice->GetAdapter(&pDXGIAdapter)))
+			{
+				pDXGIAdapter->GetParent(__uuidof(IDXGIFactory), (void**)&ms_pDXGIFactory);
+				pDXGIAdapter->GetParent(__uuidof(IDXGIFactory2), (void**)&pFactory2);
+				pDXGIAdapter->Release();
+			}
+			pDXGIDevice->Release();
+		}
+	}
+
+	// ── Step 3: swap chain — FLIP model first, blt only as a fallback ───────────────────────────
+	if (pFactory2)
+	{
+		DXGI_SWAP_CHAIN_DESC1 sd1 = {};
+		sd1.Width              = iHres;
+		sd1.Height             = iVres;
+		sd1.Format             = DXGI_FORMAT_B8G8R8A8_UNORM;   // flip-model compatible
+		sd1.Stereo             = FALSE;
+		sd1.SampleDesc.Count   = 1;      // no MSAA on a flip swap chain — engine resolves into it
+		sd1.SampleDesc.Quality = 0;
+		sd1.BufferUsage        = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+		sd1.BufferCount        = uFlipBufferCount;             // >= 2 required by flip
+		sd1.Scaling            = DXGI_SCALING_STRETCH;         // matches the old blt resize behaviour
+		sd1.SwapEffect         = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+		sd1.AlphaMode          = DXGI_ALPHA_MODE_UNSPECIFIED;
+		sd1.Flags              = 0;
+
+		DXGI_SWAP_CHAIN_FULLSCREEN_DESC fsd = {};
+		fsd.RefreshRate.Numerator   = iRefreshRate > 0 ? iRefreshRate : 60;
+		fsd.RefreshRate.Denominator = 1;
+		fsd.ScanlineOrdering        = DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED;
+		fsd.Scaling                 = DXGI_MODE_SCALING_UNSPECIFIED;
+		fsd.Windowed                = Windowed ? TRUE : FALSE;
+
+		IDXGISwapChain1* pSwap1 = nullptr;
+		HRESULT hrSwap = pFactory2->CreateSwapChainForHwnd(ms_pDevice, hWnd, &sd1, &fsd, nullptr, &pSwap1);
+		if (SUCCEEDED(hrSwap) && pSwap1)
+		{
+			hrSwap = pSwap1->QueryInterface(__uuidof(IDXGISwapChain), (void**)&ms_pSwapChain);
+			pSwap1->Release();
 		}
 
-		if (ErrorCorrection)
+		if (FAILED(hrSwap) || !ms_pSwapChain)
+		{
+			TraceError("CGraphicDevice::Create - flip-model swap chain failed (0x%08X), falling back to blt", hrSwap);
+			ms_pSwapChain = nullptr;
+			swapChainDesc.SwapEffect  = DXGI_SWAP_EFFECT_DISCARD;
+			swapChainDesc.BufferCount = m_uBackBufferCount ? m_uBackBufferCount : 1;
+		}
+		pFactory2->Release();
+	}
+	else
+	{
+		// No DXGI 1.2 (pre-Win8 without the Platform Update) — keep the legacy blt path alive.
+		swapChainDesc.SwapEffect  = DXGI_SWAP_EFFECT_DISCARD;
+		swapChainDesc.BufferCount = m_uBackBufferCount ? m_uBackBufferCount : 1;
+	}
+
+	if (!ms_pSwapChain)
+	{
+		if (!ms_pDXGIFactory)
+		{
+			TraceError("CGraphicDevice::Create - no DXGI factory available for swap chain creation");
+			Destroy();
 			return CREATE_DEVICE;
-
-		iReflashRate = 0;
-		++ErrorCorrection;
-		iRet = CREATE_REFRESHRATE;
-		goto RETRY;
+		}
+		hr = ms_pDXGIFactory->CreateSwapChain(ms_pDevice, &swapChainDesc, &ms_pSwapChain);
+		if (FAILED(hr) || !ms_pSwapChain)
+		{
+			TraceError("CGraphicDevice::Create - CreateSwapChain failed: 0x%08X", hr);
+			Destroy();
+			return CREATE_DEVICE;
+		}
 	}
 
-	// Check DXT Support Info
-	if(ms_lpd3d->CheckDeviceFormat(
-				ms_iD3DAdapterInfo,
-				D3DDEVTYPE_HAL,
-				ms_d3dPresentParameter.BackBufferFormat,
-				0,
-				D3DRTYPE_TEXTURE,
-				D3DFMT_DXT1) == D3DERR_NOTAVAILABLE)
+	if (ms_pDXGIFactory)
+		ms_pDXGIFactory->MakeWindowAssociation(hWnd, DXGI_MWA_NO_ALT_ENTER);
+
+	m_SwapChainDesc = swapChainDesc;
+
+	// Create render target view
+	if (!__CreateRenderTargetView())
 	{
-		ms_bSupportDXT = false;
+		Destroy();
+		return CREATE_RENDERTARGET;
 	}
 
-	if(ms_lpd3d->CheckDeviceFormat(
-				ms_iD3DAdapterInfo,
-				D3DDEVTYPE_HAL,
-				ms_d3dPresentParameter.BackBufferFormat,
-				0,
-				D3DRTYPE_TEXTURE,
-				D3DFMT_DXT3) == D3DERR_NOTAVAILABLE)
+	// Check device status after RTV
+	hr = ms_pDevice->GetDeviceRemovedReason();
+	if (hr != S_OK)
 	{
-		ms_bSupportDXT = false;
+		TraceError("CGraphicDevice::Create - Device hung after RTV creation: 0x%08X", hr);
+		Destroy();
+		return CREATE_DEVICE;
 	}
 
-	if(ms_lpd3d->CheckDeviceFormat(
-				ms_iD3DAdapterInfo,
-				D3DDEVTYPE_HAL,
-				ms_d3dPresentParameter.BackBufferFormat,
-				0,
-				D3DRTYPE_TEXTURE,
-				D3DFMT_DXT5) == D3DERR_NOTAVAILABLE)
+	// Create depth stencil view
+	if (!__CreateDepthStencilView(iHres, iVres))
 	{
-		ms_bSupportDXT = false;
+		Destroy();
+		return CREATE_DEPTHSTENCIL;
 	}
 
-	if (FAILED((ms_hLastResult = ms_lpd3dDevice->GetDeviceCaps(&ms_d3dCaps))))
+	// Check device status after DSV
+	hr = ms_pDevice->GetDeviceRemovedReason();
+	if (hr != S_OK)
 	{
-		Tracenf("IDirect3DDevice.GetDeviceCaps - ERROR %d", ms_hLastResult);
-		return CREATE_GET_DEVICE_CAPS2;
+		TraceError("CGraphicDevice::Create - Device hung after DSV creation: 0x%08X", hr);
+		Destroy();
+		return CREATE_DEVICE;
 	}
 
-	if (Windowed)
-		ms_lpd3dDevice->SetMaximumFrameLatency(1);
+#ifdef ENABLE_MSAA
+	// Create MSAA offscreen render target
+	if (!__CreateMSAARenderTarget(iHres, iVres))
+	{
+		Tracef("CGraphicDevice::Create - MSAA not available, continuing without AA\n");
+	}
+#endif
 
+	// Bind render targets (MSAA if available)
+	{
+		ID3D11RenderTargetView* pRTV = GetRenderTargetView();
+		ID3D11DepthStencilView* pDSV = GetDepthStencilView();
+		ms_pContext->OMSetRenderTargets(1, &pRTV, pDSV);
+	}
+
+	// Setup viewport
+	ms_Viewport.TopLeftX = 0.0f;
+	ms_Viewport.TopLeftY = 0.0f;
+	ms_Viewport.Width = (float)iHres;
+	ms_Viewport.Height = (float)iVres;
+	ms_Viewport.MinDepth = 0.0f;
+	ms_Viewport.MaxDepth = 1.0f;
+	ms_pContext->RSSetViewports(1, &ms_Viewport);
+
+	{
+		float blackColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+		ID3D11RenderTargetView* pRTV = GetRenderTargetView();
+		ID3D11DepthStencilView* pDSV = GetDepthStencilView();
+		ms_pContext->ClearRenderTargetView(pRTV, blackColor);
+		ms_pContext->ClearDepthStencilView(pDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+#ifdef ENABLE_MSAA
+		ResolveMSAA();
+#endif
+		ms_pSwapChain->Present(0, 0);  // Present the black frame
+	}
+
+	// Position window for fullscreen
 	if (!Windowed)
 		SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, iHres, iVres, SWP_SHOWWINDOW);
 
-	//Tracef("vertex shader version : %X\n",(DWORD)ms_d3dCaps.VertexShaderVersion);
+	// Check device status before shader initialization
+	hr = ms_pDevice->GetDeviceRemovedReason();
+	if (hr != S_OK)
+	{
+		TraceError("CGraphicDevice::Create - Device hung before shader init: 0x%08X", hr);
+		Destroy();
+		return CREATE_DEVICE;
+	}
 
-	ms_lpd3dDevice->GetViewport(&ms_Viewport);
+	// Initialize shader system for DX11 rendering
+	if (!SHADERMANAGER.Initialize(ms_pDevice, ms_pContext))
+	{
+		TraceError("CGraphicDevice::Create - Shader system failed to initialize");
+		Destroy();
+		return CREATE_DEVICE;
+	}
 
-	m_pStateManager = new CStateManager(ms_lpd3dDevice);
+#ifdef ENABLE_BLOOM
+	if (!__CreateBloomResources(iHres, iVres))
+	{
+		Tracef("CGraphicDevice::Create - Bloom resources not available\n");
+		ms_bBloomEnabled = false;
+	}
+#endif
 
-	D3DXCreateMatrixStack(0, &ms_lpd3dMatStack);
-	ms_lpd3dMatStack->LoadIdentity();
+#ifdef ENABLE_SSAO
+	if (!__CreateSSAOResources(iHres, iVres))
+	{
+		Tracef("CGraphicDevice::Create - SSAO resources not available\n");
+		ms_bSSAOEnabled = false;
+	}
+#endif
 
-	ms_pntVS = CreatePNTStreamVertexShader();
-	ms_pnt2VS = CreatePNT2StreamVertexShader();
 
-	D3DXMatrixIdentity(&ms_matIdentity);
-	D3DXMatrixIdentity(&ms_matView);
-	D3DXMatrixIdentity(&ms_matProj);
-	D3DXMatrixIdentity(&ms_matInverseView);
-	D3DXMatrixIdentity(&ms_matInverseViewYAxis);
-	D3DXMatrixIdentity(&ms_matScreen0);
-	D3DXMatrixIdentity(&ms_matScreen1);
-	D3DXMatrixIdentity(&ms_matScreen2);
+	if (!VTFMANAGER.Initialize(ms_pDevice, ms_pContext))
+	{
+		// VTF is optional - single-draw fallback still works
+		Tracef("CGraphicDevice::Create - VTF Instance Manager not available (non-batched rendering)\n");
+	}
+
+	{
+		float blackColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+		ID3D11RenderTargetView* pRTV = GetRenderTargetView();
+		ID3D11DepthStencilView* pDSV = GetDepthStencilView();
+		if (pRTV)
+			ms_pContext->ClearRenderTargetView(pRTV, blackColor);
+		if (pDSV)
+			ms_pContext->ClearDepthStencilView(pDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+		if (ms_pSwapChain)
+		{
+#ifdef ENABLE_MSAA
+			ResolveMSAA();
+#endif
+			ms_pSwapChain->Present(0, 0);
+		}
+	}
+
+	// Create matrix stack for compatibility
+	ms_pMatrixStack = new CMatrixStack();
+	ms_pMatrixStack->LoadIdentity();
+
+	// Initialize identity matrices
+	MatrixIdentity(&ms_matIdentity);
+	MatrixIdentity(&ms_matView);
+	MatrixIdentity(&ms_matProj);
+	MatrixIdentity(&ms_matInverseView);
+	MatrixIdentity(&ms_matInverseViewYAxis);
+	MatrixIdentity(&ms_matScreen0);
+	MatrixIdentity(&ms_matScreen1);
+	MatrixIdentity(&ms_matScreen2);
 
 	ms_matScreen0._11 = 1;
 	ms_matScreen0._22 = -1;
@@ -732,257 +1190,386 @@ RETRY:
 	ms_matScreen1._41 = 1;
 	ms_matScreen1._42 = 1;
 
-	ms_matScreen2._11 = (float) iHres / 2;
-	ms_matScreen2._22 = (float) iVres / 2;
+	ms_matScreen2._11 = (float)iHres / 2;
+	ms_matScreen2._22 = (float)iVres / 2;
 
-	D3DXCreateSphere(ms_lpd3dDevice, 1.0f, 32, 32, &ms_lpSphereMesh, nullptr);
-	D3DXCreateCylinder(ms_lpd3dDevice, 1.0f, 1.0f, 1.0f, 8, 8, &ms_lpCylinderMesh, nullptr);
+	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+	Clear(clearColor);
 
-	ms_lpd3dDevice->Clear(0L, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xff000000, 1.0f, 0);
+	if (ms_pSwapChain)
+	{
+		Present(false);    // First present (handles MSAA resolve)
+		Clear(clearColor); // Clear again
+		Present(false);    // Second present (for double buffering)
+	}
 
+	// Flush GPU and check status after clear
+	ms_pContext->Flush();
+	hr = ms_pDevice->GetDeviceRemovedReason();
+	if (hr != S_OK)
+	{
+		TraceError("CGraphicDevice::Create - Device hung after clear: 0x%08X", hr);
+		Destroy();
+		return CREATE_DEVICE;
+	}
+
+	// Create default buffers
 	if (!__CreateDefaultIndexBufferList())
-		return false;
+		return CREATE_DEVICE;
 
 	if (!__CreatePDTVertexBufferList())
-		return false;
+		return CREATE_DEVICE;
 
-	const DWORD dwTexMemSize = GetAvailableTextureMemory();
-
-	if (dwTexMemSize < 64 * 1024 * 1024)
-		ms_isLowTextureMemory = true;
-	else
-		ms_isLowTextureMemory = false;
-
-	if (dwTexMemSize > 100 * 1024 * 1024)
-		ms_isHighTextureMemory = true;
-	else
-		ms_isHighTextureMemory = false;
-
-	if (ms_d3dCaps.TextureAddressCaps & D3DPTADDRESSCAPS_BORDER)
-		GRAPHICS_CAPS_CAN_NOT_TEXTURE_ADDRESS_BORDER=false;
-	else
-		GRAPHICS_CAPS_CAN_NOT_TEXTURE_ADDRESS_BORDER=true;
-
-	//D3DADAPTER_IDENTIFIER8& rkD3DAdapterId=pkD3DAdapterInfo->GetIdentifier();
-	if (strnicmp(rkD3DAdapterId.Driver, "SIS", 3) == 0)
+	CGraphicTextInstance::CreateWorldTextDeviceObjects(ms_pDevice);
+	// Check texture memory
+	// DX11 doesn't expose this directly, use DXGI
+	IDXGIDevice* pDXGIDeviceMem = nullptr;
+	IDXGIAdapter* pAdapterMem = nullptr;
+	if (SUCCEEDED(ms_pDevice->QueryInterface(__uuidof(IDXGIDevice), (void**)&pDXGIDeviceMem)))
 	{
-		GRAPHICS_CAPS_CAN_NOT_DRAW_LINE = true;
-		GRAPHICS_CAPS_CAN_NOT_DRAW_SHADOW = true;
-		GRAPHICS_CAPS_HALF_SIZE_IMAGE = true;
-		ms_isLowTextureMemory = true;
-	}
-	else if (strnicmp(rkD3DAdapterId.Driver, "3dfx", 4) == 0)
-	{
-		GRAPHICS_CAPS_CAN_NOT_DRAW_SHADOW = true;
-		GRAPHICS_CAPS_HALF_SIZE_IMAGE = true;
-		ms_isLowTextureMemory = true;
-	}
-
-	// Temporary migration checkpoint: exercise actual Shader Model 5 graphics
-	// work in this process without presenting over the existing D3D9 scene.
-	// Intentionally opt-in; never change the working renderer by accident.
-	char dx11TestEnabled[2] = {};
-	if (Windowed && GetEnvironmentVariableA("M2_DX11_TEST", dx11TestEnabled,
-		ARRAYSIZE(dx11TestEnabled)) == 1 && dx11TestEnabled[0] == '1')
-	{
-		graphics::DX11ProbeResult result;
-		const HRESULT probeResult = graphics::RunDX11Probe(hWnd, L"dx11_probe.bmp", &result);
-		char adapterName[256] = {};
-		WideCharToMultiByte(CP_UTF8, 0, result.adapter.description, -1,
-			adapterName, ARRAYSIZE(adapterName), nullptr, nullptr);
-		if (SUCCEEDED(probeResult))
+		if (SUCCEEDED(pDXGIDeviceMem->GetAdapter(&pAdapterMem)))
 		{
-			TraceError("DX11_DEVICE adapter=%s luid=%08X:%08X vram_mb=%llu render_index=%u render_outputs=%u output_index=%u feature_level=0x%04X",
-				adapterName,
-				static_cast<unsigned>(result.adapter.luid.HighPart), result.adapter.luid.LowPart,
-				static_cast<unsigned long long>(result.adapter.dedicatedVideoMemoryBytes / (1024 * 1024)),
-				result.adapter.adapterIndex, result.adapter.outputCount, result.adapter.outputIndex,
-				static_cast<unsigned>(result.featureLevel));
-			TraceError("DX11_TEST_DRAW mode=offscreen center_rgba=%u,%u,%u,%u image_saved=%u game_renderer=DX9Ex",
-				result.centerPixelRGBA[0], result.centerPixelRGBA[1],
-				result.centerPixelRGBA[2], result.centerPixelRGBA[3], result.bitmapSaved ? 1 : 0);
+			DXGI_ADAPTER_DESC adapterDesc;
+			pAdapterMem->GetDesc(&adapterDesc);
 
-			// Exercise the new reusable DX11 mesh/resource path independently
-			// of D3D9. A failure remains diagnostic and never aborts startup.
-			graphics::DX11ProbeResult meshResult;
-			const HRESULT meshProbeResult = graphics::RunDX11MeshProbe(
-				hWnd, L"dx11_mesh_probe.bmp", &meshResult);
-			if (SUCCEEDED(meshProbeResult))
-			{
-				TraceError("DX11_MESH_DRAW mode=offscreen vertices=4 indices=6 center_rgba=%u,%u,%u,%u image_saved=%u game_renderer=DX9Ex",
-					meshResult.centerPixelRGBA[0], meshResult.centerPixelRGBA[1],
-					meshResult.centerPixelRGBA[2], meshResult.centerPixelRGBA[3],
-					meshResult.bitmapSaved ? 1 : 0);
-			}
+			SIZE_T dwTexMemSize = adapterDesc.DedicatedVideoMemory;
+
+			if (dwTexMemSize > 0 && dwTexMemSize < 64 * 1024 * 1024)
+				ms_isLowTextureMemory = true;
 			else
-			{
-				TraceError("DX11_MESH_FAILED stage=%s hr=0x%08X game_renderer=DX9Ex",
-					meshResult.stage, static_cast<unsigned>(meshProbeResult));
-			}
+				ms_isLowTextureMemory = false;
+
+			if (dwTexMemSize > 100 * 1024 * 1024)
+				ms_isHighTextureMemory = true;
+			else
+				ms_isHighTextureMemory = false;
+
+			pAdapterMem->Release();
 		}
-		else
-		{
-			TraceError("DX11_TEST_FAILED stage=%s hr=0x%08X game_renderer=DX9Ex",
-				result.stage, static_cast<unsigned>(probeResult));
-		}
+		pDXGIDeviceMem->Release();
 	}
 
-	return (iRet);
+	// DX11 always supports texture address border
+	GRAPHICS_CAPS_CAN_NOT_TEXTURE_ADDRESS_BORDER = false;
+
+	// DXT support check
+	UINT formatSupport = 0;
+	ms_bSupportDXT = true;
+
+	if (FAILED(ms_pDevice->CheckFormatSupport(DXGI_FORMAT_BC1_UNORM, &formatSupport)) ||
+		!(formatSupport & D3D11_FORMAT_SUPPORT_TEXTURE2D))
+	{
+		ms_bSupportDXT = false;
+	}
+
+	// Flush the GPU to ensure all pending operations complete
+	ms_pContext->Flush();
+
+	// Verify device is still valid after initialization
+	HRESULT hrCheck = ms_pDevice->GetDeviceRemovedReason();
+	if (hrCheck != S_OK)
+	{
+		TraceError("CGraphicDevice::Create - Device became invalid during initialization: 0x%08X", hrCheck);
+		Destroy();
+		return CREATE_DEVICE;
+	}
+
+	TraceError("DX11_READY feature_level=0x%X msaa=%u vtf=%d particles_cs=%d",
+		static_cast<unsigned>(ms_FeatureLevel), GetMSAASampleCount(),
+		int(VTFMANAGER.IsInitialized()), int(SHADERMANAGER.IsComputeParticlesAvailable()));
+	return iRet;
+}
+
+void CGraphicDevice::BeginFrame()
+{
+    ms_bWorldFrameResolved = false;
+    if (!ms_pContext) return;
+    ID3D11RenderTargetView* target = CGraphicBase::GetRenderTargetView();
+    ms_pContext->OMSetRenderTargets(1, &target, CGraphicBase::GetDepthStencilView());
+    ms_pContext->RSSetViewports(1, &ms_Viewport);
+}
+
+void CGraphicDevice::FinishWorldRendering()
+{
+    if (ms_bWorldFrameResolved || !ms_pSwapChain || !ms_pContext) return;
+    ms_pContext->OMSetRenderTargets(0, nullptr, nullptr);
+#ifdef ENABLE_MSAA
+    ResolveMSAA();
+#endif
+    // All subsequent UI, names and cursor draws use the single-sample output.
+    ms_bWorldFrameResolved = true;
+#if defined(ENABLE_MSAA) && defined(ENABLE_BLOOM)
+    if (ms_bBloomEnabled && ms_pSceneTextureSRV && SHADERMANAGER.IsInitialized() &&
+			(SHADERMANAGER.IsBloomEnabled() || ms_bSSAOEnabled || SHADERMANAGER.IsGodRaysEnabled()))
+		{
+			SHADERMANAGER.PushState();
+            SHADERMANAGER.SetPipelineState(PSTATE_CULLMODE, CULL_NONE);
+            SHADERMANAGER.SetPipelineState(PSTATE_SCISSORENABLE, FALSE);
+            SHADERMANAGER.SetPipelineState(PSTATE_STENCILENABLE, FALSE);
+            SHADERMANAGER.SetPipelineState(PSTATE_RTWRITEMASK, D3D11_COLOR_WRITE_ENABLE_ALL);
+            struct RestorePostProcessState {
+                ID3D11DeviceContext* context;
+                ~RestorePostProcessState() {
+                    ID3D11ShaderResourceView* empty[4]{};
+                    context->PSSetShaderResources(0, 4, empty);
+                    ID3D11RenderTargetView* target = CGraphicBase::GetRenderTargetView();
+                    context->OMSetRenderTargets(1, &target, CGraphicBase::GetDepthStencilView());
+                    const auto viewport = CGraphicBase::GetViewport();
+                    context->RSSetViewports(1, &viewport);
+                    SHADERMANAGER.InvalidateDeviceStateCache();
+                    SHADERMANAGER.PopState();
+                }
+            } restore{ms_pContext};
+            // Resolve a complete scene for post processing.
+			ResolveMSAAToSceneTexture();
+
+#ifdef ENABLE_SSAO
+			ID3D11ShaderResourceView* pSSAO_SRV = nullptr;
+			if (ms_bSSAOEnabled && ms_pSSAO_RTV && SHADERMANAGER.GetFrameCount() > 15)
+			{
+				UINT fullW = (UINT)ms_Viewport.Width;
+				UINT fullH = (UINT)ms_Viewport.Height;
+				UINT halfW = max(1u, fullW / 2);
+				UINT halfH = max(1u, fullH / 2);
+
+				if (ms_uMSAASampleCount > 1 && ms_pMSAADepthStencilSRV && ms_pResolvedDepthRTV)
+				{
+					SHADERMANAGER.RenderDepthResolve(ms_pMSAADepthStencilSRV, ms_pResolvedDepthRTV, fullW, fullH);
+				}
+
+				ID3D11ShaderResourceView* pDepthSRV = GetDepthSRV();
+				if (pDepthSRV)
+				{
+					SHADERMANAGER.RenderSSAOPass(pDepthSRV, ms_pSSAO_RTV, halfW, halfH, fullW, fullH);
+					SHADERMANAGER.RenderSSAOBlur(ms_pSSAO_SRV, pDepthSRV, ms_pSSAOBlur_RTV, halfW, halfH);
+					pSSAO_SRV = ms_pSSAOBlur_SRV;
+				}
+			}
+#endif
+
+#ifdef ENABLE_GODRAYS
+			if (SHADERMANAGER.IsGodRaysEnabled() && ms_pGodRaysRTV)
+			{
+				SHADERMANAGER.RenderGodRaysPass(
+					ms_pSceneTextureSRV, ms_pGodRaysRTV,
+					max(1u, (UINT)ms_Viewport.Width / 4),
+					max(1u, (UINT)ms_Viewport.Height / 4));
+			}
+			ID3D11ShaderResourceView* pGodRaysSRV = SHADERMANAGER.IsGodRaysEnabled() ? ms_pGodRaysSRV : nullptr;
+#else
+			ID3D11ShaderResourceView* pGodRaysSRV = nullptr;
+#endif
+
+#ifndef ENABLE_SSAO
+			ID3D11ShaderResourceView* pSSAO_SRV = nullptr;
+#endif
+
+			ID3D11RenderTargetView* pSwapRTV = GetSwapChainRenderTargetView();
+			SHADERMANAGER.RenderBloom(
+				ms_pSceneTextureSRV,
+				ms_pBloomRTA_RTV, ms_pBloomRTA_SRV,
+				ms_pBloomRTB_RTV, ms_pBloomRTB_SRV,
+				max(1u, (UINT)ms_Viewport.Width / 4), max(1u, (UINT)ms_Viewport.Height / 4),
+				pGodRaysSRV,
+				pSSAO_SRV,
+				pSwapRTV, (UINT)ms_Viewport.Width, (UINT)ms_Viewport.Height);
+		}
+#endif
+    ID3D11RenderTargetView* target = CGraphicBase::GetRenderTargetView();
+    ms_pContext->OMSetRenderTargets(1, &target, CGraphicBase::GetDepthStencilView());
+    ms_pContext->RSSetViewports(1, &ms_Viewport);
+}
+
+void CGraphicDevice::Present(bool bVSync)
+{
+    if (ms_pSwapChain)
+    {
+#ifdef ENABLE_MSAA
+        // Login/loading screens have no world pass. Never resolve over a finished UI.
+        if (!ms_bWorldFrameResolved) ResolveMSAA();
+#endif
+        ms_hLastResult = ms_pSwapChain->Present(bVSync ? 1 : 0, 0);
+        if (FAILED(ms_hLastResult)) TraceError("DX11 Present failed hr=0x%08X removed=0x%08X", ms_hLastResult, ms_pDevice->GetDeviceRemovedReason());
+    }
+    SHADERMANAGER.OnFrameComplete();
+    SHADERMANAGER.ResetDynamicBuffers();
+}
+
+void CGraphicDevice::Clear(const float color[4], float depth, UINT8 stencil)
+{
+	if (ms_pContext)
+	{
+		ID3D11RenderTargetView* pRTV = GetRenderTargetView();
+		ID3D11DepthStencilView* pDSV = GetDepthStencilView();
+
+		if (pRTV)
+			ms_pContext->ClearRenderTargetView(pRTV, color);
+
+		if (pDSV)
+			ms_pContext->ClearDepthStencilView(pDSV,
+				D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, depth, stencil);
+	}
 }
 
 #ifdef ENABLE_FIX_MOBS_LAG
-void CGraphicDevice::__InitializePDTVertexBufferList() const
+void CGraphicDevice::__InitializePDTVertexBufferList()
 {
+	m_tinyPdtVertexBuffer = nullptr;
 	m_smallPdtVertexBuffer = nullptr;
+	m_mediumPdtVertexBuffer = nullptr;
 	m_largePdtVertexBuffer = nullptr;
+	m_xlargePdtVertexBuffer = nullptr;
 }
 
-void CGraphicDevice::__DestroyPDTVertexBufferList() const
+void CGraphicDevice::__DestroyPDTVertexBufferList()
 {
-	// Unbind before releasing so the state cache cannot retain a dead pointer.
-	if (ms_lpd3dDevice && m_pStateManager)
-	{
-		STATEMANAGER.SetStreamSource(0, nullptr, 0);
-		STATEMANAGER.SetIndices(nullptr, 0);
+	if (m_tinyPdtVertexBuffer) {
+		m_tinyPdtVertexBuffer->Release();
+		m_tinyPdtVertexBuffer = nullptr;
 	}
-	CGraphicTextInstance::DestroyWorldTextDeviceObjects();
-	safe_release(m_smallPdtVertexBuffer);
-	safe_release(m_largePdtVertexBuffer);
+
+	if (m_smallPdtVertexBuffer) {
+		m_smallPdtVertexBuffer->Release();
+		m_smallPdtVertexBuffer = nullptr;
+	}
+
+	if (m_mediumPdtVertexBuffer) {
+		m_mediumPdtVertexBuffer->Release();
+		m_mediumPdtVertexBuffer = nullptr;
+	}
+
+	if (m_largePdtVertexBuffer) {
+		m_largePdtVertexBuffer->Release();
+		m_largePdtVertexBuffer = nullptr;
+	}
+
+	if (m_xlargePdtVertexBuffer) {
+		m_xlargePdtVertexBuffer->Release();
+		m_xlargePdtVertexBuffer = nullptr;
+	}
 }
 
-bool CGraphicDevice::__CreatePDTVertexBufferList() const
+bool CGraphicDevice::__CreatePDTVertexBufferList()
 {
-	if (m_smallPdtVertexBuffer && m_largePdtVertexBuffer)
-		return true;
-	__DestroyPDTVertexBufferList();
-	if (!ms_lpd3dDevice)
+	D3D11_BUFFER_DESC bufferDesc;
+	ZeroMemory(&bufferDesc, sizeof(bufferDesc));
+	bufferDesc.Usage = D3D11_USAGE_DYNAMIC;
+	bufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+	bufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+
+	// Tiny buffer
+	bufferDesc.ByteWidth = sizeof(TPDTVertex) * TINY_PDT_VERTEX_BUFFER_SIZE;
+	if (FAILED(ms_pDevice->CreateBuffer(&bufferDesc, nullptr, &m_tinyPdtVertexBuffer)))
 		return false;
 
-	HRESULT result = ms_lpd3dDevice->CreateVertexBuffer(
-		sizeof(TPDTVertex) * SMALL_PDT_VERTEX_BUFFER_SIZE,
-		D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, TPDTVertex::kFVF,
-		D3DPOOL_DEFAULT, &m_smallPdtVertexBuffer, nullptr);
-	if (SUCCEEDED(result))
-		result = ms_lpd3dDevice->CreateVertexBuffer(
-			sizeof(TPDTVertex) * LARGE_PDT_VERTEX_BUFFER_SIZE,
-			D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, TPDTVertex::kFVF,
-			D3DPOOL_DEFAULT, &m_largePdtVertexBuffer, nullptr);
-
-	if (FAILED(result))
-	{
-		TraceError("Failed to create PDT vertex buffers (0x%08X)", static_cast<unsigned>(result));
-		__DestroyPDTVertexBufferList();
+	// Small buffer
+	bufferDesc.ByteWidth = sizeof(TPDTVertex) * SMALL_PDT_VERTEX_BUFFER_SIZE;
+	if (FAILED(ms_pDevice->CreateBuffer(&bufferDesc, nullptr, &m_smallPdtVertexBuffer)))
 		return false;
-	}
-	CGraphicTextInstance::CreateWorldTextDeviceObjects(ms_lpd3dDevice);
+
+	// Medium buffer
+	bufferDesc.ByteWidth = sizeof(TPDTVertex) * MEDIUM_PDT_VERTEX_BUFFER_SIZE;
+	if (FAILED(ms_pDevice->CreateBuffer(&bufferDesc, nullptr, &m_mediumPdtVertexBuffer)))
+		return false;
+
+	// Large buffer
+	bufferDesc.ByteWidth = sizeof(TPDTVertex) * LARGE_PDT_VERTEX_BUFFER_SIZE;
+	if (FAILED(ms_pDevice->CreateBuffer(&bufferDesc, nullptr, &m_largePdtVertexBuffer)))
+		return false;
+
+	// XLarge buffer
+	bufferDesc.ByteWidth = sizeof(TPDTVertex) * XLARGE_PDT_VERTEX_BUFFER_SIZE;
+	if (FAILED(ms_pDevice->CreateBuffer(&bufferDesc, nullptr, &m_xlargePdtVertexBuffer)))
+		return false;
+
 	return true;
 }
 #else
-void CGraphicDevice::__InitializePDTVertexBufferList() const
+void CGraphicDevice::__InitializePDTVertexBufferList()
 {
-	for (UINT i=0; i<PDT_VERTEXBUFFER_NUM; ++i)
-		ms_alpd3dPDTVB[i]= nullptr;
-	ms_alpd3dTextLinePDTVB= nullptr;
+	for (UINT i = 0; i < PDT_VERTEXBUFFER_NUM; ++i)
+		ms_alpd3dPDTVB[i] = nullptr;
 }
 
-void CGraphicDevice::__DestroyPDTVertexBufferList() const
+void CGraphicDevice::__DestroyPDTVertexBufferList()
 {
-	for (UINT i=0; i<PDT_VERTEXBUFFER_NUM; ++i)
+	for (UINT i = 0; i < PDT_VERTEXBUFFER_NUM; ++i)
 	{
 		if (ms_alpd3dPDTVB[i])
 		{
 			ms_alpd3dPDTVB[i]->Release();
-			ms_alpd3dPDTVB[i]= nullptr;
+			ms_alpd3dPDTVB[i] = nullptr;
 		}
 	}
-	if (ms_alpd3dTextLinePDTVB)
-	{
-		ms_alpd3dTextLinePDTVB->Release();
-		ms_alpd3dTextLinePDTVB= nullptr;
-	}
 }
 
-bool CGraphicDevice::__CreatePDTVertexBufferList() const
+bool CGraphicDevice::__CreatePDTVertexBufferList()
 {
-	for (UINT i=0; i<PDT_VERTEXBUFFER_NUM; ++i)
-	{
-		if (FAILED(
-			ms_lpd3dDevice->CreateVertexBuffer(
-			sizeof(TPDTVertex)*PDT_VERTEX_NUM,
-			D3DUSAGE_DYNAMIC|D3DUSAGE_WRITEONLY,
-			D3DFVF_XYZ|D3DFVF_DIFFUSE|D3DFVF_TEX1,
-			D3DPOOL_SYSTEMMEM,
-			&ms_alpd3dPDTVB[i], nullptr)
-		))
-		return false;
-	}
-	if (FAILED(
-		ms_lpd3dDevice->CreateVertexBuffer(
-		sizeof(TPDTVertex)*PDT_TEXTLINE_VERTEX_NUM,
-		D3DUSAGE_DYNAMIC|D3DUSAGE_WRITEONLY,
-		D3DFVF_XYZ|D3DFVF_DIFFUSE|D3DFVF_TEX1,
-		D3DPOOL_SYSTEMMEM,
-		&ms_alpd3dTextLinePDTVB, nullptr)
-	))
-	return false;
+	D3D11_BUFFER_DESC bufferDesc;
+	ZeroMemory(&bufferDesc, sizeof(bufferDesc));
+	bufferDesc.Usage = D3D11_USAGE_DYNAMIC;
+	bufferDesc.ByteWidth = sizeof(TPDTVertex) * PDT_VERTEX_NUM;
+	bufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+	bufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 
+	for (UINT i = 0; i < PDT_VERTEXBUFFER_NUM; ++i)
+	{
+		if (FAILED(ms_pDevice->CreateBuffer(&bufferDesc, nullptr, &ms_alpd3dPDTVB[i])))
+			return false;
+	}
 	return true;
 }
-
 #endif
 
-void CGraphicDevice::__InitializeDefaultIndexBufferList() const
+void CGraphicDevice::__InitializeDefaultIndexBufferList()
 {
-	for (UINT i=0; i<DEFAULT_IB_NUM; ++i)
-		ms_alpd3dDefIB[i]= nullptr;
+	for (UINT i = 0; i < DEFAULT_IB_NUM; ++i)
+		ms_alpd3dDefIB[i] = nullptr;
 }
 
-void CGraphicDevice::__DestroyDefaultIndexBufferList() const
+void CGraphicDevice::__DestroyDefaultIndexBufferList()
 {
-	for (UINT i=0; i<DEFAULT_IB_NUM; ++i)
+	for (UINT i = 0; i < DEFAULT_IB_NUM; ++i)
+	{
 		if (ms_alpd3dDefIB[i])
 		{
 			ms_alpd3dDefIB[i]->Release();
-			ms_alpd3dDefIB[i]= nullptr;
+			ms_alpd3dDefIB[i] = nullptr;
 		}
+	}
 }
 
-bool CGraphicDevice::__CreateDefaultIndexBuffer(UINT eDefIB, UINT uIdxCount, const WORD* c_awIndices) const
+bool CGraphicDevice::__CreateDefaultIndexBuffer(UINT eDefIB, UINT uIdxCount, const WORD* c_awIndices)
 {
-	assert(ms_alpd3dDefIB[eDefIB]==nullptr);
+	assert(ms_alpd3dDefIB[eDefIB] == nullptr);
 
-	if (FAILED(
-		ms_lpd3dDevice->CreateIndexBuffer(
-			sizeof(WORD)*uIdxCount,
-			D3DUSAGE_WRITEONLY,
-			D3DFMT_INDEX16,
-			D3DPOOL_DEFAULT,
-			&ms_alpd3dDefIB[eDefIB], nullptr)
-	)) return false;
+	D3D11_BUFFER_DESC bufferDesc;
+	ZeroMemory(&bufferDesc, sizeof(bufferDesc));
+	bufferDesc.Usage = D3D11_USAGE_IMMUTABLE;
+	bufferDesc.ByteWidth = sizeof(WORD) * uIdxCount;
+	bufferDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
 
-	WORD* dstIndices;
-	if (FAILED(
-		ms_alpd3dDefIB[eDefIB]->Lock(0, 0, (void**)&dstIndices, 0)
-	)) return false;
+	D3D11_SUBRESOURCE_DATA initData;
+	ZeroMemory(&initData, sizeof(initData));
+	initData.pSysMem = c_awIndices;
 
-	memcpy(dstIndices, c_awIndices, sizeof(WORD)*uIdxCount);
-
-	ms_alpd3dDefIB[eDefIB]->Unlock();
+	if (FAILED(ms_pDevice->CreateBuffer(&bufferDesc, &initData, &ms_alpd3dDefIB[eDefIB])))
+		return false;
 
 	return true;
 }
 
 bool CGraphicDevice::__CreateDefaultIndexBufferList()
 {
-	static constexpr WORD c_awLineIndices[2] = { 0, 1, };
+	static const WORD c_awLineIndices[2] = { 0, 1, };
 	static const WORD c_awLineTriIndices[6] = { 0, 1, 0, 2, 1, 2, };
-	static const WORD c_awLineRectIndices[8] = { 0, 1, 0, 2, 1, 3, 2, 3,};
+	static const WORD c_awLineRectIndices[8] = { 0, 1, 0, 2, 1, 3, 2, 3, };
 	static const WORD c_awLineCubeIndices[24] = {
 		0, 1, 0, 2, 1, 3, 2, 3,
 		0, 4, 1, 5, 2, 6, 3, 7,
 		4, 5, 4, 6, 5, 7, 6, 7,
 	};
-	static constexpr WORD c_awFillTriIndices[3]= { 0, 1, 2, };
+	static const WORD c_awFillTriIndices[3] = { 0, 1, 2, };
 	static const WORD c_awFillRectIndices[6] = { 0, 2, 1, 2, 3, 1, };
 	static const WORD c_awFillCubeIndices[36] = {
 		0, 1, 2, 1, 3, 2,
@@ -1008,39 +1595,120 @@ bool CGraphicDevice::__CreateDefaultIndexBufferList()
 	if (!__CreateDefaultIndexBuffer(DEFAULT_IB_FILL_CUBE, 36, c_awFillCubeIndices))
 		return false;
 
+	static const UINT MAX_BATCH_QUADS = 512;
+	WORD awFillRectMultiIndices[MAX_BATCH_QUADS * 6];
+	for (UINT q = 0; q < MAX_BATCH_QUADS; ++q)
+	{
+		WORD base = (WORD)(q * 4);
+		awFillRectMultiIndices[q * 6 + 0] = base + 0;
+		awFillRectMultiIndices[q * 6 + 1] = base + 2;
+		awFillRectMultiIndices[q * 6 + 2] = base + 1;
+		awFillRectMultiIndices[q * 6 + 3] = base + 2;
+		awFillRectMultiIndices[q * 6 + 4] = base + 3;
+		awFillRectMultiIndices[q * 6 + 5] = base + 1;
+	}
+	if (!__CreateDefaultIndexBuffer(DEFAULT_IB_FILL_RECT_MULTI, MAX_BATCH_QUADS * 6, awFillRectMultiIndices))
+		return false;
+
 	return true;
 }
 
 void CGraphicDevice::InitBackBufferCount(UINT uBackBufferCount)
 {
-	m_uBackBufferCount=uBackBufferCount;
+	m_uBackBufferCount = uBackBufferCount;
 }
 
 void CGraphicDevice::Destroy()
 {
+	CGraphicTextInstance::DestroyWorldTextDeviceObjects();
+	VTFMANAGER.ClearDeferredRigidBatches();
+	VTFMANAGER.ClearDeferredShadowBatches();
+	VTFMANAGER.Shutdown();
+	gs_kVolumetricFog.Shutdown();
+#ifdef ENABLE_SSAO
+	ms_bSSAOEnabled = false;
+#endif
+
+	if (ms_pContext && ms_pSwapChain)
+	{
+		DXGI_SWAP_CHAIN_DESC scdShut = {};
+		ms_pSwapChain->GetDesc(&scdShut);
+		const UINT uShutBuffers = (scdShut.BufferCount > 0 && scdShut.BufferCount <= 8) ? scdShut.BufferCount : 3;
+		const float blackColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+		for (UINT b = 0; b < uShutBuffers; ++b)
+		{
+			ID3D11Texture2D* pBB = nullptr;
+			if (FAILED(ms_pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&pBB)) || !pBB)
+				break;
+
+			ID3D11RenderTargetView* pShutRTV = nullptr;
+			if (SUCCEEDED(ms_pDevice->CreateRenderTargetView(pBB, nullptr, &pShutRTV)) && pShutRTV)
+			{
+				ms_pContext->ClearRenderTargetView(pShutRTV, blackColor);
+				ms_pSwapChain->Present(0, 0);
+				pShutRTV->Release();
+			}
+			pBB->Release();
+		}
+	}
+
+	if (ms_hWnd)
+		ShowWindow(ms_hWnd, SW_HIDE);
+
+	// Shutdown shader system
+	CShaderManager* pShaderMgr = CShaderManager::InstancePtr();
+	if (pShaderMgr && pShaderMgr->IsInitialized())
+	{
+		pShaderMgr->Shutdown();
+	}
+
 	__DestroyPDTVertexBufferList();
 	__DestroyDefaultIndexBufferList();
 
 	if (ms_hDC)
 	{
 		ReleaseDC(ms_hWnd, ms_hDC);
-		ms_hDC = nullptr;
+		ms_hDC = NULL;
 	}
 
 
-	safe_release(ms_lpSphereMesh);
-	safe_release(ms_lpCylinderMesh);
-
-	safe_release(ms_lpd3dMatStack);
-	safe_release(ms_lpd3dDevice);
-	safe_release(ms_lpd3d);
-
-	if (m_pStateManager)
+	if (ms_pMatrixStack)
 	{
-		delete m_pStateManager;
-		m_pStateManager = nullptr;
+		delete ms_pMatrixStack;
+		ms_pMatrixStack = nullptr;
+	}
+
+	__ReleaseBackBufferResources();
+
+	if (ms_pSwapChain)
+	{
+		ms_pSwapChain->Release();
+		ms_pSwapChain = nullptr;
+	}
+
+	if (ms_pDXGIFactory)
+	{
+		ms_pDXGIFactory->Release();
+		ms_pDXGIFactory = nullptr;
+	}
+
+	if (ms_pContext)
+	{
+		ms_pContext->ClearState();
+		ms_pContext->Flush();
+		ms_pContext->Release();
+		ms_pContext = nullptr;
+	}
+
+	if (ms_pDevice)
+	{
+		ms_pDevice->Release();
+		ms_pDevice = nullptr;
 	}
 
 	__Initialize();
 }
 
+DWORD GetMaxTextureWidth() { return D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION; }
+DWORD GetMaxTextureHeight() { return D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION; }

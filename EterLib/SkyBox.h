@@ -91,11 +91,13 @@ public:
 
 	void SetRenderMode(unsigned char ucRenderMode) { m_ucRenderMode = ucRenderMode;	}
 
-	const bool & isTransitionStarted() const { return m_bTransitionStarted; }
+	const bool & isTransitionStarted() { return m_bTransitionStarted; }
+
+	void ForcePosition(const Vector3& v3Pos);
 
 protected:
-	CGraphicImageInstance * GenerateTexture(const char * szfilename) const;
-	void DeleteTexture(CGraphicImageInstance * pGraphicImageInstance) const;
+	CGraphicImageInstance * GenerateTexture(const char * szfilename);
+	void DeleteTexture(CGraphicImageInstance * pGraphicImageInstance);
 
 protected:
 	//////////////////////////////////////////////////////////////////////////
@@ -118,8 +120,8 @@ protected:
 	//////////////////////////////////////////////////////////////////////////
 
 	TSkyObjectFace m_FaceCloud;
-	D3DXMATRIX m_matWorldCloud, m_matTranslationCloud, m_matTextureCloud;
-	D3DXVECTOR3 m_v3PositionCloud;
+	Matrix m_matWorldCloud, m_matTranslationCloud, m_matTextureCloud;
+	Vector3 m_v3PositionCloud;
 	float m_fCloudScaleX, m_fCloudScaleY, m_fCloudHeight;
 	float m_fCloudTextureScaleX, m_fCloudTextureScaleY;
 	float m_fCloudScrollSpeedU, m_fCloudScrollSpeedV;
@@ -130,8 +132,8 @@ protected:
 	TGraphicImageInstanceMap m_GraphicImageInstanceMap;
 
 	// Transform...
-	D3DXMATRIX m_matWorld, m_matTranslation;
-	D3DXVECTOR3 m_v3Position;
+	Matrix m_matWorld, m_matTranslation;
+	Vector3 m_v3Position;
 	float m_fScaleX, m_fScaleY, m_fScaleZ;
 
 	unsigned char m_ucRenderMode;
@@ -153,33 +155,57 @@ public:
 	void Render();
 	void RenderCloud();
 
+#ifdef ENABLE_CELESTIAL_BODY
+	void SetCelestialBodyTexture(const char* szSunTexture, const char* szMoonTexture);
+	void SetLightDirection(const Vector3& vLightDir, bool bIsNight);
+#endif
+
 	void Destroy();
 	void Unload();
 
-	void SetSkyBoxScale(const D3DXVECTOR3 & c_rv3Scale);
+	void SetSkyBoxScale(const Vector3 & c_rv3Scale);
 	void SetGradientLevel(BYTE byUpper, BYTE byLower);
 	void SetFaceTexture( const char* c_szFileName, int iFaceIndex );
 	void SetCloudTexture(const char * c_szFileName);
-	void SetCloudScale(const D3DXVECTOR2 & c_rv2CloudScale);
+	void SetCloudScale(const Vector2 & c_rv2CloudScale);
 	void SetCloudHeight(float fHeight);
-	void SetCloudTextureScale(const D3DXVECTOR2 & c_rv2CloudTextureScale);
-	void SetCloudScrollSpeed(const D3DXVECTOR2 & c_rv2CloudScrollSpeed);
+	void SetCloudTextureScale(const Vector2 & c_rv2CloudTextureScale);
+	void SetCloudScrollSpeed(const Vector2 & c_rv2CloudScrollSpeed);
 	void SetCloudColor(const TGradientColor & c_rColor, const TGradientColor & c_rNextColor, const DWORD & dwTransitionTime);
 	void Refresh();
 	void SetSkyColor(const TVectorGradientColor & c_rColorVector, const TVectorGradientColor & c_rNextColorVector, long lTransitionTime);
 	void StartTransition();
 
 protected:
-	void SetSkyObjectQuadVertical(TSkyObjectQuadVector * pSkyObjectQuadVector, const D3DXVECTOR2 * c_pv2QuadPoints) const;
-	void SetSkyObjectQuadHorizon(TSkyObjectQuadVector * pSkyObjectQuadVector, const D3DXVECTOR3 * c_pv3QuadPoints) const;
+	void SetSkyObjectQuadVertical(TSkyObjectQuadVector * pSkyObjectQuadVector, const Vector2 * c_pv2QuadPoints);
+	void SetSkyObjectQuadHorizon(TSkyObjectQuadVector * pSkyObjectQuadVector, const Vector3 * c_pv3QuadPoints);
 
-	//void UpdateSkyFaceQuadTransform(D3DXVECTOR3 * c_pv3QuadPoints);
+	//void UpdateSkyFaceQuadTransform(Vector3 * c_pv3QuadPoints);
 
 protected:
 	unsigned char m_ucVirticalGradientLevelUpper;
 	unsigned char m_ucVirticalGradientLevelLower;
+	unsigned char m_ucOriginalGradientLevelUpper;
+	unsigned char m_ucOriginalGradientLevelLower;
 	TSkyObjectFace m_Faces[6];
+
+	// Per-pixel gradient data (uploaded to shader CB)
+	std::vector<TColor> m_gradientSrc;
+	std::vector<TColor> m_gradientDst;
+	long m_lGradientTransitionDuration;
+	DWORD m_dwGradientTransitionStart;
+	bool m_bGradientTransitionActive;
+
+#ifdef ENABLE_CELESTIAL_BODY
+	CGraphicImageInstance* m_pSunTextureInstance;
+	CGraphicImageInstance* m_pMoonTextureInstance;
+	Vector3 m_vLightDirection;
+	float m_fSunSize;
+	float m_fMoonSize;
+	bool m_bCelestialReady;
+	bool m_bIsNight;
+#endif
 };
 
 #endif // !defined(AFX_SKYBOX_H__AB5049E1_8F1C_4C35_9406_45EC7EF4AD1B__INCLUDED_)
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

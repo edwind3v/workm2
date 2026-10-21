@@ -1,12 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-    <LocalDebuggerEnvironment>M2_DX11_TEST=1
-M2_DX11_ASSET_PATH=icon/item/27995.tga
-M2_DX11_SHARED_PREVIEW=1
-M2_DX11_MODEL_PREVIEW=1
-M2_DX11_MODEL_TARGET=skinned
-M2_DX11_CHARACTER_COMPOSITE=1</LocalDebuggerEnvironment>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
     <LocalDebuggerCommand>$(TargetPath)</LocalDebuggerCommand>
     <LocalDebuggerWorkingDirectory>E:\#111 METIN2 GRAPHICS MARTY 5.9\#MartySama 5.9 DX9Ex\Game Client\</LocalDebuggerWorkingDirectory>

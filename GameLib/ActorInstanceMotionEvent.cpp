@@ -122,12 +122,12 @@ void CActorInstance::ProcessMotionEventEffectEvent(const CRaceMotionData::TMotio
 
 	if (c_pEffectData->isIndependent)
 	{
-		int iIndex = CEffectManager::Instance().CreateEffect(c_pEffectData->dwEffectIndex, D3DXVECTOR3(0.0f, 0.0f, 0.0f), D3DXVECTOR3(0.0f, 0.0f, 0.0f));
+		int iIndex = CEffectManager::Instance().CreateEffect(c_pEffectData->dwEffectIndex, Vector3(0.0f, 0.0f, 0.0f), Vector3(0.0f, 0.0f, 0.0f));
 
-		D3DXMATRIX matLocalPosition;
-		D3DXMatrixTranslation(&matLocalPosition, c_pEffectData->v3EffectPosition.x, c_pEffectData->v3EffectPosition.y, c_pEffectData->v3EffectPosition.z);
+		Matrix matLocalPosition;
+		MatrixTranslation(&matLocalPosition, c_pEffectData->v3EffectPosition.x, c_pEffectData->v3EffectPosition.y, c_pEffectData->v3EffectPosition.z);
 
-		D3DXMATRIX matWorld;
+		Matrix matWorld;
 		matWorld = matLocalPosition;
 		matWorld *= m_worldMatrix;
 
@@ -151,14 +151,14 @@ void CActorInstance::ProcessMotionEventEffectEvent(const CRaceMotionData::TMotio
 			DWORD dwPartIndex = 0;
 			if (FindBoneIndex(dwPartIndex, c_pEffectData->strAttachingBoneName.c_str(), &iBoneIndex))
 			{
-				D3DXMATRIX * pBoneMat;
+				Matrix * pBoneMat;
 				GetBoneMatrix(dwPartIndex, iBoneIndex, &pBoneMat);
 
-				D3DXMATRIX matLocalPosition;
-				D3DXMatrixTranslation(&matLocalPosition, c_pEffectData->v3EffectPosition.x, c_pEffectData->v3EffectPosition.y, c_pEffectData->v3EffectPosition.z);
+				Matrix matLocalPosition;
+				MatrixTranslation(&matLocalPosition, c_pEffectData->v3EffectPosition.x, c_pEffectData->v3EffectPosition.y, c_pEffectData->v3EffectPosition.z);
 
 				/////////////////////////////////////////////////////////////////////
-				D3DXMATRIX matWorld;
+				Matrix matWorld;
 				matWorld = *pBoneMat;
 				matWorld *= matLocalPosition;
 				matWorld *= m_worldMatrix;
@@ -166,7 +166,7 @@ void CActorInstance::ProcessMotionEventEffectEvent(const CRaceMotionData::TMotio
 
 				int iIndex = CEffectManager::Instance().CreateEffect(c_pEffectData->dwEffectIndex,
 														c_pEffectData->v3EffectPosition,
-														D3DXVECTOR3(0.0f, 0.0f, 0.0f));
+														Vector3(0.0f, 0.0f, 0.0f));
 				CEffectManager::Instance().SelectEffectInstance(iIndex);
 				CEffectManager::Instance().SetEffectInstanceGlobalMatrix(matWorld);
 			}
@@ -194,7 +194,7 @@ void CActorInstance::ProcessMotionEventEffectToTargetEvent(const CRaceMotionData
  			rkEftMgr.DeactiveEffectInstance(m_iFishingEffectID);
 		}
 
-		m_iFishingEffectID = rkEftMgr.CreateEffect(c_pEffectToTargetData->dwEffectIndex, m_v3FishingPosition, D3DXVECTOR3(0.0f, 0.0f, 0.0f));
+		m_iFishingEffectID = rkEftMgr.CreateEffect(c_pEffectToTargetData->dwEffectIndex, m_v3FishingPosition, Vector3(0.0f, 0.0f, 0.0f));
 	}
 	else
 	{
@@ -204,18 +204,18 @@ void CActorInstance::ProcessMotionEventEffectToTargetEvent(const CRaceMotionData
 		if (c_pEffectToTargetData->isFollowing && IsFlyTargetObject())
 		{
 			const auto pTargetInstance = (CActorInstance *)m_kFlyTarget.GetFlyTarget();
-			const D3DXVECTOR3 v3Position(	c_pEffectToTargetData->v3EffectPosition.x,
+			const Vector3 v3Position(	c_pEffectToTargetData->v3EffectPosition.x,
 			                                c_pEffectToTargetData->v3EffectPosition.y,
 			                                c_pEffectToTargetData->v3EffectPosition.z);
 			pTargetInstance->AttachEffectByID(0, nullptr, c_pEffectToTargetData->dwEffectIndex, &v3Position);
 		}
 		else
 		{
-			const D3DXVECTOR3 & c_rv3FlyTarget = m_kFlyTarget.GetFlyTargetPosition();
-			const D3DXVECTOR3 v3Position(	c_rv3FlyTarget.x + c_pEffectToTargetData->v3EffectPosition.x,
+			const Vector3 & c_rv3FlyTarget = m_kFlyTarget.GetFlyTargetPosition();
+			const Vector3 v3Position(	c_rv3FlyTarget.x + c_pEffectToTargetData->v3EffectPosition.x,
 			                                c_rv3FlyTarget.y + c_pEffectToTargetData->v3EffectPosition.y,
 			                                c_rv3FlyTarget.z + c_pEffectToTargetData->v3EffectPosition.z);
-			CEffectManager::Instance().CreateEffect(c_pEffectToTargetData->dwEffectIndex, v3Position, D3DXVECTOR3(0.0f, 0.0f, 0.0f));
+			CEffectManager::Instance().CreateEffect(c_pEffectToTargetData->dwEffectIndex, v3Position, Vector3(0.0f, 0.0f, 0.0f));
 		}
 	}
 }
@@ -227,7 +227,7 @@ void CActorInstance::ProcessMotionEventSpecialAttacking(int iMotionEventIndex, c
 
 	const auto c_pAttackingData = (const CRaceMotionData::TMotionAttackingEventData *)c_pData;
 
-	const float fRadian = D3DXToRadian(270.0f + 360.0f - GetRotation());
+	const float fRadian = ToRadian(270.0f + 360.0f - GetRotation());
 	m_kSplashArea.isEnableHitProcess=c_pAttackingData->isEnableHitProcess;
 	m_kSplashArea.uSkill=m_kCurMotNode.uSkill;
 	m_kSplashArea.MotionKey = m_kCurMotNode.dwMotionKey;
@@ -243,7 +243,7 @@ void CActorInstance::ProcessMotionEventSpecialAttacking(int iMotionEventIndex, c
 		CDynamicSphereInstance & rSphereInstance = m_kSplashArea.SphereInstanceVector[i];
 
 		rSphereInstance.fRadius = c_rSphereData.fRadius;
-		//rSphereInstance.v3Advance = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
+		//rSphereInstance.v3Advance = Vector3(0.0f, 0.0f, 0.0f);
 
 		rSphereInstance.v3Position.x = m_x + c_rSphereData.v3Position.x*sinf(fRadian) + c_rSphereData.v3Position.y*cosf(fRadian);
 		rSphereInstance.v3Position.y = m_y + c_rSphereData.v3Position.x*cosf(fRadian) - c_rSphereData.v3Position.y*sinf(fRadian);
@@ -274,12 +274,12 @@ void CActorInstance::ProcessMotionEventFly(const CRaceMotionData::TMotionEventDa
 	{
 		CFlyingManager & rfm = CFlyingManager::Instance();
 
-		D3DXVECTOR3 v3Start(c_pFlyData->v3FlyPosition);
+		Vector3 v3Start(c_pFlyData->v3FlyPosition);
 		v3Start += m_v3Position;
 
 		if (c_pFlyData->isAttaching)
 		{
-			D3DXMATRIX * pBoneMat;
+			Matrix * pBoneMat;
 			int iBoneIndex;
 			const DWORD dwPartIndex = 0;
 
@@ -333,11 +333,11 @@ void CActorInstance::ProcessMotionEventWarp(const CRaceMotionData::TMotionEventD
 
 	if (m_kFlyTarget.IsValidTarget())
 	{
-		const D3DXVECTOR3 v3MainPosition(m_x, m_y, m_z);
-		const D3DXVECTOR3 & c_rv3TargetPosition = __GetFlyTargetPosition();
+		const Vector3 v3MainPosition(m_x, m_y, m_z);
+		const Vector3 & c_rv3TargetPosition = __GetFlyTargetPosition();
 
-		D3DXVECTOR3 v3Distance = c_rv3TargetPosition - v3MainPosition;
-		D3DXVec3Normalize(&v3Distance, &v3Distance);
+		Vector3 v3Distance = c_rv3TargetPosition - v3MainPosition;
+		Vec3Normalize(&v3Distance, &v3Distance);
 		const TPixelPosition DestPixelPosition = c_rv3TargetPosition - (v3Distance * sc_fDistanceFromTarget);
 
 		IBackground& rkBG=GetBackground();
@@ -368,11 +368,11 @@ void CActorInstance::ProcessMotionEventUnk11(DWORD dwcurFrame, int iIndex, const
 
 		if (m_kFlyTarget.IsValidTarget())
 		{
-			const D3DXVECTOR3 v3MainPosition(m_x, m_y, m_z);
-			const D3DXVECTOR3 & c_rv3TargetPosition = __GetFlyTargetPosition();
+			const Vector3 v3MainPosition(m_x, m_y, m_z);
+			const Vector3 & c_rv3TargetPosition = __GetFlyTargetPosition();
 
-			D3DXVECTOR3 v3Distance = c_rv3TargetPosition - v3MainPosition;
-			D3DXVec3Normalize(&v3Distance, &v3Distance);
+			Vector3 v3Distance = c_rv3TargetPosition - v3MainPosition;
+			Vec3Normalize(&v3Distance, &v3Distance);
 			const TPixelPosition DestPixelPosition = c_rv3TargetPosition - (v3Distance * (sc_fDistanceFromTarget+c_pUnk11TargetData->iAniSpeed));
 
 			IBackground& rkBG=GetBackground();

@@ -1,8 +1,10 @@
 #include "StdAfx.h"
-#include "../eterLib/StateManager.h"
+#include "../eterLib/ShaderManager.h"
 #include "../eterLib/ResourceManager.h"
 #include "EffectMeshInstance.h"
 #include "../eterlib/GrpMath.h"
+
+#include "../EterBase/StepTimer.h"
 
 CDynamicPool<CEffectMeshInstance>		CEffectMeshInstance::ms_kPool;
 
@@ -32,7 +34,7 @@ BOOL CEffectMeshInstance::isActive()
 
 	for (DWORD j = 0; j < m_TextureInstanceVector.size(); ++j)
 	{
-		const int iCurrentFrame = m_MeshFrameController.GetCurrentFrame();
+		int iCurrentFrame = m_MeshFrameController.GetCurrentFrame();
 		if (m_TextureInstanceVector[j].TextureFrameController.isActive(iCurrentFrame))
 			return TRUE;
 	}
@@ -50,7 +52,7 @@ bool CEffectMeshInstance::OnUpdate(float fElapsedTime)
 
 	for (DWORD j = 0; j < m_TextureInstanceVector.size(); ++j)
 	{
-		const int iCurrentFrame = m_MeshFrameController.GetCurrentFrame();
+		int iCurrentFrame = m_MeshFrameController.GetCurrentFrame();
 		if (m_TextureInstanceVector[j].TextureFrameController.isActive(iCurrentFrame))
 			m_TextureInstanceVector[j].TextureFrameController.Update(fElapsedTime);
 	}
@@ -64,6 +66,8 @@ void CEffectMeshInstance::OnRender()
 		return;
 
 	CEffectMesh * pEffectMesh = m_roMesh.GetPointer();
+	if (!pEffectMesh)
+		return;
 
 	for (DWORD i = 0; i < pEffectMesh->GetMeshCount(); ++i)
 	{
@@ -75,16 +79,16 @@ void CEffectMeshInstance::OnRender()
 
 		int iBillboardType = m_pMeshScript->GetBillboardType(i);
 
-		D3DXMATRIX m_matWorld;
-		D3DXMatrixIdentity(&m_matWorld);
+		Matrix m_matWorld;
+		MatrixIdentity(&m_matWorld);
 
 		switch(iBillboardType)
 		{
 			case MESH_BILLBOARD_TYPE_ALL:
 				{
-					D3DXMATRIX matTemp;
-					D3DXMatrixRotationX(&matTemp, 90.0f);
-					D3DXMatrixInverse(&m_matWorld, nullptr, &CScreen::GetViewMatrix());
+					Matrix matTemp;
+					MatrixRotationX(&matTemp, XM_PIDIV2);  // 90 degrees in radians (π/2)
+					MatrixInverse(&m_matWorld, NULL, &CScreen::GetViewMatrix());
 
 					m_matWorld = matTemp * m_matWorld;
 				}
@@ -92,10 +96,10 @@ void CEffectMeshInstance::OnRender()
 
 			case MESH_BILLBOARD_TYPE_Y:
 				{
-					D3DXMATRIX matTemp;
-					D3DXMatrixIdentity(&matTemp);
+					Matrix matTemp;
+					MatrixIdentity(&matTemp);
 
-					D3DXMatrixInverse(&matTemp, nullptr, &CScreen::GetViewMatrix());
+					MatrixInverse(&matTemp, NULL, &CScreen::GetViewMatrix());
 					m_matWorld._11 = matTemp._11;
 					m_matWorld._12 = matTemp._12;
 					m_matWorld._21 = matTemp._21;
@@ -105,16 +109,16 @@ void CEffectMeshInstance::OnRender()
 
 			case MESH_BILLBOARD_TYPE_MOVE:
 				{
-					D3DXVECTOR3 Position;
+					Vector3 Position;
 					m_pMeshScript->GetPosition(m_fLocalTime, Position);
-					D3DXVECTOR3 LastPosition;
-					m_pMeshScript->GetPosition(m_fLocalTime-CTimer::Instance().GetElapsedSecond(), LastPosition);
+					Vector3 LastPosition;
+					m_pMeshScript->GetPosition(m_fLocalTime - DX::StepTimer::Instance().GetElapsedSeconds(), LastPosition);
 					Position -= LastPosition;
-					if (D3DXVec3LengthSq(&Position)>0.001f)
+					if (Vec3LengthSq(&Position)>0.001f)
 					{
-						D3DXVec3Normalize(&Position,&Position);
-						D3DXQUATERNION q = SafeRotationNormalizedArc(D3DXVECTOR3(0.0f,-1.0f,0.0f),Position);
-						D3DXMatrixRotationQuaternion(&m_matWorld,&q);
+						Vec3Normalize(&Position,&Position);
+						Quaternion q = SafeRotationNormalizedArc(Vector3(0.0f,-1.0f,0.0f),Position);
+						MatrixRotationQuaternion(&m_matWorld,&q);
 					}
 				}
 				break;
@@ -122,29 +126,29 @@ void CEffectMeshInstance::OnRender()
 
 		if (!m_pMeshScript->isBlendingEnable(i))
 		{
-			STATEMANAGER.SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+			SHADERMANAGER.SetPipelineState(PSTATE_BLENDENABLE, FALSE);
 		}
 		else
 		{
 			int iBlendingSrcType = m_pMeshScript->GetBlendingSrcType(i);
 			int iBlendingDestType = m_pMeshScript->GetBlendingDestType(i);
-			STATEMANAGER.SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-			STATEMANAGER.SetRenderState(D3DRS_SRCBLEND, iBlendingSrcType);
-			STATEMANAGER.SetRenderState(D3DRS_DESTBLEND, iBlendingDestType);
+			SHADERMANAGER.SetPipelineState(PSTATE_BLENDENABLE, TRUE);
+			SHADERMANAGER.SetPipelineState(PSTATE_SRCBLEND, iBlendingSrcType);
+			SHADERMANAGER.SetPipelineState(PSTATE_DESTBLEND, iBlendingDestType);
 		}
 
-		D3DXVECTOR3 Position;
+		Vector3 Position;
 		m_pMeshScript->GetPosition(m_fLocalTime, Position);
 		m_matWorld._41 = Position.x;
 		m_matWorld._42 = Position.y;
 		m_matWorld._43 = Position.z;
 		m_matWorld = m_matWorld * *mc_pmatLocal;
-		STATEMANAGER.SetTransform(D3DTS_WORLD, &m_matWorld);
+		SHADERMANAGER.SetMatrix(MATRIX_WORLD, &m_matWorld);
 
-		BYTE byType;
-		D3DXCOLOR Color(1.0f, 1.0f, 1.0f, 1.0f);
-		if (m_pMeshScript->GetColorOperationType(i, &byType))
-			STATEMANAGER.SetTextureStageState(0, D3DTSS_COLOROP, byType);
+		BYTE byType = TEXOP_MODULATE;  // Default to modulate
+		Color Color(1.0f, 1.0f, 1.0f, 1.0f);
+		m_pMeshScript->GetColorOperationType(i, &byType);
+		SHADERMANAGER.SetParticleColorOp(byType);
 		m_pMeshScript->GetColorFactor(i, &Color);
 
 		TTimeEventTableFloat * TableAlpha;
@@ -159,28 +163,49 @@ void CEffectMeshInstance::OnRender()
 		assert(m_MeshFrameController.GetCurrentFrame() < pMeshData->EffectFrameDataVector.size());
 		CEffectMesh::TEffectFrameData & rFrameData = pMeshData->EffectFrameDataVector[m_MeshFrameController.GetCurrentFrame()];
 
+		float fFinalAlpha = fAlpha * rFrameData.fVisibility;
+		if (fFinalAlpha < 0.004f)  // ~1/255, essentially invisible
+			continue;
+
+		ID3D11ShaderResourceView * pEffectTexture = NULL;
 		DWORD dwcurTextureFrame = rTextureFrameController.GetCurrentFrame();
 		if (dwcurTextureFrame < m_TextureInstanceVector[i].TextureInstanceVector.size())
 		{
 			CGraphicImageInstance * pImageInstance = m_TextureInstanceVector[i].TextureInstanceVector[dwcurTextureFrame];
-			STATEMANAGER.SetTexture(0, pImageInstance->GetTexturePointer()->GetD3DTexture());
+			if (pImageInstance && pImageInstance->GetTexturePointer())
+				pEffectTexture = pImageInstance->GetTexturePointer()->GetD3DTexture();
 		}
+		SHADERMANAGER.SetShaderResource(0, pEffectTexture);
 
-		Color.a = fAlpha * rFrameData.fVisibility;
-		STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, DWORD(Color));
-		STATEMANAGER.SetFVF(D3DFVF_XYZ | D3DFVF_TEX1);
+		int iBlendingSrcType = m_pMeshScript->GetBlendingSrcType(i);
+		if (iBlendingSrcType == BLEND_ONE)
+		{
+			Color.r *= fFinalAlpha;
+			Color.g *= fFinalAlpha;
+			Color.b *= fFinalAlpha;
+		}
+		Color.a = fFinalAlpha;
+		if (SHADERMANAGER.IsInitialized())
+			SHADERMANAGER.SetParticleColor(DWORD(Color));
+
+		// Bind particle shader before rendering
+		SHADERMANAGER.BeginParticle();
+		SHADERMANAGER.SetTextureColorSwap(false);
+
 		if (rFrameData.dwIndexCount) // @fixme027
-			STATEMANAGER.DrawPrimitiveUP(D3DPT_TRIANGLELIST,
+		{
+			SHADERMANAGER.DrawDynamic(TOPOLOGY_TRIANGLELIST,
 									 rFrameData.dwIndexCount/3,
 									 &rFrameData.PDTVertexVector[0],
 									 sizeof(TPTVertex));
-		// Render
+			SHADERMANAGER.StatsNoteMeshElem();
+		}
 	}
 }
 
 void CEffectMeshInstance::OnSetDataPointer(CEffectElementBase * pElement)
 {
-	const auto pMesh = (CEffectMeshScript *)pElement;
+	CEffectMeshScript * pMesh = (CEffectMeshScript *)pElement;
 	m_pMeshScript = pMesh;
 
 	const char * c_szMeshFileName = pMesh->GetMeshFileName();
@@ -207,7 +232,7 @@ void CEffectMeshInstance::OnSetDataPointer(CEffectElementBase * pElement)
 		if (!m_pMeshScript->GetMeshDataPointer(j, &pMeshData))
 			continue;
 
-		const CEffectMesh* pkEftMesh=m_roMesh.GetPointer();
+		CEffectMesh* pkEftMesh=m_roMesh.GetPointer();
 
 		if (!pkEftMesh)
 			continue;
@@ -220,7 +245,7 @@ void CEffectMeshInstance::OnSetDataPointer(CEffectElementBase * pElement)
 
 		CFrameController & rFrameController = m_TextureInstanceVector[j].TextureFrameController;
 		rFrameController.Clear();
-		rFrameController.SetMaxFrame(rTextureVector.size());
+		rFrameController.SetMaxFrame((DWORD)(rTextureVector.size()));
 		rFrameController.SetFrameTime(pMeshData->fTextureAnimationFrameDelay);
 		rFrameController.SetLoopFlag(pMeshData->bTextureAnimationLoopEnable);
 		rFrameController.SetStartFrame(pMeshData->dwTextureAnimationStartFrame);
@@ -228,7 +253,7 @@ void CEffectMeshInstance::OnSetDataPointer(CEffectElementBase * pElement)
 		std::vector<CGraphicImageInstance*> & rImageInstanceVector = m_TextureInstanceVector[j].TextureInstanceVector;
 		rImageInstanceVector.clear();
 		rImageInstanceVector.reserve(rTextureVector.size());
-		for (auto itor = rTextureVector.begin(); itor != rTextureVector.end(); ++itor)
+		for (std::vector<CGraphicImage*>::iterator itor = rTextureVector.begin(); itor != rTextureVector.end(); ++itor)
 		{
 			CGraphicImage * pImage = *itor;
 			CGraphicImageInstance * pImageInstance = CGraphicImageInstance::ms_kPool.Alloc();
@@ -258,7 +283,7 @@ void CEffectMeshInstance::OnDestroy()
 {
 	for_each(m_TextureInstanceVector.begin(), m_TextureInstanceVector.end(), CEffectMeshInstance_DeleteTextureInstance);
 	m_TextureInstanceVector.clear();
-	m_roMesh.SetPointer(nullptr);
+	m_roMesh.SetPointer(NULL);
 }
 
 CEffectMeshInstance::CEffectMeshInstance()
@@ -270,4 +295,4 @@ CEffectMeshInstance::~CEffectMeshInstance()
 {
 	Destroy();
 }
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

@@ -34,27 +34,29 @@
 ///////////////////////////////////////////////////////////////////////
 //	Include files
 
+#include "SpeedTreeConfig.h"
 #include "SpeedTreeMaterial.h"
 #include <SpeedTreeRT.h>
 
-#include <d3d9.h>
-#include <d3d9types.h>
-#include <d3dx9.h>
+#include <d3d11.h>
+#include <DirectXMath.h>
+#include "../eterLib/GrpMathType.h"
+#include "../eterLib/GrpMathFunc.h"
 #include <vector>
 
 #include "../eterLib/GrpObjectInstance.h"
 #include "../eterLib/GrpImageInstance.h"
 
 #ifndef SAFE_DELETE
-#define SAFE_DELETE(p)       { if (p) { delete (p);     (p) = nullptr; } }
+#define SAFE_DELETE(p)       { if (p) { delete (p);     (p) = NULL; } }
 #endif
 
 #ifndef SAFE_DELETE_ARRAY
-#define SAFE_DELETE_ARRAY(p) { if (p) { delete[] (p);   (p) = nullptr; } }
+#define SAFE_DELETE_ARRAY(p) { if (p) { delete[] (p);   (p) = NULL; } }
 #endif
 
 #ifndef SAFE_RELEASE
-#define SAFE_RELEASE(p)      { if (p) { (p)->Release(); (p) = nullptr; } }
+#define SAFE_RELEASE(p)      { if (p) { (p)->Release(); (p) = NULL; } }
 #endif
 
 ///////////////////////////////////////////////////////////////////////
@@ -77,7 +79,7 @@ protected:
 	virtual bool OnGetObjectHeight(float fX, float fY, float * pfHeight) { return false; }
 	// Bounding Sphere
 public:
-	virtual bool GetBoundingSphere(D3DXVECTOR3 & v3Center, float & fRadius);
+	virtual bool GetBoundingSphere(Vector3 & v3Center, float & fRadius);
 
 public:
 	static bool					ms_bSelfShadowOn;
@@ -97,28 +99,32 @@ public:
 	CSpeedTreeWrapper();
 	virtual	~CSpeedTreeWrapper();
 
-	const float *				GetPosition() const;
+	void Initialize();
+	void MakeSpeedTree();
+
+	const float *				GetPosition();
+	static void					SetVertexShaders(ID3D11InputLayout* dwBranchVertexShader, ID3D11InputLayout* dwLeafVertexShader);
 
 	// geometry
-	bool                        LoadTree(const char * pszSptFile, const BYTE * c_pbBlock = nullptr, unsigned int uiBlockSize = 0, unsigned int nSeed = 1, float fSize = -1.0f, float fSizeVariance = -1.0f);
+	bool                        LoadTree(const char * pszSptFile, const BYTE * c_pbBlock = NULL, unsigned int uiBlockSize = 0, unsigned int nSeed = 1, float fSize = -1.0f, float fSizeVariance = -1.0f);
 	const float *				GetBoundingBox(void) const						{ return m_afBoundingBox; }
-	void						GetTreeSize(float & r_fSize, float & r_fVariance) const;
-	UINT						GetCollisionObjectCount() const;
-	void						GetCollisionObject(unsigned int nIndex, CSpeedTreeRT::ECollisionObjectType& eType, float* pPosition, float* pDimensions) const;
+	void						GetTreeSize(float & r_fSize, float & r_fVariance);
+	UINT						GetCollisionObjectCount();
+	void						GetCollisionObject(unsigned int nIndex, CSpeedTreeRT::ECollisionObjectType& eType, float* pPosition, float* pDimensions);
 
 	// rendering
 	void						SetupBranchForTreeType(void) const;
 	void						SetupFrondForTreeType(void) const;
 	void						SetupLeafForTreeType(void) const;
-	void						EndLeafForTreeType(void) const;
+	void						EndLeafForTreeType(void);
 
 #ifdef WRAPPER_USE_GPU_LEAF_PLACEMENT
-	void						UploadLeafTables(unsigned int uiLocation) const;
+	void						UploadLeafTables(int nFirstEntry) const;
 #endif
 
 	void						RenderBranches(void) const;
 	void                        RenderFronds(void) const;
-	void						RenderLeaves(void) const;
+	void						RenderLeaves(bool bShadowPass = false) const;
 	void						RenderBillboards(void) const;
 
 	// instancing
@@ -135,12 +141,17 @@ public:
 	float                       GetLeafLightingAdjustment(void) const			{ return m_pSpeedTree->GetLeafLightingAdjustment( ); }
 
 	// wind
-	void						SetWindStrength(float fStrength) const { m_pSpeedTree->SetWindStrength(fStrength); }
-	void						Advance(void) const;
+	void						SetWindStrength(float fStrength)				{ m_pSpeedTree->SetWindStrength(fStrength); }
+	void						Advance(void);
 
 	// utility
-	LPDIRECT3DTEXTURE9			GetBranchTexture(void) const;
-	void						CleanUpMemory(void) const;
+	ID3D11ShaderResourceView*			GetBranchTexture(void) const;
+	void						CleanUpMemory(void);
+
+	// VTF batching accessors
+	CSpeedTreeRT::SGeometry*	GetGeometryCache(void) const					{ return m_pGeometryCache; }
+	const unsigned short*		GetBranchIndexCounts(void) const				{ return m_pBranchIndexCounts; }
+	const unsigned short*		GetFrondIndexCounts(void) const					{ return m_pFrondIndexCounts; }
 
 private:
 	void						SetupBuffers(void);
@@ -163,21 +174,21 @@ private:
 	CSpeedTreeRT::SGeometry*		m_pGeometryCache;				// cache for pulling geometry from SpeedTree avoids lots of reallocation
 
 	// branch buffers
-	LPDIRECT3DVERTEXBUFFER9			m_pBranchVertexBuffer;			// branch vertex buffer
+	ID3D11Buffer*			m_pBranchVertexBuffer;			// branch vertex buffer
 	unsigned int					m_unBranchVertexCount;			// number of vertices in branches
-	LPDIRECT3DINDEXBUFFER9			m_pBranchIndexBuffer;			// branch index buffer
+	ID3D11Buffer*			m_pBranchIndexBuffer;			// branch index buffer
 	unsigned short*					m_pBranchIndexCounts;			// number of indexes per branch LOD level
 
 	// frond buffers
-	LPDIRECT3DVERTEXBUFFER9			m_pFrondVertexBuffer;			// frond vertex buffer
+	ID3D11Buffer*			m_pFrondVertexBuffer;			// frond vertex buffer
 	unsigned int					m_unFrondVertexCount;			// number of vertices in frond
-	LPDIRECT3DINDEXBUFFER9*			m_pFrondIndexBuffers;			// frond index buffers
+	ID3D11Buffer*			m_pFrondIndexBuffer;			// frond index buffer
 	unsigned short*					m_pFrondIndexCounts;			// number of indexes per frond LOD level
-	unsigned int					m_unNumFrondLods;
 
 	// leaf buffers
 	unsigned short					m_usNumLeafLods;				// the number of leaf LODs
-	LPDIRECT3DVERTEXBUFFER9*		m_pLeafVertexBuffer;			// leaf vertex buffer
+	ID3D11Buffer**		m_pLeafVertexBuffer;			// leaf vertex buffer
+	ID3D11Buffer**		m_pLeafShadowVertexBuffer;		// world-oriented leaf cards for the shadow pass
 	bool*							m_pLeavesUpdatedByCpu;			// stores which LOD's have been updated already per frame
 
 	// tree properties
@@ -194,10 +205,9 @@ private:
 	CGraphicImageInstance			m_ShadowImageInstance;			// shadow texture object (used if shadows are enabled)
 	CGraphicImageInstance			m_CompositeImageInstance;
 
-	static unsigned int				m_unNumWrappersActive;
-	static LPDIRECT3DVERTEXSHADER9	ms_lpBranchVertexShader;
-	static LPDIRECT3DVERTEXSHADER9	ms_lpLeafVertexShader;
+	static ID3D11InputLayout* ms_dwBranchVertexShader;
+	static ID3D11InputLayout* ms_dwLeafVertexShader;
 };
 
 #pragma warning(pop)
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

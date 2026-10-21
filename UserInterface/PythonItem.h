@@ -47,11 +47,11 @@ class CPythonItem : public CSingleton<CPythonItem>
 		typedef struct SGroundItemInstance
 		{
 			DWORD					dwVirtualNumber;
-			D3DXVECTOR3				v3EndPosition;
+			Vector3				v3EndPosition;
 
-			D3DXVECTOR3				v3RotationAxis;
-			D3DXQUATERNION			qEnd;
-			D3DXVECTOR3				v3Center;
+			Vector3				v3RotationAxis;
+			Quaternion			qEnd;
+			Vector3				v3Center;
 			CGraphicThingInstance	ThingInstance;
 			DWORD					dwStartTime;
 			DWORD					dwEndTime;
@@ -71,7 +71,7 @@ class CPythonItem : public CSingleton<CPythonItem>
 			std::array<TPlayerItemAttribute, ITEM_ATTRIBUTE_SLOT_MAX_NUM> attrs{};
 			#endif
 
-			static void	__PlayDropSound(DWORD eItemType, const D3DXVECTOR3& c_rv3Pos);
+			static void	__PlayDropSound(DWORD eItemType, const Vector3& c_rv3Pos);
 			static std::string		ms_astDropSoundFileName[DROPSOUND_NUM];
 		} TGroundItemInstance;
 

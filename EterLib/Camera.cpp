@@ -53,12 +53,12 @@ m_isLock(false)
 
 	m_fTarget_						= CAMERA_TARGET_STANDARD;
 
-	m_v3AngularAcceleration			= D3DXVECTOR3(0.0f, 0.0f, 0.0f);
-	m_v3AngularVelocity				= D3DXVECTOR3(0.0f, 0.0f, 0.0f);
+	m_v3AngularAcceleration			= Vector3(0.0f, 0.0f, 0.0f);
+	m_v3AngularVelocity				= Vector3(0.0f, 0.0f, 0.0f);
 
 	m_bProcessTerrainCollision		= true;
 
-    SetViewParams(D3DXVECTOR3(0.0f,0.0f,1.0f), D3DXVECTOR3(0.0f,0.0f,0.0f), D3DXVECTOR3(0.0f,1.0f,0.0f));
+    SetViewParams(Vector3(0.0f,0.0f,1.0f), Vector3(0.0f,0.0f,0.0f), Vector3(0.0f,1.0f,0.0f));
 }
 
 CCamera::~CCamera()
@@ -193,7 +193,7 @@ void CCamera::ResetNumScreenBuilding()
 
 //////////////////////////////////////////////////////////////////////////
 // Property
-void CCamera::SetViewParams( const D3DXVECTOR3 &v3Eye, const D3DXVECTOR3& v3Target, const D3DXVECTOR3& v3Up)
+void CCamera::SetViewParams( const Vector3 &v3Eye, const Vector3& v3Target, const Vector3& v3Up)
 {
 	if (IsLock())
 		return;
@@ -206,7 +206,7 @@ void CCamera::SetViewParams( const D3DXVECTOR3 &v3Eye, const D3DXVECTOR3& v3Targ
 	SetViewMatrix();
 }
 
-void CCamera::SetEye(const D3DXVECTOR3 & v3Eye)
+void CCamera::SetEye(const Vector3 & v3Eye)
 {
 	if (IsLock())
 		return;
@@ -216,7 +216,7 @@ void CCamera::SetEye(const D3DXVECTOR3 & v3Eye)
 	SetViewMatrix();
 }
 
-void CCamera::SetTarget(const D3DXVECTOR3 & v3Target)
+void CCamera::SetTarget(const Vector3 & v3Target)
 {
 	if (IsLock())
 		return;
@@ -226,7 +226,7 @@ void CCamera::SetTarget(const D3DXVECTOR3 & v3Target)
 	SetViewMatrix();
 }
 
-void CCamera::SetUp(const D3DXVECTOR3 & v3Up)
+void CCamera::SetUp(const Vector3 & v3Up)
 {
 	if (IsLock())
 		return;
@@ -239,33 +239,33 @@ void CCamera::SetUp(const D3DXVECTOR3 & v3Up)
 void CCamera::SetViewMatrix()
 {
 	m_v3View = m_v3Target - m_v3Eye;
-	const D3DXVECTOR3 v3CenterRay = -m_v3View;
+	const Vector3 v3CenterRay = -m_v3View;
  	CalculateRoll();
-	m_fDistance = D3DXVec3Length(&m_v3View);
+	m_fDistance = Vec3Length(&m_v3View);
 	assert(m_fDistance >= 0);
-	D3DXVec3Normalize(&m_v3View , &m_v3View);
+	Vec3Normalize(&m_v3View , &m_v3View);
 
-    D3DXVec3Cross(&m_v3Cross, &m_v3Up, &m_v3View);
-	D3DXVec3Normalize(&m_v3Cross, &m_v3Cross);
+    Vec3Cross(&m_v3Cross, &m_v3Up, &m_v3View);
+	Vec3Normalize(&m_v3Cross, &m_v3Cross);
 
-    D3DXVec3Cross(&m_v3Up, &m_v3View, &m_v3Cross);
-	D3DXVec3Normalize(&m_v3Up, &m_v3Up);
+    Vec3Cross(&m_v3Up, &m_v3View, &m_v3Cross);
+	Vec3Normalize(&m_v3Up, &m_v3Up);
 
-	const auto val = D3DXVECTOR3(0.0f, 0.0f, 1.0f);
-	m_fPitch = D3DXVec3Dot(&m_v3Up, &val);
+	const auto val = Vector3(0.0f, 0.0f, 1.0f);
+	m_fPitch = Vec3Dot(&m_v3Up, &val);
 	if (m_fPitch >= 1)
 		m_fPitch = 1;
 	else if (m_fPitch <= -1)
 		m_fPitch = -1;
 	m_fPitch = acosf(m_fPitch);
-	m_fPitch *= (180.0f / D3DX_PI);
+	m_fPitch *= (180.0f / MATH_PI);
 	if ( 0 < m_v3View.z )
 		m_fPitch = -m_fPitch;
 
-	D3DXMatrixLookAtRH(&m_matView, &m_v3Eye, &m_v3Target, &m_v3Up);
+	MatrixLookAtRH(&m_matView, &m_v3Eye, &m_v3Target, &m_v3Up);
 
-	float fDeterminantD3DMatView = D3DXMatrixDeterminant(&m_matView);
-    D3DXMatrixInverse(&m_matInverseView, &fDeterminantD3DMatView, &m_matView);
+	float fDeterminantD3DMatView = MatrixDeterminant(&m_matView);
+    MatrixInverse(&m_matInverseView, &fDeterminantD3DMatView, &m_matView);
 
 	m_matBillboard = m_matInverseView;
     m_matBillboard._41 = 0.0f;
@@ -289,7 +289,7 @@ void CCamera::SetViewMatrix()
 	m_kCameraRightToTerrainRay.SetDirection(m_v3Cross, 3.0f * m_fTerrainCollisionRadius);
 	const auto val5 = (v3CenterRay - m_fTerrainCollisionRadius * m_v3Up);
 	m_kTargetToCameraBottomRay.SetDirection(v3CenterRay - m_fTerrainCollisionRadius * m_v3Up,
-		D3DXVec3Length(&val5));
+		Vec3Length(&val5));
 
 	m_kLeftObjectCollisionRay.SetStartPoint(m_v3Target);
 	m_kTopObjectCollisionRay.SetStartPoint(m_v3Target);
@@ -298,19 +298,19 @@ void CCamera::SetViewMatrix()
 
 	const auto val1 = (v3CenterRay + m_fObjectCollisionRadius * m_v3Cross);
 	m_kLeftObjectCollisionRay.SetDirection(v3CenterRay + m_fObjectCollisionRadius * m_v3Cross,
-		D3DXVec3Length(&val1));
+		Vec3Length(&val1));
 	const auto val2 = (v3CenterRay - m_fObjectCollisionRadius * m_v3Cross);
 	m_kRightObjectCollisionRay.SetDirection(v3CenterRay - m_fObjectCollisionRadius * m_v3Cross,
-		D3DXVec3Length(&val2));
+		Vec3Length(&val2));
 	const auto val3 = (v3CenterRay + m_fObjectCollisionRadius * m_v3Up);
 	m_kTopObjectCollisionRay.SetDirection(v3CenterRay + m_fObjectCollisionRadius * m_v3Up,
-		D3DXVec3Length(&val3));
+		Vec3Length(&val3));
 	const auto val4 = (v3CenterRay + m_fObjectCollisionRadius * m_v3Up);
 	m_kBottomObjectCollisionRay.SetDirection(v3CenterRay - m_fObjectCollisionRadius * m_v3Up,
-		D3DXVec3Length(&val4));
+		Vec3Length(&val4));
 }
 
-void CCamera::Move(const D3DXVECTOR3 & v3Displacement)
+void CCamera::Move(const Vector3 & v3Displacement)
 {
 	if (IsLock())
 		return;
@@ -329,7 +329,7 @@ void CCamera::Zoom(float fRatio)
 	if (fRatio == 1.0f)
 		return;
 
-	D3DXVECTOR3 v3Temp = m_v3Eye - m_v3Target;
+	Vector3 v3Temp = m_v3Eye - m_v3Target;
 	v3Temp *= fRatio;
 	m_v3Eye = v3Temp + m_v3Target;
 
@@ -341,8 +341,8 @@ void CCamera::MoveAlongView(float fDistance)
 	if (IsLock())
 		return;
 
-	D3DXVECTOR3 v3Temp;
-	D3DXVec3Normalize(&v3Temp, &m_v3View);
+	Vector3 v3Temp;
+	Vec3Normalize(&v3Temp, &m_v3View);
 
 	m_v3Eye += v3Temp * fDistance;
 	m_v3Target += v3Temp * fDistance;
@@ -355,8 +355,8 @@ void CCamera::MoveAlongCross(float fDistance)
 	if (IsLock())
 		return;
 
-	D3DXVECTOR3 v3Temp;
-	D3DXVec3Normalize(&v3Temp, &m_v3Cross);
+	Vector3 v3Temp;
+	Vec3Normalize(&v3Temp, &m_v3Cross);
 
 	m_v3Eye += v3Temp * fDistance;
 	m_v3Target += v3Temp * fDistance;
@@ -369,8 +369,8 @@ void CCamera::MoveAlongUp(FLOAT fDistance)
 	if (IsLock())
 		return;
 
-	D3DXVECTOR3 v3Temp ;
-	D3DXVec3Normalize(&v3Temp, &m_v3Up);
+	Vector3 v3Temp ;
+	Vec3Normalize(&v3Temp, &m_v3Up);
 	m_v3Target += v3Temp * fDistance;
 	m_v3Eye += v3Temp * fDistance;
 	SetViewMatrix();
@@ -389,8 +389,8 @@ void CCamera::MoveFront(float fDistance)
 	if (IsLock())
 		return;
 
-	auto v3Temp = D3DXVECTOR3(m_v3View.x, m_v3View.y, 0.0f);
-	D3DXVec3Normalize(&v3Temp, &v3Temp);
+	auto v3Temp = Vector3(m_v3View.x, m_v3View.y, 0.0f);
+	Vec3Normalize(&v3Temp, &v3Temp);
 
 	m_v3Eye += v3Temp * fDistance;
 	m_v3Target += v3Temp * fDistance;
@@ -411,10 +411,10 @@ void CCamera::MoveVertical(float fDistance)
 
 //void CCamera::RotateUpper(float fDegree)
 //{
-//	D3DXMATRIX matRot;
-//	D3DXMatrixRotationAxis(&matRot, &m_v3Cross, -D3DXToRadian(fDegree));
-//	D3DXVec3TransformCoord(&m_v3View, &m_v3View, &matRot) ;
-//    D3DXVec3Cross(&m_v3Up, &m_v3View, &m_v3Cross);
+//	Matrix matRot;
+//	MatrixRotationAxis(&matRot, &m_v3Cross, -ToRadian(fDegree));
+//	Vec3TransformCoord(&m_v3View, &m_v3View, &matRot) ;
+//    Vec3Cross(&m_v3Up, &m_v3View, &m_v3Cross);
 //
 //	m_v3Target = m_v3Eye + m_v3View;
 //
@@ -426,7 +426,7 @@ void CCamera::RotateEyeAroundTarget(float fPitchDegree, float fRollDegree)
 	if (IsLock())
 		return;
 
-	D3DXMATRIX matRot, matRotPitch, matRotRoll;
+	Matrix matRot, matRotPitch, matRotRoll;
 
 	if (m_fPitch + fPitchDegree > 80.0f)
 	{
@@ -437,16 +437,16 @@ void CCamera::RotateEyeAroundTarget(float fPitchDegree, float fRollDegree)
 		fPitchDegree = -80.0f - m_fPitch;
 	}
 
-	D3DXMatrixRotationAxis(&matRotPitch, &m_v3Cross, D3DXToRadian(fPitchDegree));
+	MatrixRotationAxis(&matRotPitch, &m_v3Cross, ToRadian(fPitchDegree));
 
-	D3DXMatrixRotationZ(&matRotRoll, -D3DXToRadian(fRollDegree));
+	MatrixRotationZ(&matRotRoll, -ToRadian(fRollDegree));
 	matRot = matRotPitch * matRotRoll;
 
-	const D3DXVECTOR3 v3Temp = m_v3Eye - m_v3Target;
-	D3DXVec3TransformCoord(&m_v3Eye, &v3Temp, &matRot);
+	const Vector3 v3Temp = m_v3Eye - m_v3Target;
+	Vec3TransformCoord(&m_v3Eye, &v3Temp, &matRot);
 	m_v3Eye += m_v3Target;
 
-	SetUp(D3DXVECTOR3(0.0f, 0.0f, 1.0f));
+	SetUp(Vector3(0.0f, 0.0f, 1.0f));
 
 	m_fRoll += fRollDegree;
 
@@ -456,28 +456,28 @@ void CCamera::RotateEyeAroundTarget(float fPitchDegree, float fRollDegree)
 		m_fRoll += 360.0f;
 }
 
-void CCamera::RotateEyeAroundPoint(const D3DXVECTOR3 & v3Point, float fPitchDegree, float fRollDegree)
+void CCamera::RotateEyeAroundPoint(const Vector3 & v3Point, float fPitchDegree, float fRollDegree)
 {
 //	if (IsLock())
 //		return;
 
-	D3DXMATRIX matRot, matRotPitch, matRotRoll;
+	Matrix matRot, matRotPitch, matRotRoll;
 
-	D3DXMatrixRotationAxis(&matRotPitch, &m_v3Cross, D3DXToRadian(fPitchDegree));
+	MatrixRotationAxis(&matRotPitch, &m_v3Cross, ToRadian(fPitchDegree));
 
-	D3DXMatrixRotationZ(&matRotRoll, -D3DXToRadian(fRollDegree));
+	MatrixRotationZ(&matRotRoll, -ToRadian(fRollDegree));
 	matRot = matRotPitch * matRotRoll;
 
-	D3DXVECTOR3 v3Temp = m_v3Eye - v3Point;
-	D3DXVec3TransformCoord(&m_v3Eye, &v3Temp, &matRot);
+	Vector3 v3Temp = m_v3Eye - v3Point;
+	Vec3TransformCoord(&m_v3Eye, &v3Temp, &matRot);
 	m_v3Eye += v3Point;
 
 const auto val = (v3Temp + m_v3Up);
-	D3DXVec3TransformCoord(&m_v3Up, &val, &matRot);
+	Vec3TransformCoord(&m_v3Up, &val, &matRot);
 	m_v3Up -= (m_v3Eye - v3Point);
 
 	v3Temp = m_v3Target - v3Point;
-	D3DXVec3TransformCoord(&m_v3Target, &v3Temp, &matRot);
+	Vec3TransformCoord(&m_v3Target, &v3Temp, &matRot);
 	m_v3Target += v3Point;
 
 	SetViewMatrix();
@@ -509,20 +509,20 @@ void CCamera::SetDistance(const float fdistance)
 
 void CCamera::CalculateRoll()
 {
-	D3DXVECTOR2 v2ViewXY;
+	Vector2 v2ViewXY;
 	v2ViewXY.x = m_v3View.x;
 	v2ViewXY.y = m_v3View.y;
- 	D3DXVec2Normalize(&v2ViewXY, &v2ViewXY);
-	const auto val2 = D3DXVECTOR2(0.0f, 1.0f);
-	float fDot = D3DXVec2Dot(&v2ViewXY, &val2);
+ 	Vec2Normalize(&v2ViewXY, &v2ViewXY);
+	const auto val2 = Vector2(0.0f, 1.0f);
+	float fDot = Vec2Dot(&v2ViewXY, &val2);
 	if (fDot >= 1)
 		fDot = 1;
 	else if (fDot <= -1)
 		fDot = -1;
 	fDot = acosf(fDot);
-	fDot *= (180.0f / D3DX_PI);
-	const auto val = D3DXVECTOR2(0.0f, 1.0f);
-	const float fCross = D3DXVec2CCW (&v2ViewXY, &val);
+	fDot *= (180.0f / MATH_PI);
+	const auto val = Vector2(0.0f, 1.0f);
+	const float fCross = Vec2CCW (&v2ViewXY, &val);
 	if ( 0 > fCross)
 	{
 		fDot = -fDot;

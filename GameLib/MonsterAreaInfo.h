@@ -79,8 +79,8 @@ public:
 
 	DWORD			GetMonsterCount() const { return m_dwMonsterCount; }
 	EMonsterDir		GetMonsterDir() const { return m_eMonsterDir; }
-	D3DXVECTOR2		GetMonsterDirVector() const { return m_v2Monsterdirection; }
-	D3DXVECTOR2		GetTempMonsterPos(DWORD dwIndex) const;
+	Vector2		GetMonsterDirVector() const { return m_v2Monsterdirection; }
+	Vector2		GetTempMonsterPos(DWORD dwIndex) const;
 
 protected:
 	void			SetLRTB();
@@ -98,7 +98,7 @@ protected:
 
 	DWORD			m_dwMonsterCount;
 	EMonsterDir		m_eMonsterDir;
-	D3DXVECTOR2		m_v2Monsterdirection;
+	Vector2		m_v2Monsterdirection;
 
 	DWORD			m_dwID;
 
@@ -112,7 +112,7 @@ protected:
 	long			m_lTop;
 	long			m_lBottom;
 
-	std::vector<D3DXVECTOR2> m_TempMonsterPosVector;
+	std::vector<Vector2> m_TempMonsterPosVector;
 };
 
 typedef std::vector<CMonsterAreaInfo *>					TMonsterAreaInfoPtrVector;

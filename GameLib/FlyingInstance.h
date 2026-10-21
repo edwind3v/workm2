@@ -12,7 +12,7 @@ class CFlyingInstance
 {
 public:
 	void Clear();
-	void SetDataPointer(CFlyingData * pData, const D3DXVECTOR3 & v3StartPosition);
+	void SetDataPointer(CFlyingData * pData, const Vector3 & v3StartPosition);
 	void SetFlyTarget(const CFlyTarget & cr_Target); // Shot at Target
 
 public:
@@ -30,16 +30,16 @@ public:
 	virtual ~CFlyingInstance();
 
 	void Destroy();
-	void Create(CFlyingData* pData, const D3DXVECTOR3& c_rv3StartPos, const CFlyTarget & c_rkTarget, bool canAttack);
+	void Create(CFlyingData* pData, const Vector3& c_rv3StartPos, const CFlyTarget & c_rkTarget, bool canAttack);
 
 	bool Update();
 	void Render();
 
 	bool IsAlive() const { return m_bAlive; }
 
-	const D3DXVECTOR3 & GetPosition() const { return m_v3Position; }
+	const Vector3 & GetPosition() const { return m_v3Position; }
 
-	void AdjustDirectionForHoming(const D3DXVECTOR3 & v3TargetPosition);
+	void AdjustDirectionForHoming(const Vector3 & v3TargetPosition);
 
 	typedef std::vector<TAttachEffectInstance> TAttachEffectInstanceVector;
 
@@ -63,14 +63,14 @@ public:
 protected:
 	void __Initialize();
 
-	void __SetDataPointer(CFlyingData * pData, const D3DXVECTOR3 & v3StartPosition);
+	void __SetDataPointer(CFlyingData * pData, const Vector3 & v3StartPosition);
 	void __SetTargetDirection(const CFlyTarget& c_rkTarget);
-	void __SetTargetNormalizedDirection(const D3DXVECTOR3 & v3NormalizedDirection );
+	void __SetTargetNormalizedDirection(const Vector3 & v3NormalizedDirection );
 
 protected:
 
 	CFlyingData * m_pData;
-	D3DXQUATERNION m_qRot;
+	Quaternion m_qRot;
 
 	float m_fStartTime;
 
@@ -80,16 +80,16 @@ protected:
 	int m_iPierceCount;
 	DWORD m_dwSkillIndex;
 
-	D3DXVECTOR3 m_v3Position;
-	D3DXVECTOR3 m_v3Velocity;
-	D3DXVECTOR3 m_v3LocalVelocity;
-	D3DXVECTOR3 m_v3Accel;
+	Vector3 m_v3Position;
+	Vector3 m_v3Velocity;
+	Vector3 m_v3LocalVelocity;
+	Vector3 m_v3Accel;
 
 	float m_fRemainRange;
 
 	CFlyTarget m_FlyTarget;
 
-	D3DXQUATERNION m_qAttachRotation;
+	Quaternion m_qAttachRotation;
 	TAttachEffectInstanceVector m_vecAttachEffectInstance;
 
 	IFlyEventHandler * m_pHandler;

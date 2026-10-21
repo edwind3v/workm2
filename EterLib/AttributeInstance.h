@@ -16,10 +16,10 @@ class CAttributeInstance
 		const char * GetDataFileName() const;
 
 		void SetObjectPointer(CAttributeData * pAttributeData);
-		void RefreshObject(const D3DXMATRIX & c_rmatGlobal);
+		void RefreshObject(const Matrix & c_rmatGlobal);
 		CAttributeData * GetObjectPointer() const;
 
-		bool Picking(const D3DXVECTOR3 & v, const D3DXVECTOR3 & dir, float & out_x, float & out_y) const;
+		bool Picking(const Vector3 & v, const Vector3 & dir, float & out_x, float & out_y) const;
 
 		BOOL IsInHeight(float fx, float fy) const;
 		BOOL GetHeight(float fx, float fy, float * pfHeight);
@@ -27,16 +27,16 @@ class CAttributeInstance
 		BOOL IsHeightData() const;
 
 	protected:
-		void SetGlobalMatrix(const D3DXMATRIX & c_rmatGlobal);
-		void SetGlobalPosition(const D3DXVECTOR3 & c_rv3Position);
+		void SetGlobalMatrix(const Matrix & c_rmatGlobal);
+		void SetGlobalPosition(const Vector3 & c_rv3Position);
 
 	protected:
 		float m_fCollisionRadius;
 		float m_fHeightRadius;
 
-		D3DXMATRIX m_matGlobal;
+		Matrix m_matGlobal;
 
-		std::vector< std::vector<D3DXVECTOR3> > m_v3HeightDataVector;
+		std::vector< std::vector<Vector3> > m_v3HeightDataVector;
 
 		CAttributeData::TRef					m_roAttributeData;
 

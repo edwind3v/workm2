@@ -69,6 +69,7 @@ protected:
 protected:
 	CGraphicDib	m_dib;
 
+	std::vector<DWORD> m_uploadPixels;
 	HFONT	m_hFontOld;
 	HFONT	m_hFont;
 

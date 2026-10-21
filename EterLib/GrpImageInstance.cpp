@@ -1,12 +1,8 @@
 #include "StdAfx.h"
 #include "GrpImageInstance.h"
-#include "StateManager.h"
+#include "ShaderManager.h"
 
 #include "../eterBase/CRC32.h"
-//STATEMANAGER.SaveRenderState(D3DRS_SRCBLEND, D3DBLEND_INVDESTCOLOR);
-//STATEMANAGER.SaveRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
-//STATEMANAGER.RestoreRenderState(D3DRS_SRCBLEND);
-//STATEMANAGER.RestoreRenderState(D3DRS_DESTBLEND);
 
 CDynamicPool<CGraphicImageInstance>		CGraphicImageInstance::ms_kPool;
 
@@ -32,7 +28,7 @@ void CGraphicImageInstance::Delete(CGraphicImageInstance* pkImgInst)
 }
 
 #if defined(__BL_CLIP_MASK__)
-void CGraphicImageInstance::Render(RECT* rMask)
+void CGraphicImageInstance::Render(RECT* pClipRect)
 #else
 void CGraphicImageInstance::Render()
 #endif
@@ -43,7 +39,7 @@ void CGraphicImageInstance::Render()
 	assert(!IsEmpty());
 
 #if defined(__BL_CLIP_MASK__)
-	OnRender(rMask);
+	OnRender(pClipRect);
 #else
 	OnRender();
 #endif
@@ -75,10 +71,10 @@ void CGraphicImageInstance::OnRender()
 	float ev = (c_rRect.top + (c_rRect.bottom-c_rRect.top)) * texReverseHeight;
 
 #if defined(__BL_CLIP_MASK__)
-	float v1 = m_v2Position.x - 0.5f;
-	float v2 = m_v2Position.y - 0.5f;
-	float v3 = m_v2Position.x + fimgWidth - 0.5f;
-	float v4 = m_v2Position.y + fimgHeight - 0.5f;
+	float v1 = m_v2Position.x;
+	float v2 = m_v2Position.y;
+	float v3 = m_v2Position.x + fimgWidth;
+	float v4 = m_v2Position.y + fimgHeight;
 
 	if (rMask)
 	{
@@ -154,26 +150,26 @@ void CGraphicImageInstance::OnRender()
 	vertices[3].diffuse = m_DiffuseColor;
 #else
 	TPDTVertex vertices[4];
-	vertices[0].position.x = m_v2Position.x - 0.5f;
-	vertices[0].position.y = m_v2Position.y - 0.5f;
+	vertices[0].position.x = m_v2Position.x;
+	vertices[0].position.y = m_v2Position.y;
 	vertices[0].position.z = 0.0f;
 	vertices[0].texCoord = TTextureCoordinate(su, sv);
 	vertices[0].diffuse = m_DiffuseColor;
 
-	vertices[1].position.x = m_v2Position.x + fimgWidth - 0.5f;
-	vertices[1].position.y = m_v2Position.y - 0.5f;
+	vertices[1].position.x = m_v2Position.x + fimgWidth;
+	vertices[1].position.y = m_v2Position.y;
 	vertices[1].position.z = 0.0f;
 	vertices[1].texCoord = TTextureCoordinate(eu, sv);
 	vertices[1].diffuse = m_DiffuseColor;
 
-	vertices[2].position.x = m_v2Position.x - 0.5f;
-	vertices[2].position.y = m_v2Position.y + fimgHeight - 0.5f;
+	vertices[2].position.x = m_v2Position.x;
+	vertices[2].position.y = m_v2Position.y + fimgHeight;
 	vertices[2].position.z = 0.0f;
 	vertices[2].texCoord = TTextureCoordinate(su, ev);
 	vertices[2].diffuse = m_DiffuseColor;
 
-	vertices[3].position.x = m_v2Position.x + fimgWidth - 0.5f;
-	vertices[3].position.y = m_v2Position.y + fimgHeight - 0.5f;
+	vertices[3].position.x = m_v2Position.x + fimgWidth;
+	vertices[3].position.y = m_v2Position.y + fimgHeight;
 	vertices[3].position.z = 0.0f;
 	vertices[3].texCoord = TTextureCoordinate(eu, ev);
 	vertices[3].diffuse = m_DiffuseColor;
@@ -203,12 +199,16 @@ void CGraphicImageInstance::OnRender()
 	{
 		CGraphicBase::SetDefaultIndexBuffer(CGraphicBase::DEFAULT_IB_FILL_RECT);
 
-		STATEMANAGER.SetTexture(0, pTexture->GetD3DTexture());
-		STATEMANAGER.SetTexture(1, nullptr);
-		STATEMANAGER.SetFVF(D3DFVF_XYZ|D3DFVF_DIFFUSE|D3DFVF_TEX1);
-		STATEMANAGER.DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, 4, 0, 2, 0);
+		if (SHADERMANAGER.IsInitialized())
+		{
+			SHADERMANAGER.BeginUI();
+			SHADERMANAGER.CommitChanges();
+		}
+
+		SHADERMANAGER.SetShaderResource(0, pTexture->GetD3DTexture());
+		SHADERMANAGER.SetShaderResource(1, NULL);
+		SHADERMANAGER.DrawIndexed(TOPOLOGY_TRIANGLELIST, 0, 4, 0, 2);
 	}
-	//OLD: STATEMANAGER.DrawIndexedPrimitiveUP(D3DPT_TRIANGLELIST, 0, 4, 2, c_FillRectIndices, D3DFMT_INDEX16, vertices, sizeof(TPDTVertex));
 	////////////////////////////////////////////////////////////
 }
 
@@ -220,7 +220,7 @@ const CGraphicTexture & CGraphicImageInstance::GetTextureReference() const
 CGraphicTexture * CGraphicImageInstance::GetTexturePointer() const
 {
 	CGraphicImage* pkImage = m_roImage.GetPointer();
-	return pkImage ? pkImage->GetTexturePointer() : nullptr;
+	return pkImage ? pkImage->GetTexturePointer() : NULL;
 }
 
 CGraphicImage * CGraphicImageInstance::GetGraphicImagePointer() const
@@ -329,7 +329,7 @@ void CGraphicImageInstance::Initialize()
 
 void CGraphicImageInstance::Destroy()
 {
-	m_roImage.SetPointer(nullptr);
+	m_roImage.SetPointer(NULL);
 	Initialize();
 }
 
@@ -342,6 +342,7 @@ CGraphicImageInstance::~CGraphicImageInstance()
 {
 	Destroy();
 }
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec
 
 #ifdef ENABLE_UI_MOVING
 void CGraphicImageInstance::SetScale(float fx, float fy)
@@ -350,7 +351,7 @@ void CGraphicImageInstance::SetScale(float fx, float fy)
 	m_v2Scale.y = fy;
 }
 
-void CGraphicImageInstance::SetScale(D3DXVECTOR2 v2Scale)
+void CGraphicImageInstance::SetScale(Vector2 v2Scale)
 {
 	m_v2Scale = v2Scale;
 }
@@ -361,7 +362,7 @@ void CGraphicImageInstance::SetScalePercent(BYTE byPercent)
 	m_v2Scale.y *= byPercent;
 }
 
-const D3DXVECTOR2& CGraphicImageInstance::GetScale() const
+const Vector2& CGraphicImageInstance::GetScale() const
 {
 	return m_v2Scale;
 }

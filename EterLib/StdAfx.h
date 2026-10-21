@@ -21,11 +21,28 @@
 #pragma warning(disable:4201 4512 4238 4239)
 #endif
 
-#include <d3d9.h>
-#include <d3dx9.h>
+// DirectX 11 Headers
+#include <d3d11.h>
+#include <d3dcompiler.h>
+#include <dxgi.h>
+#include <DirectXMath.h>
+#include <DirectXColors.h>
 
+using namespace DirectX;
+
+// Math types and functions (native DirectXMath-based)
+#include "GrpMathType.h"
+#include "GrpMathFunc.h"
+#include "GrpStateEnum.h"
+#include "GrpLightType.h"
+
+// ComPtr for safe COM pointer management
+#include <wrl/client.h>
+using Microsoft::WRL::ComPtr;
+
+#ifndef DIRECTINPUT_VERSION
 #define DIRECTINPUT_VERSION 0x0800
-
+#endif
 #include <dinput.h>
 
 #pragma warning ( disable : 4201 )
@@ -39,8 +56,9 @@
 #include <malloc.h>
 
 #pragma comment(lib, "winmm.lib")
-#pragma comment(lib, "d3d9.lib")
-#pragma comment(lib, "d3dx9.lib")
+#pragma comment(lib, "d3d11.lib")
+#pragma comment(lib, "dxgi.lib")
+#pragma comment(lib, "d3dcompiler.lib")
 
 #include "../eterBase/StdAfx.h"
 #include "../eterBase/Debug.h"
@@ -49,4 +67,3 @@
 #ifndef VC_EXTRALEAN
 #include <winsock.h>
 #endif
-

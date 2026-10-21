@@ -103,8 +103,8 @@ void CPythonPlayer::NEW_ShowEffect(int dwEID, TPixelPosition kPPosDst) const
 	if (dwEID>=EFFECT_NUM)
 		return;
 
-	const D3DXVECTOR3 kD3DVt3Pos(kPPosDst.x, -kPPosDst.y, kPPosDst.z);
-	const D3DXVECTOR3 kD3DVt3Dir(0.0f, 0.0f, 1.0f);
+	const Vector3 kD3DVt3Pos(kPPosDst.x, -kPPosDst.y, kPPosDst.z);
+	const Vector3 kD3DVt3Dir(0.0f, 0.0f, 1.0f);
 
 	CEffectManager& rkEftMgr=CEffectManager::Instance();
 	rkEftMgr.CreateEffect(m_adwEffect[dwEID], kD3DVt3Pos, kD3DVt3Dir);
@@ -1241,7 +1241,7 @@ void CPythonPlayer::AlarmHaveToGo()
 
 	float fAngle = GetDegreeFromPosition2(PixelPosition.x, PixelPosition.y, float(m_ixDestPos), float(m_iyDestPos));
 	fAngle = fmod(540.0f - fAngle, 360.0f);
-	const D3DXVECTOR3 v3Rotation(0.0f, 0.0f, fAngle);
+	const Vector3 v3Rotation(0.0f, 0.0f, fAngle);
 
 	PixelPosition.y *= -1.0f;
 

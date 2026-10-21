@@ -179,7 +179,7 @@ class CPythonMiniMap : public CScreen, public CSingleton<CPythonMiniMap>
 
 		float							m_fMiniMapRadius;
 
-		LPDIRECT3DTEXTURE9				m_lpMiniMapTexture[AROUND_AREA_NUM];
+		ID3D11ShaderResourceView*				m_lpMiniMapTexture[AROUND_AREA_NUM];
 
 		CGraphicImageInstance			m_MiniMapFilterGraphicImageInstance;
 		CGraphicExpandedImageInstance	m_MiniMapCameraraphicImageInstance;
@@ -200,13 +200,13 @@ class CPythonMiniMap : public CScreen, public CSingleton<CPythonMiniMap>
 		CGraphicVertexBuffer			m_VertexBuffer;
 		CGraphicIndexBuffer				m_IndexBuffer;
 
-		D3DXMATRIX						m_matIdentity;
-		D3DXMATRIX						m_matWorld;
-		D3DXMATRIX						m_matMiniMapCover;
+		Matrix						m_matIdentity;
+		Matrix						m_matWorld;
+		Matrix						m_matMiniMapCover;
 
 		bool							m_bShowAtlas;
 		CGraphicImageInstance			m_AtlasImageInstance;
-		D3DXMATRIX						m_matWorldAtlas;
+		Matrix						m_matWorldAtlas;
 		CGraphicExpandedImageInstance	m_AtlasPlayerMark;
 
 		float							m_fAtlasScreenX;
@@ -240,7 +240,7 @@ class CPythonMiniMap : public CScreen, public CSingleton<CPythonMiniMap>
 		// SignalPoint
 		struct TSignalPoint
 		{
-			D3DXVECTOR2 v2Pos;
+			Vector2 v2Pos;
 			unsigned int id;
 		};
 		std::vector<TSignalPoint>				m_SignalPointVector;

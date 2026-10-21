@@ -1,5 +1,6 @@
 #include "StdAfx.h"
 #include "MapOutdoor.h"
+#include "../eterlib/ShaderManager.h"
 
 void CMapOutdoor::SetIndexBuffer()
 {
@@ -11,10 +12,10 @@ void CMapOutdoor::SetIndexBuffer()
 #ifdef WORLD_EDITOR
 	m_pwIndices = new WORD[dwIndexNum];
 	if (!m_pwIndices)
-		TraceError("CMapOutdoor::SetIndexBuffer() IndexBuffer is Null");
+		TraceError("CMapOutdoor::SetIndexBuffer() IndexBuffer is NULL");
 
 	memset(m_pwIndices, 0, sizeof(WORD) * dwIndexNum);
-	if (!m_IndexBuffer.Create(dwIndexNum, D3DFMT_INDEX16))
+	if (!m_IndexBuffer.Create(dwIndexNum, DXGI_FORMAT_R16_UINT, D3D11_USAGE_DYNAMIC))
 		TraceError("CMapOutdoor::SetIndexBuffer() IndexBuffer Create Error");
 
 	WORD count = 0;
@@ -62,13 +63,13 @@ void CMapOutdoor::SetIndexBuffer()
 	}
 
 	m_wNumIndices = count;
-	if (!m_IndexBuffer.Lock((void **) &pIndices))
-		TraceError("CMapOutdoor::SetIndexBuffer() IndexBuffer Unlock Error");
+	if (!m_IndexBuffer.Map((void **) &pIndices))
+		TraceError("CMapOutdoor::SetIndexBuffer() IndexBuffer Map Error");
 	memcpy(pIndices, m_pwIndices, count * sizeof(WORD));
-	m_IndexBuffer.Unlock();
+	m_IndexBuffer.Unmap();
 
 	delete [] m_pwIndices;
-	m_pwIndices = nullptr;
+	m_pwIndices = NULL;
 #else
 	WORD	count[TERRAINPATCH_LODMAX], count2[TERRAINPATCH_LODMAX];
 	BYTE uci;
@@ -78,7 +79,7 @@ void CMapOutdoor::SetIndexBuffer()
 		memset(m_pwaIndices[uci], 0, sizeof(WORD) * dwIndexNum);
 		count[uci] = 0;
 		count2[uci] = 0;
-		if ( !m_IndexBuffer[uci].Create(dwIndexNum, D3DFMT_INDEX16) )
+			if ( !m_IndexBuffer[uci].Create(dwIndexNum, DXGI_FORMAT_R16_UINT, D3D11_USAGE_DYNAMIC) )
 			TraceError("CMapOutdoor::SetIndexBuffer() IndexBuffer Create Error");
 	}
 
@@ -192,13 +193,14 @@ void CMapOutdoor::SetIndexBuffer()
 	for (uci = 0; uci < TERRAINPATCH_LODMAX; ++uci)
 	{
 		m_wNumIndices[uci] = count[uci];
-		if( !m_IndexBuffer[uci].Lock((void **) &pIndices) )
-			TraceError("CMapOutdoor::SetIndexBuffer() IndexBuffer Unlock Error");
+		if( !m_IndexBuffer[uci].Map((void **) &pIndices) )
+			TraceError("CMapOutdoor::SetIndexBuffer() IndexBuffer Map Error");
 		memcpy(pIndices, m_pwaIndices[uci], count[uci] * sizeof(WORD));
-		m_IndexBuffer[uci].Unlock();
+		m_IndexBuffer[uci].Unmap();
 		delete [] m_pwaIndices[uci];
-		m_pwaIndices[uci] = nullptr;
+		m_pwaIndices[uci] = NULL;
 	}
+
 #endif
 }
 
@@ -527,4 +529,4 @@ void CMapOutdoor::ADDLvl2M(WORD * pIndices, WORD & rwCount, const WORD & c_rwCur
 	pIndices[rwCount++] = c_rwCurCount + c_rucNumLineWarp * 4 + 4;
 	pIndices[rwCount++] = c_rwCurCount + 4;
 }
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

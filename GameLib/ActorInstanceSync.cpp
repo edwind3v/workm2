@@ -4,14 +4,14 @@
 
 void CActorInstance::__Push(int x, int y)
 {
-	const D3DXVECTOR3& c_rv3Src=GetPosition();
-	const auto c_v3Dst=D3DXVECTOR3(x, -y, c_rv3Src.z);
-	const D3DXVECTOR3 c_v3Delta=c_v3Dst-c_rv3Src;
+	const Vector3& c_rv3Src=GetPosition();
+	const auto c_v3Dst=Vector3(x, -y, c_rv3Src.z);
+	const Vector3 c_v3Delta=c_v3Dst-c_rv3Src;
 
 	constexpr auto LoopValue = 100;
-	const D3DXVECTOR3 inc = c_v3Delta / LoopValue;
+	const Vector3 inc = c_v3Delta / LoopValue;
 
-	D3DXVECTOR3 v3Movement(0.0f, 0.0f, 0.0f);
+	Vector3 v3Movement(0.0f, 0.0f, 0.0f);
 
 	IPhysicsWorld* pWorld = IPhysicsWorld::GetPhysicsWorld();
 	if (!pWorld)

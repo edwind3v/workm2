@@ -44,7 +44,7 @@ void CGraphicFontTexture::Destroy()
 
 	m_dib.Destroy();
 
-	m_lpd3dTexture = nullptr;
+	m_pSRV = nullptr;
 	CGraphicTexture::Destroy();
 	stl_wipe(m_pFontTextureVector);
 	m_charInfoMap.clear();
@@ -168,7 +168,7 @@ bool CGraphicFontTexture::AppendTexture()
 {
 	const auto pNewTexture = new CGraphicImageTexture;
 
-	if (!pNewTexture->Create(m_dib.GetWidth(), m_dib.GetHeight(), D3DFMT_A4R4G4B4))
+	if (!pNewTexture->Create(m_dib.GetWidth(), m_dib.GetHeight(), DXGI_FORMAT_B8G8R8A8_UNORM))
 	{
 		delete pNewTexture;
 		return false;
@@ -180,35 +180,21 @@ bool CGraphicFontTexture::AppendTexture()
 
 bool CGraphicFontTexture::UpdateTexture()
 {
-	if(!m_isDirty)
-		return true;
-
-	m_isDirty = false;
-
-	const CGraphicImageTexture * pFontTexture = m_pFontTextureVector.back();
-
-	if (!pFontTexture)
-		return false;
-
-	WORD* pwDst;
-	int pitch;
-
-	if (!pFontTexture->Lock(&pitch, (void**)&pwDst))
-		return false;
-
-	pitch /= 2;
-
-	const int width = m_dib.GetWidth();
-	const int height = m_dib.GetHeight();
-
-	auto pdwSrc = (DWORD*)m_dib.GetPointer();
-
-	for (int y = 0; y < height; ++y, pwDst += pitch, pdwSrc += width)
-		for (int x = 0; x < width; ++x)
-			pwDst[x]=pdwSrc[x];
-
-	pFontTexture->Unlock();
-	return true;
+    if (!m_isDirty) return true;
+    if (m_pFontTextureVector.empty() || !ms_pContext) return false;
+    auto* texture = m_pFontTextureVector.back()->GetTexture();
+    if (!texture) return false;
+    const int width = m_dib.GetWidth(), height = m_dib.GetHeight();
+    m_uploadPixels.resize(static_cast<size_t>(width) * height);
+    const auto* source = static_cast<const DWORD*>(m_dib.GetPointer());
+    for (size_t i = 0; i < m_uploadPixels.size(); ++i)
+    {
+        const DWORD v = source[i];
+        m_uploadPixels[i] = v;
+    }
+    ms_pContext->UpdateSubresource(texture, 0, nullptr, m_uploadPixels.data(), width * sizeof(DWORD), 0);
+    m_isDirty = false;
+    return true;
 }
 
 CGraphicFontTexture::TCharacterInfomation* CGraphicFontTexture::GetCharacterInfomation(WORD codePage, wchar_t keyValue)
@@ -292,7 +278,9 @@ CGraphicFontTexture::TCharacterInfomation* CGraphicFontTexture::UpdateCharacterI
 	{
 		for (nChrX=0; nChrX<nChrWidth; ++nChrX)
 		{
-			pdwDIBRow[nChrX]=(pdwDIBRow[nChrX]&0xff) ? 0xffff : 0;
+			// Preserve GDI grayscale coverage in the native BGRA8 atlas.
+			const DWORD coverage = pdwDIBRow[nChrX] & 0xff;
+			pdwDIBRow[nChrX] = (coverage << 24) | 0x00ffffff;
 		}
 	}
 
@@ -334,7 +322,7 @@ bool CGraphicFontTexture::CheckTextureIndex(DWORD dwTexture) const
 void CGraphicFontTexture::SelectTexture(DWORD dwTexture)
 {
 	assert(CheckTextureIndex(dwTexture));
-	m_lpd3dTexture = m_pFontTextureVector[dwTexture]->GetD3DTexture();
+	m_pSRV = m_pFontTextureVector[dwTexture]->GetD3DTexture();
 }
 
 #ifdef ENABLE_FIX_MOBS_LAG

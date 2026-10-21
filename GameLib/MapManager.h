@@ -45,7 +45,7 @@ class CMapManager : public CScreen, public IPhysicsWorld
 		float					GetTerrainHeight(float fx, float fy) const;
 		bool					GetWaterHeight(int iX, int iY, long * plWaterHeight) const;
 
-		bool					GetNormal(int ix, int iy, D3DXVECTOR3 * pv3Normal) const;
+		bool					GetNormal(int ix, int iy, Vector3 * pv3Normal) const;
 
 		//////////////////////////////////////////////////////////////////////////
 		// Environment
@@ -74,7 +74,7 @@ class CMapManager : public CScreen, public IPhysicsWorld
 		DWORD					GetShadowMapColor(float fx, float fy) const;
 
 		// VICITM_COLLISION_TEST
-		virtual bool isPhysicalCollision(const D3DXVECTOR3 & c_rvCheckPosition);
+		virtual bool isPhysicalCollision(const Vector3 & c_rvCheckPosition);
 		// VICITM_COLLISION_TEST_END
 
 		bool					isAttrOn(float fX, float fY, BYTE byAttr) const;
@@ -103,7 +103,7 @@ class CMapManager : public CScreen, public IPhysicsWorld
 		// Map
 		//////////////////////////////////////////////////////////////////////////
 		CMapOutdoor *				m_pkMap;
-		CSpeedTreeDirectX			m_Forest;
+		CSpeedTreeForestDX11			m_Forest;
 
 	public:
 		// 2004.10.14.myevan.TEMP_CAreaLoaderThread

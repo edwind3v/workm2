@@ -100,7 +100,7 @@ class CGrannyLODController : public CGraphicBase
 
 		struct FDeform
 		{
-			const D3DXMATRIX * mc_pWorldMatrix;
+			const Matrix * mc_pWorldMatrix;
 
 			void operator() (CGrannyLODController * pController) const
 			{
@@ -110,7 +110,7 @@ class CGrannyLODController : public CGraphicBase
 		};
 		struct FDeformNoSkin
 		{
-			const D3DXMATRIX * mc_pWorldMatrix;
+			const Matrix * mc_pWorldMatrix;
 
 			void operator() (CGrannyLODController * pController) const
 			{
@@ -120,7 +120,7 @@ class CGrannyLODController : public CGraphicBase
 		};
 		struct FDeformAll
 		{
-			const D3DXMATRIX * mc_pWorldMatrix;
+			const Matrix * mc_pWorldMatrix;
 
 			void operator() (CGrannyLODController * pController) const
 			{
@@ -149,10 +149,10 @@ class CGrannyLODController : public CGraphicBase
 
 		struct FBoundBox
 		{
-			D3DXVECTOR3* m_vtMin;
-			D3DXVECTOR3* m_vtMax;
+			Vector3* m_vtMin;
+			Vector3* m_vtMax;
 
-			FBoundBox(D3DXVECTOR3 * vtMin, D3DXVECTOR3 * vtMax)
+			FBoundBox(Vector3 * vtMin, Vector3 * vtMax)
 			{
 				m_vtMin = vtMin;
 				m_vtMax = vtMax;
@@ -222,6 +222,7 @@ class CGrannyLODController : public CGraphicBase
 		};
 
 		CGrannyLODController();
+        CGrannyModelInstance* GetCurrentModelInstance() const { return m_pCurrentModelInstance; }
 		virtual ~CGrannyLODController();
 
 		void	Clear();
@@ -248,17 +249,17 @@ class CGrannyLODController : public CGraphicBase
 		void	UpdateLODLevel(float fDistanceFromCenter, float fDistanceFromCamera);
 		void	UpdateTime(float fElapsedTime) const;
 
-		void	UpdateSkeleton(const D3DXMATRIX * c_pWorldMatrix, float fElapsedTime) const;
-		void	Deform(const D3DXMATRIX * c_pWorldMatrix) const;
-		void	DeformNoSkin(const D3DXMATRIX * c_pWorldMatrix) const;
-		void	DeformAll(const D3DXMATRIX * c_pWorldMatrix);
+		void	UpdateSkeleton(const Matrix * c_pWorldMatrix, float fElapsedTime) const;
+		void	Deform(const Matrix * c_pWorldMatrix) const;
+		void	DeformNoSkin(const Matrix * c_pWorldMatrix) const;
+		void	DeformAll(const Matrix * c_pWorldMatrix);
 
 		void	RenderToShadowMap() const;
 		void	RenderShadow() const;
 		void	ReloadTexture() const;
 
-		void	GetBoundBox(D3DXVECTOR3 * vtMin, D3DXVECTOR3 * vtMax) const;
-		bool	Intersect(const D3DXMATRIX * c_pMatrix, float * u, float * v, float * t) const;
+		void	GetBoundBox(Vector3 * vtMin, Vector3 * vtMax) const;
+		bool	Intersect(const Matrix * c_pMatrix, float * u, float * v, float * t) const;
 
 		void	SetLocalTime(float fLocalTime) const;
 		void	ResetLocalTime() const;

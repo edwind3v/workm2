@@ -1,6 +1,10 @@
 #pragma once
 
-#include <d3dx9.h>
+// DX11 includes
+#include <d3d11.h>
+#include <DirectXMath.h>
+#include "../eterLib/GrpMathType.h"
+#include "../eterLib/GrpMathFunc.h"
 
 #include "../eterLib/TextFileLoader.h"
 
@@ -16,15 +20,15 @@ class CLightData : public CEffectElementBase
 
 		void GetRange(float fTime, float& rRange);
 		float GetDuration() const;
-		BOOL isLoop() const
+		BOOL isLoop()
 		{
 			return m_bLoopFlag;
 		}
-		int GetLoopCount() const
+		int GetLoopCount()
 		{
 			return m_iLoopCount;
 		}
-		void InitializeLight(D3DLIGHT9& light);
+		void InitializeLight(TLight& light);
 
 	protected:
 		void OnClear();
@@ -37,8 +41,8 @@ class CLightData : public CEffectElementBase
 		float m_fDuration;
 		TTimeEventTableFloat m_TimeEventTableRange;
 
-		D3DXCOLOR m_cAmbient;
-		D3DXCOLOR m_cDiffuse;
+		Color m_cAmbient;
+		Color m_cDiffuse;
 
 		BOOL m_bLoopFlag;
 		int m_iLoopCount;
@@ -55,4 +59,3 @@ class CLightData : public CEffectElementBase
 
 		static CDynamicPool<CLightData>		ms_kPool;
 };
-

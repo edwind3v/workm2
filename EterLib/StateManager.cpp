@@ -1,836 +1,1225 @@
 #include "StdAfx.h"
 #include "StateManager.h"
+#include "ShaderManager.h"
+#include "../eterBase/Debug.h"
 
-//#define StateManager_Assert(a) if (!(a)) puts("assert"#a)
-#define StateManager_Assert(a) assert(a)
-
-struct SLightData
+CStateManager::CStateManager(ID3D11Device* pDevice, ID3D11DeviceContext* pContext)
+	: m_pDevice(nullptr)
+	, m_pContext(nullptr)
+	, m_pStateCache(nullptr)
+	, m_pCurrentBlendState(nullptr)
+	, m_pCurrentRasterizerState(nullptr)
+	, m_pCurrentDepthStencilState(nullptr)
+	, m_bBlendStateDirty(true)
+	, m_bRasterizerStateDirty(true)
+	, m_bDepthStencilStateDirty(true)
+	, m_bFogEnabled(false)
+	, m_fFogStart(0.0f)
+	, m_fFogEnd(1000.0f)
+	, m_dwFogColor(0xFFFFFFFF)
+	, m_bAlphaTestEnabled(false)
+	, m_fAlphaRef(0.0f)
+	, m_bLightingEnabled(false)  // lighting disabled by default
+	, m_dwParticleColor(0xFFFFFFFF)
+	, m_InputLayout(INPUT_LAYOUT_PDT)
+	, m_SavedInputLayout(INPUT_LAYOUT_PDT)
+	, m_pSavedVertexShader(nullptr)
+	, m_pSavedPixelShader(nullptr)
+	, m_pCurrentVertexShader(nullptr)
+	, m_pCurrentPixelShader(nullptr)
+	, m_pDynamicVertexBuffer(nullptr)
+	, m_pDynamicIndexBuffer(nullptr)
 {
-	enum
+	for (int i = 0; i < STATEMANAGER_MAX_STAGES; ++i)
 	{
-		LIGHT_NUM = 8,
-	};
-	D3DLIGHT9 m_akD3DLight[LIGHT_NUM];
-} m_kLightData;
+		m_pCurrentSamplerStates[i] = nullptr;
+		m_pTextures[i] = nullptr;
+		m_pSavedTextures[i] = nullptr;
+		m_bSamplerStateDirty[i] = true;
+	}
 
-void CStateManager::SetLight(DWORD index, CONST D3DLIGHT9* pLight) const
-{
-	assert(index<SLightData::LIGHT_NUM);
-	m_kLightData.m_akD3DLight[index]=*pLight;
+	for (int i = 0; i < STATEMANAGER_MAX_STREAMS; ++i)
+	{
+		m_StreamData[i] = CStreamData();
+		m_SavedStreamData[i] = CStreamData();
+	}
 
-	m_lpD3DDev->SetLight(index, pLight);
-}
+	ZeroMemory(&m_Material, sizeof(m_Material));
+	ZeroMemory(&m_SavedMaterial, sizeof(m_SavedMaterial));
 
-void CStateManager::GetLight(DWORD index, D3DLIGHT9* pLight) const
-{
-	assert(index<8);
-	*pLight=m_kLightData.m_akD3DLight[index];
-}
-
-bool CStateManager::BeginScene()
-{
-	m_bScene=true;
-
-	D3DXMATRIX m4Proj;
-	D3DXMATRIX m4View;
-	D3DXMATRIX m4World;
-	GetTransform(D3DTS_WORLD, &m4World);
-	GetTransform(D3DTS_PROJECTION, &m4Proj);
-	GetTransform(D3DTS_VIEW, &m4View);
-	SetTransform(D3DTS_WORLD, &m4World);
-	SetTransform(D3DTS_PROJECTION, &m4Proj);
-	SetTransform(D3DTS_VIEW, &m4View);
-
-	if (FAILED(m_lpD3DDev->BeginScene()))
-		return false;
-	return true;
-}
-
-void CStateManager::EndScene()
-{
-	m_lpD3DDev->EndScene();
-	m_bScene=false;
-}
-
-CStateManager::CStateManager(LPDIRECT3DDEVICE9 lpDevice) : m_lpD3DDev(nullptr)
-{
-	m_bScene = false;
-	m_dwBestMinFilter = D3DTEXF_LINEAR;
-	m_dwBestMagFilter = D3DTEXF_LINEAR;
-	SetDevice(lpDevice);
+	SetDevice(pDevice, pContext);
 }
 
 CStateManager::~CStateManager()
 {
-	if (m_lpD3DDev)
+	if (m_pDynamicVertexBuffer)
 	{
-		m_lpD3DDev->Release();
-		m_lpD3DDev = nullptr;
+		m_pDynamicVertexBuffer->Release();
+		m_pDynamicVertexBuffer = nullptr;
 	}
+
+	if (m_pDynamicIndexBuffer)
+	{
+		m_pDynamicIndexBuffer->Release();
+		m_pDynamicIndexBuffer = nullptr;
+	}
+
+	if (m_pStateCache)
+	{
+		delete m_pStateCache;
+		m_pStateCache = nullptr;
+	}
+
+	if (m_pDevice)
+	{
+		m_pDevice->Release();
+		m_pDevice = nullptr;
+	}
+
+	// Note: Context is not AddRef'd in this implementation
 }
 
-void CStateManager::SetDevice(LPDIRECT3DDEVICE9 lpDevice)
+void CStateManager::SetDevice(ID3D11Device* pDevice, ID3D11DeviceContext* pContext)
 {
-	StateManager_Assert(lpDevice);
-	lpDevice->AddRef();
+	assert(pDevice != nullptr);
+	assert(pContext != nullptr);
 
-	if (m_lpD3DDev)
+	pDevice->AddRef();
+
+	if (m_pDevice)
 	{
-		m_lpD3DDev->Release();
-		m_lpD3DDev = nullptr;
+		m_pDevice->Release();
+		m_pDevice = nullptr;
 	}
 
-	m_lpD3DDev = lpDevice;
+	m_pDevice = pDevice;
+	m_pContext = pContext;
+
+	if (m_pStateCache)
+	{
+		delete m_pStateCache;
+	}
+	m_pStateCache = new CStateObjectCache(pDevice);
+
+	// Create reusable dynamic buffers for DrawDynamic
+	if (m_pDynamicVertexBuffer)
+	{
+		m_pDynamicVertexBuffer->Release();
+		m_pDynamicVertexBuffer = nullptr;
+	}
+	if (m_pDynamicIndexBuffer)
+	{
+		m_pDynamicIndexBuffer->Release();
+		m_pDynamicIndexBuffer = nullptr;
+	}
+
+	D3D11_BUFFER_DESC bufferDesc = {};
+	bufferDesc.Usage = D3D11_USAGE_DYNAMIC;
+	bufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+
+	bufferDesc.ByteWidth = UP_VERTEX_BUFFER_SIZE;
+	bufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+	HRESULT hr = pDevice->CreateBuffer(&bufferDesc, nullptr, &m_pDynamicVertexBuffer);
+	if (FAILED(hr))
+	{
+		TraceError("CStateManager: Failed to create dynamic vertex buffer (hr=0x%08X)", hr);
+		m_pDynamicVertexBuffer = nullptr;
+	}
+
+	bufferDesc.ByteWidth = UP_INDEX_BUFFER_SIZE;
+	bufferDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+	hr = pDevice->CreateBuffer(&bufferDesc, nullptr, &m_pDynamicIndexBuffer);
+	if (FAILED(hr))
+	{
+		TraceError("CStateManager: Failed to create dynamic index buffer (hr=0x%08X)", hr);
+		m_pDynamicIndexBuffer = nullptr;
+	}
 
 	SetDefaultState();
 }
 
-void CStateManager::SetBestFiltering(DWORD dwStage)
+void CStateManager::SetDefaultState()
 {
-	SetSamplerState(dwStage, D3DSAMP_MINFILTER, m_dwBestMinFilter);
-	SetSamplerState(dwStage, D3DSAMP_MAGFILTER, m_dwBestMagFilter);
-	SetSamplerState(dwStage, D3DSAMP_MIPFILTER, D3DTEXF_LINEAR);
+	m_CurrentState.SetDefaults();
+	m_SavedState.SetDefaults();
+
+	m_bBlendStateDirty = true;
+	m_bRasterizerStateDirty = true;
+	m_bDepthStencilStateDirty = true;
+
+	for (int i = 0; i < STATEMANAGER_MAX_STAGES; ++i)
+	{
+		m_bSamplerStateDirty[i] = true;
+		m_pTextures[i] = nullptr;
+	}
+
+	// Initialize matrices
+	for (int i = 0; i < STATEMANAGER_MAX_TRANSFORMSTATES; ++i)
+	{
+		MatrixIdentity(&m_Matrices[i]);
+	}
+
+	// Set default material
+	m_Material.Diffuse = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+	m_Material.Ambient = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+	m_Material.Specular = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+	m_Material.Emissive = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+	m_Material.Power = 0.0f;
+
+	// Apply default states
+	CommitState();
 }
 
 void CStateManager::Restore()
 {
-    InvalidateShaderConstants();
-	int i, j;
+	m_bBlendStateDirty = true;
+	m_bRasterizerStateDirty = true;
+	m_bDepthStencilStateDirty = true;
 
-	m_bForce = true;
-
-	for (i = 0; i < STATEMANAGER_MAX_RENDERSTATES; ++i)
-		SetRenderState(D3DRENDERSTATETYPE(i), m_CurrentState.m_RenderStates[i]);
-
-	for (i = 0; i < STATEMANAGER_MAX_STAGES; ++i)
-		for (j = 0; j < STATEMANAGER_MAX_TEXTURESTATES; ++j)
-			SetTextureStageState(i, D3DTEXTURESTAGESTATETYPE(j), m_CurrentState.m_TextureStates[i][j]);
-
-	for (i = 0; i < STATEMANAGER_MAX_STAGES; ++i)
-		for (j = 0; j < STATEMANAGER_MAX_SAMPLERSTATES; ++j)
-			SetSamplerState(i, D3DSAMPLERSTATETYPE(j), m_CurrentState.m_SamplerStates[i][j]);
-
-	for (i = 0; i < STATEMANAGER_MAX_STAGES; ++i)
-		SetTexture(i, m_CurrentState.m_Textures[i]);
-
-	m_bForce = false;
-}
-
-void CStateManager::InvalidateShaderConstants()
-{
-    memset(m_vertexConstantsValid, 0, sizeof(m_vertexConstantsValid));
-    memset(m_pixelConstantsValid, 0, sizeof(m_pixelConstantsValid));
-}
-
-void CStateManager::SetDefaultState()
-{
-    InvalidateShaderConstants();
-	// @fixme039 BEGIN (moved from SetDevice)
-	D3DCAPS9 d3dCaps;
-	m_lpD3DDev->GetDeviceCaps(&d3dCaps);
-    m_mipFilterCaps = d3dCaps.TextureFilterCaps;
-
-	if (d3dCaps.TextureFilterCaps & D3DPTFILTERCAPS_MAGFANISOTROPIC)
-		m_dwBestMagFilter = D3DTEXF_ANISOTROPIC;
-	else
-		m_dwBestMagFilter = D3DTEXF_LINEAR;
-
-	if (d3dCaps.TextureFilterCaps & D3DPTFILTERCAPS_MINFANISOTROPIC)
-		m_dwBestMinFilter = D3DTEXF_ANISOTROPIC;
-	else
-		m_dwBestMinFilter = D3DTEXF_LINEAR;
-
-	DWORD dwMax = d3dCaps.MaxAnisotropy;
-	dwMax = dwMax < 4 ? dwMax : 4;
-
-	for (int i = 0; i < 8; ++i)
-		m_lpD3DDev->SetSamplerState(i, D3DSAMP_MAXANISOTROPY, dwMax);
-	// @fixme039 END
-
-	m_CurrentState.ResetState();
-	m_CopyState.ResetState();
-	m_ChipState.ResetState();
-
-	m_bScene = false;
-	m_bForce = true;
-
-	D3DXMATRIX Identity;
-	D3DXMatrixIdentity(&Identity);
-
-	SetTransform(D3DTS_WORLD, &Identity);
-	SetTransform(D3DTS_VIEW, &Identity);
-	SetTransform(D3DTS_PROJECTION, &Identity);
-
-	D3DMATERIAL9 DefaultMat;
-	ZeroMemory(&DefaultMat, sizeof(D3DMATERIAL9));
-
-	DefaultMat.Diffuse.r = 1.0f;
-	DefaultMat.Diffuse.g = 1.0f;
-	DefaultMat.Diffuse.b = 1.0f;
-	DefaultMat.Diffuse.a = 1.0f;
-	DefaultMat.Ambient.r = 1.0f;
-	DefaultMat.Ambient.g = 1.0f;
-	DefaultMat.Ambient.b = 1.0f;
-	DefaultMat.Ambient.a = 1.0f;
-	DefaultMat.Emissive.r = 0.0f;
-	DefaultMat.Emissive.g = 0.0f;
-	DefaultMat.Emissive.b = 0.0f;
-	DefaultMat.Emissive.a = 0.0f;
-	DefaultMat.Specular.r = 0.0f;
-	DefaultMat.Specular.g = 0.0f;
-	DefaultMat.Specular.b = 0.0f;
-	DefaultMat.Specular.a = 0.0f;
-	DefaultMat.Power = 0.0f;
-
-	SetMaterial(&DefaultMat);
-
-	SetRenderState(D3DRS_DIFFUSEMATERIALSOURCE, D3DMCS_MATERIAL);
-	SetRenderState(D3DRS_SPECULARMATERIALSOURCE, D3DMCS_MATERIAL);
-	SetRenderState(D3DRS_AMBIENTMATERIALSOURCE, D3DMCS_MATERIAL);
-	SetRenderState(D3DRS_EMISSIVEMATERIALSOURCE, D3DMCS_MATERIAL);
-
-	SetRenderState(D3DRS_LASTPIXEL, FALSE);
-	SetRenderState(D3DRS_ALPHAREF, 1);
-	SetRenderState(D3DRS_ALPHAFUNC, D3DCMP_GREATEREQUAL);
-	SetRenderState(D3DRS_FOGSTART, 0);
-	SetRenderState(D3DRS_FOGEND, 0);
-	SetRenderState(D3DRS_FOGDENSITY, 0);
-	SetRenderState(D3DRS_STENCILWRITEMASK, 0xFFFFFFFF);
-	SetRenderState(D3DRS_AMBIENT, 0x00000000);
-	SetRenderState(D3DRS_LOCALVIEWER, FALSE);
-	SetRenderState(D3DRS_NORMALIZENORMALS, FALSE);
-	SetRenderState(D3DRS_VERTEXBLEND, D3DVBF_DISABLE);
-	SetRenderState(D3DRS_CLIPPLANEENABLE, 0);
-	m_lpD3DDev->SetSoftwareVertexProcessing(false);
-	SetRenderState(D3DRS_MULTISAMPLEANTIALIAS, TRUE);
-	SetRenderState(D3DRS_MULTISAMPLEMASK, 0xFFFFFFFF);
-	SetRenderState(D3DRS_INDEXEDVERTEXBLENDENABLE, FALSE);
-	SetRenderState(D3DRS_COLORWRITEENABLE, 0xFFFFFFFF);
-	SetRenderState(D3DRS_FILLMODE, D3DFILL_SOLID);
-	SetRenderState(D3DRS_SHADEMODE, D3DSHADE_GOURAUD);
-	SetRenderState(D3DRS_CULLMODE, D3DCULL_CW);
-	SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
-	SetRenderState(D3DRS_BLENDOP, D3DBLENDOP_ADD);
-	SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-	SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
-	SetRenderState(D3DRS_FOGENABLE, FALSE);
-	SetRenderState(D3DRS_FOGCOLOR, 0xFF000000);
-	SetRenderState(D3DRS_FOGTABLEMODE, D3DFOG_NONE);
-	SetRenderState(D3DRS_FOGVERTEXMODE, D3DFOG_LINEAR);
-	SetRenderState(D3DRS_RANGEFOGENABLE, FALSE);
-	SetRenderState(D3DRS_ZENABLE, TRUE);
-	SetRenderState(D3DRS_ZFUNC, D3DCMP_LESSEQUAL);
-	SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
-	SetRenderState(D3DRS_DITHERENABLE, TRUE);
-	SetRenderState(D3DRS_STENCILENABLE, FALSE);
-	SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
-	SetRenderState(D3DRS_CLIPPING, TRUE);
-	SetRenderState(D3DRS_LIGHTING, FALSE);
-	SetRenderState(D3DRS_SPECULARENABLE, FALSE);
-	SetRenderState(D3DRS_COLORVERTEX, FALSE);
-	SetRenderState(D3DRS_WRAP0, 0);
-	SetRenderState(D3DRS_WRAP1, 0);
-	SetRenderState(D3DRS_WRAP2, 0);
-	SetRenderState(D3DRS_WRAP3, 0);
-	SetRenderState(D3DRS_WRAP4, 0);
-	SetRenderState(D3DRS_WRAP5, 0);
-	SetRenderState(D3DRS_WRAP6, 0);
-	SetRenderState(D3DRS_WRAP7, 0);
-
-	SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
-	SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-	SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_CURRENT);
-	SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-	SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_CURRENT);
-	SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
-
-	SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
-	SetTextureStageState(1, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-	SetTextureStageState(1, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
-	SetTextureStageState(1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
-	SetTextureStageState(1, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-	SetTextureStageState(1, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
-
-	SetTextureStageState(2, D3DTSS_COLOROP, D3DTOP_DISABLE);
-	SetTextureStageState(2, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-	SetTextureStageState(2, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
-	SetTextureStageState(2, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
-	SetTextureStageState(2, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-	SetTextureStageState(2, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
-
-	SetTextureStageState(3, D3DTSS_COLOROP, D3DTOP_DISABLE);
-	SetTextureStageState(3, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-	SetTextureStageState(3, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
-	SetTextureStageState(3, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
-	SetTextureStageState(3, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-	SetTextureStageState(3, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
-
-	SetTextureStageState(4, D3DTSS_COLOROP, D3DTOP_DISABLE);
-	SetTextureStageState(4, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-	SetTextureStageState(4, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
-	SetTextureStageState(4, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
-	SetTextureStageState(4, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-	SetTextureStageState(4, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
-
-	SetTextureStageState(5, D3DTSS_COLOROP, D3DTOP_DISABLE);
-	SetTextureStageState(5, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-	SetTextureStageState(5, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
-	SetTextureStageState(5, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
-	SetTextureStageState(5, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-	SetTextureStageState(5, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
-
-	SetTextureStageState(6, D3DTSS_COLOROP, D3DTOP_DISABLE);
-	SetTextureStageState(6, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-	SetTextureStageState(6, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
-	SetTextureStageState(6, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
-	SetTextureStageState(6, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-	SetTextureStageState(6, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
-
-	SetTextureStageState(7, D3DTSS_COLOROP, D3DTOP_DISABLE);
-	SetTextureStageState(7, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-	SetTextureStageState(7, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
-	SetTextureStageState(7, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
-	SetTextureStageState(7, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-	SetTextureStageState(7, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
-
-	SetTextureStageState(0, D3DTSS_TEXCOORDINDEX, 0);
-	SetTextureStageState(1, D3DTSS_TEXCOORDINDEX, 1);
-	SetTextureStageState(2, D3DTSS_TEXCOORDINDEX, 2);
-	SetTextureStageState(3, D3DTSS_TEXCOORDINDEX, 3);
-	SetTextureStageState(4, D3DTSS_TEXCOORDINDEX, 4);
-	SetTextureStageState(5, D3DTSS_TEXCOORDINDEX, 5);
-	SetTextureStageState(6, D3DTSS_TEXCOORDINDEX, 6);
-	SetTextureStageState(7, D3DTSS_TEXCOORDINDEX, 7);
-
-	for (DWORD i = 0; i < 8; ++i)
+	for (int i = 0; i < STATEMANAGER_MAX_STAGES; ++i)
 	{
-		SetSamplerState(i, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
-		SetSamplerState(i, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
-		SetSamplerState(i, D3DSAMP_MIPFILTER, D3DTEXF_LINEAR);
-		SetSamplerState(i, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
-		SetSamplerState(i, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
-		SetTextureStageState(i, D3DTSS_TEXTURETRANSFORMFLAGS, 0);
-		SetTexture(i, nullptr);
+		m_bSamplerStateDirty[i] = true;
 	}
 
-	SetPixelShader(0);
-	SetFVF(D3DFVF_XYZ);
-
-	D3DXVECTOR4 av4Null[STATEMANAGER_MAX_VCONSTANTS]{};
-	SetVertexShaderConstant(0, av4Null, STATEMANAGER_MAX_VCONSTANTS);
-	SetPixelShaderConstant(0, av4Null, STATEMANAGER_MAX_PCONSTANTS);
-
-	m_bForce = false;
-
-#ifdef _DEBUG
-	int i, j;
-	for (i = 0; i < STATEMANAGER_MAX_RENDERSTATES; i++)
-		m_bRenderStateSavingFlag[i] = FALSE;
-
-	for (j = 0; j < STATEMANAGER_MAX_TRANSFORMSTATES; j++)
-		m_bTransformSavingFlag[j] = FALSE;
-
-	for (j = 0; j < STATEMANAGER_MAX_STAGES; ++j)
-		for (i = 0; i < STATEMANAGER_MAX_TEXTURESTATES; ++i)
-			m_bTextureStageStateSavingFlag[j][i] = FALSE;
-	for (j = 0; j < STATEMANAGER_MAX_STAGES; ++j)
-		for (i = 0; i < STATEMANAGER_MAX_SAMPLERSTATES; ++i)
-			m_bSamplerStateSavingFlag[j][i] = FALSE;
-#endif _DEBUG
+	CommitState();
 }
 
 // Material
 void CStateManager::SaveMaterial()
 {
-	m_CopyState.m_D3DMaterial = m_CurrentState.m_D3DMaterial;
+	m_SavedMaterial = m_Material;
 }
 
-void CStateManager::SaveMaterial(const D3DMATERIAL9 * pMaterial)
+void CStateManager::SaveMaterial(const TGraphicMaterial* pMaterial)
 {
-	// Check that we have set this up before, if not, the default is this.
-	m_CopyState.m_D3DMaterial = m_CurrentState.m_D3DMaterial;
+	m_SavedMaterial = m_Material;
 	SetMaterial(pMaterial);
 }
 
 void CStateManager::RestoreMaterial()
 {
-	SetMaterial(&m_CopyState.m_D3DMaterial);
+	m_Material = m_SavedMaterial;
 }
 
-void CStateManager::SetMaterial(const D3DMATERIAL9 * pMaterial)
+void CStateManager::SetMaterial(const TGraphicMaterial* pMaterial)
 {
-	m_lpD3DDev->SetMaterial(pMaterial);
-	m_CurrentState.m_D3DMaterial = *pMaterial;
-}
+	m_Material.Diffuse = XMFLOAT4(pMaterial->Diffuse.r, pMaterial->Diffuse.g, pMaterial->Diffuse.b, pMaterial->Diffuse.a);
+	m_Material.Ambient = XMFLOAT4(pMaterial->Ambient.r, pMaterial->Ambient.g, pMaterial->Ambient.b, pMaterial->Ambient.a);
+	m_Material.Specular = XMFLOAT4(pMaterial->Specular.r, pMaterial->Specular.g, pMaterial->Specular.b, pMaterial->Specular.a);
+	m_Material.Emissive = XMFLOAT4(pMaterial->Emissive.r, pMaterial->Emissive.g, pMaterial->Emissive.b, pMaterial->Emissive.a);
+	m_Material.Power = pMaterial->Power;
 
-void CStateManager::GetMaterial(D3DMATERIAL9 * pMaterial) const
-{
-	// Set the renderstate and remember it.
-	*pMaterial = m_CurrentState.m_D3DMaterial;
-}
-
-// Renderstates
-DWORD CStateManager::GetRenderState(D3DRENDERSTATETYPE Type) const
-{
-	return m_CurrentState.m_RenderStates[Type];
-}
-
-void CStateManager::SaveRenderState(D3DRENDERSTATETYPE Type, DWORD dwValue)
-{
-#ifdef _DEBUG
-	if (m_bRenderStateSavingFlag[Type])
+	// Forward to ShaderManager
+	if (SHADERMANAGER.IsInitialized())
 	{
-		Tracef(" CStateManager::SaveRenderState - This render state is already saved [%d, %d]\n", Type, dwValue);
-		StateManager_Assert(!" This render state is already saved!");
+		SHADERMANAGER.SetDiffuseColor(pMaterial->Diffuse.r, pMaterial->Diffuse.g, pMaterial->Diffuse.b, pMaterial->Diffuse.a);
+		SHADERMANAGER.SetEmissiveColor(pMaterial->Emissive.r, pMaterial->Emissive.g, pMaterial->Emissive.b);
+		SHADERMANAGER.SetSpecularColor(pMaterial->Specular.r, pMaterial->Specular.g, pMaterial->Specular.b);
+		SHADERMANAGER.SetMaterial(pMaterial->Power);
 	}
-	m_bRenderStateSavingFlag[Type] = TRUE;
-#endif _DEBUG
-
-	// Check that we have set this up before, if not, the default is this.
-	m_CopyState.m_RenderStates[Type] = m_CurrentState.m_RenderStates[Type];
-	SetRenderState(Type, dwValue);
 }
 
-void CStateManager::RestoreRenderState(D3DRENDERSTATETYPE Type)
+void CStateManager::GetMaterial(TGraphicMaterial* pMaterial)
 {
-#ifdef _DEBUG
-	if (!m_bRenderStateSavingFlag[Type])
+	pMaterial->Diffuse.r = m_Material.Diffuse.x;
+	pMaterial->Diffuse.g = m_Material.Diffuse.y;
+	pMaterial->Diffuse.b = m_Material.Diffuse.z;
+	pMaterial->Diffuse.a = m_Material.Diffuse.w;
+	pMaterial->Ambient.r = m_Material.Ambient.x;
+	pMaterial->Ambient.g = m_Material.Ambient.y;
+	pMaterial->Ambient.b = m_Material.Ambient.z;
+	pMaterial->Ambient.a = m_Material.Ambient.w;
+	pMaterial->Specular.r = m_Material.Specular.x;
+	pMaterial->Specular.g = m_Material.Specular.y;
+	pMaterial->Specular.b = m_Material.Specular.z;
+	pMaterial->Specular.a = m_Material.Specular.w;
+	pMaterial->Emissive.r = m_Material.Emissive.x;
+	pMaterial->Emissive.g = m_Material.Emissive.y;
+	pMaterial->Emissive.b = m_Material.Emissive.z;
+	pMaterial->Emissive.a = m_Material.Emissive.w;
+	pMaterial->Power = m_Material.Power;
+}
+
+// Lights - Forward to ShaderManager
+void CStateManager::SetLight(DWORD index, const TLight* pLight)
+{
+	if (index >= MAX_SHADER_LIGHTS || !SHADERMANAGER.IsInitialized()) return;
+
+	bool bEnabled = SHADERMANAGER.IsLightEnabled(index);
+
+	DX11Light dx11Light;
+	dx11Light.Position = XMFLOAT4(pLight->Position.x, pLight->Position.y, pLight->Position.z, (float)pLight->Type);
+	dx11Light.Direction = XMFLOAT4(pLight->Direction.x, pLight->Direction.y, pLight->Direction.z, bEnabled ? 1.0f : 0.0f);
+	dx11Light.Color = XMFLOAT4(pLight->Diffuse.r, pLight->Diffuse.g, pLight->Diffuse.b, 1.0f);
+	dx11Light.Attenuation = XMFLOAT4(pLight->Attenuation0, pLight->Attenuation1, pLight->Attenuation2, pLight->Range);
+	SHADERMANAGER.SetLight(index, dx11Light);
+}
+
+void CStateManager::GetLight(DWORD index, TLight* pLight)
+{
+	// Forward to ShaderManager
+	if (SHADERMANAGER.IsInitialized())
+		SHADERMANAGER.GetLight(index, pLight);
+}
+
+void CStateManager::LightEnable(DWORD index, BOOL bEnable)
+{
+	if (SHADERMANAGER.IsInitialized())
+		SHADERMANAGER.EnableLight(index, bEnable != FALSE);
+}
+
+// Render states - Map to DX11 state components
+void CStateManager::SavePipelineState(EPipelineState Type, DWORD dwValue)
+{
+	m_SavedRenderStates[Type] = GetPipelineState(Type);
+	SetPipelineState(Type, dwValue);
+}
+
+void CStateManager::RestorePipelineState(EPipelineState Type)
+{
+	auto it = m_SavedRenderStates.find(Type);
+	if (it != m_SavedRenderStates.end())
 	{
-		Tracef(" CStateManager::SaveRenderState - This render state was not saved [%d, %d]\n", Type);
-		StateManager_Assert(!" This render state was not saved!");
+		SetPipelineState(Type, it->second);
+		m_SavedRenderStates.erase(it);
 	}
-	m_bRenderStateSavingFlag[Type] = FALSE;
-#endif _DEBUG
-
-	SetRenderState(Type, m_CopyState.m_RenderStates[Type]);
 }
 
-void CStateManager::SetRenderState(D3DRENDERSTATETYPE Type, DWORD Value)
+void CStateManager::SetPipelineState(EPipelineState Type, DWORD Value)
 {
-	if (m_CurrentState.m_RenderStates[Type] == Value)
-		return;
+	switch (Type)
+	{
+	// Blend states
+	case PSTATE_BLENDENABLE:
+		m_CurrentState.bAlphaBlendEnable = (Value != 0);
+		m_bBlendStateDirty = true;
+		break;
+	case PSTATE_SRCBLEND:
+		m_CurrentState.srcBlend = (D3D11_BLEND)Value;
+		m_bBlendStateDirty = true;
+		break;
+	case PSTATE_DESTBLEND:
+		m_CurrentState.destBlend = (D3D11_BLEND)Value;
+		m_bBlendStateDirty = true;
+		break;
+	case PSTATE_BLENDOP:
+		m_CurrentState.blendOp = (D3D11_BLEND_OP)Value;
+		m_bBlendStateDirty = true;
+		break;
+	case PSTATE_RTWRITEMASK:
+		m_CurrentState.colorWriteMask = (UINT8)Value;
+		m_bBlendStateDirty = true;
+		break;
 
-	m_lpD3DDev->SetRenderState(Type, Value);
-	m_CurrentState.m_RenderStates[Type] = Value;
+	// Rasterizer states
+	case PSTATE_FILLMODE:
+		m_CurrentState.fillMode = (Value == FILL_WIREFRAME) ? D3D11_FILL_WIREFRAME : D3D11_FILL_SOLID;
+		m_bRasterizerStateDirty = true;
+		break;
+	case PSTATE_CULLMODE:
+		switch (Value)
+		{
+		case CULL_NONE: m_CurrentState.cullMode = D3D11_CULL_NONE; break;
+		case CULL_FRONT:   m_CurrentState.cullMode = D3D11_CULL_FRONT; break;
+		case CULL_BACK:  m_CurrentState.cullMode = D3D11_CULL_BACK; break;
+		}
+		m_bRasterizerStateDirty = true;
+		break;
+	case PSTATE_SCISSORENABLE:
+		m_CurrentState.bScissorEnable = (Value != 0);
+		m_bRasterizerStateDirty = true;
+		break;
+	case PSTATE_MULTISAMPLEENABLE:
+		m_CurrentState.bMultisampleEnable = (Value != 0);
+		m_bRasterizerStateDirty = true;
+		break;
+	case PSTATE_ANTIALIASEDLINEENABLE:
+		m_CurrentState.bAntialiasedLineEnable = (Value != 0);
+		m_bRasterizerStateDirty = true;
+		break;
+	case PSTATE_DEPTHBIAS:
+		m_CurrentState.depthBias = (INT)Value;
+		m_bRasterizerStateDirty = true;
+		break;
+	case PSTATE_SLOPESCALEDDEPTHBIAS:
+		m_CurrentState.slopeScaledDepthBias = *(float*)&Value;
+		m_bRasterizerStateDirty = true;
+		break;
+
+	// Depth stencil states
+	case PSTATE_DEPTHENABLE:
+		m_CurrentState.bDepthEnable = (Value != 0);
+		m_bDepthStencilStateDirty = true;
+		break;
+	case PSTATE_DEPTHWRITEMASK:
+		m_CurrentState.bDepthWriteEnable = (Value != 0);
+		m_bDepthStencilStateDirty = true;
+		break;
+	case PSTATE_DEPTHFUNC:
+		m_CurrentState.depthFunc = (D3D11_COMPARISON_FUNC)Value;
+		m_bDepthStencilStateDirty = true;
+		break;
+	case PSTATE_STENCILENABLE:
+		m_CurrentState.bStencilEnable = (Value != 0);
+		m_bDepthStencilStateDirty = true;
+		break;
+	case PSTATE_STENCILREADMASK:
+		m_CurrentState.stencilReadMask = (UINT8)Value;
+		m_bDepthStencilStateDirty = true;
+		break;
+	case PSTATE_STENCILWRITEMASK:
+		m_CurrentState.stencilWriteMask = (UINT8)Value;
+		m_bDepthStencilStateDirty = true;
+		break;
+
+	default:
+		break;
+	}
 }
 
-void CStateManager::GetRenderState(D3DRENDERSTATETYPE Type, DWORD * pdwValue) const
+void CStateManager::GetPipelineState(EPipelineState Type, DWORD* pdwValue)
 {
-	*pdwValue = m_CurrentState.m_RenderStates[Type];
+	*pdwValue = GetPipelineState(Type);
+}
+
+DWORD CStateManager::GetPipelineState(EPipelineState Type)
+{
+	switch (Type)
+	{
+	case PSTATE_BLENDENABLE: return m_CurrentState.bAlphaBlendEnable ? 1 : 0;
+	case PSTATE_SRCBLEND: return (DWORD)m_CurrentState.srcBlend;
+	case PSTATE_DESTBLEND: return (DWORD)m_CurrentState.destBlend;
+	case PSTATE_BLENDOP: return (DWORD)m_CurrentState.blendOp;
+	case PSTATE_RTWRITEMASK: return m_CurrentState.colorWriteMask;
+	case PSTATE_FILLMODE: return (m_CurrentState.fillMode == D3D11_FILL_WIREFRAME) ? FILL_WIREFRAME : FILL_SOLID;
+	case PSTATE_CULLMODE:
+		switch (m_CurrentState.cullMode)
+		{
+		case D3D11_CULL_NONE: return CULL_NONE;
+		case D3D11_CULL_FRONT: return CULL_FRONT;
+		case D3D11_CULL_BACK: return CULL_BACK;
+		}
+		return CULL_NONE;
+	case PSTATE_DEPTHENABLE: return m_CurrentState.bDepthEnable ? 1 : 0;
+	case PSTATE_DEPTHWRITEMASK: return m_CurrentState.bDepthWriteEnable ? 1 : 0;
+	case PSTATE_DEPTHFUNC: return (DWORD)m_CurrentState.depthFunc;
+	case PSTATE_STENCILENABLE: return m_CurrentState.bStencilEnable ? 1 : 0;
+	case PSTATE_STENCILREADMASK: return m_CurrentState.stencilReadMask;
+	case PSTATE_STENCILWRITEMASK: return m_CurrentState.stencilWriteMask;
+	default: return 0;
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Shader Parameter Methods (Pure DX11)
+//////////////////////////////////////////////////////////////////////////
+
+void CStateManager::SetFogEnabled(bool bEnable)
+{
+	m_bFogEnabled = bEnable;
+	if (SHADERMANAGER.IsInitialized())
+	{
+		SHADERMANAGER.SetFog(m_bFogEnabled, m_fFogStart, m_fFogEnd, m_dwFogColor);
+	}
+}
+
+void CStateManager::SetFogParams(float fStart, float fEnd, DWORD dwColor)
+{
+	m_fFogStart = fStart;
+	m_fFogEnd = fEnd;
+	m_dwFogColor = dwColor;
+	if (SHADERMANAGER.IsInitialized())
+	{
+		SHADERMANAGER.SetFog(m_bFogEnabled, m_fFogStart, m_fFogEnd, m_dwFogColor);
+	}
+}
+
+void CStateManager::SetFogColor(DWORD dwColor)
+{
+	m_dwFogColor = dwColor;
+	if (SHADERMANAGER.IsInitialized())
+	{
+		SHADERMANAGER.SetFog(m_bFogEnabled, m_fFogStart, m_fFogEnd, m_dwFogColor);
+	}
+}
+
+void CStateManager::SetAlphaTestEnabled(bool bEnable)
+{
+	m_bAlphaTestEnabled = bEnable;
+	if (SHADERMANAGER.IsInitialized())
+	{
+		SHADERMANAGER.SetAlphaTest(m_bAlphaTestEnabled, m_fAlphaRef);
+	}
+}
+
+void CStateManager::SetAlphaTestRef(float fRef)
+{
+	m_fAlphaRef = fRef;
+	if (SHADERMANAGER.IsInitialized())
+	{
+		SHADERMANAGER.SetAlphaTest(m_bAlphaTestEnabled, m_fAlphaRef);
+	}
+}
+
+void CStateManager::SetAlphaTestRefByte(DWORD dwRef)
+{
+	m_fAlphaRef = (float)dwRef / 255.0f;
+	if (SHADERMANAGER.IsInitialized())
+	{
+		SHADERMANAGER.SetAlphaTest(m_bAlphaTestEnabled, m_fAlphaRef);
+	}
+}
+
+void CStateManager::SetLightingEnabled(bool bEnable)
+{
+	m_bLightingEnabled = bEnable;
+	if (SHADERMANAGER.IsInitialized())
+	{
+		SHADERMANAGER.SetLightingEnabled(m_bLightingEnabled);
+	}
+}
+
+void CStateManager::SetParticleColor(DWORD dwColor)
+{
+	m_dwParticleColor = dwColor;
+	if (SHADERMANAGER.IsInitialized())
+	{
+		SHADERMANAGER.SetParticleColor(m_dwParticleColor);
+	}
 }
 
 // Textures
-void CStateManager::SaveTexture(DWORD dwStage, LPDIRECT3DBASETEXTURE9 pTexture)
+void CStateManager::SaveTexture(DWORD dwStage, ID3D11ShaderResourceView* pTexture)
 {
-	// Check that we have set this up before, if not, the default is this.
-	m_CopyState.m_Textures[dwStage] = m_CurrentState.m_Textures[dwStage];
-	SetTexture(dwStage, pTexture);
+	if (dwStage >= STATEMANAGER_MAX_STAGES) return;
+	m_pSavedTextures[dwStage] = m_pTextures[dwStage];
+	SetShaderResource(dwStage, pTexture);
 }
 
 void CStateManager::RestoreTexture(DWORD dwStage)
 {
-	SetTexture(dwStage, m_CopyState.m_Textures[dwStage]);
+	if (dwStage >= STATEMANAGER_MAX_STAGES) return;
+	SetShaderResource(dwStage, m_pSavedTextures[dwStage]);
 }
 
-void CStateManager::SetTexture(DWORD dwStage, LPDIRECT3DBASETEXTURE9 pTexture)
+void CStateManager::SetShaderResource(DWORD dwStage, ID3D11ShaderResourceView* pTexture)
 {
-	if (pTexture == m_CurrentState.m_Textures[dwStage])
+	if (dwStage >= STATEMANAGER_MAX_STAGES) return;
+
+	ID3D11ShaderResourceView* pActualTexture = pTexture;
+	if (!pTexture && SHADERMANAGER.IsInitialized())
+	{
+		pActualTexture = SHADERMANAGER.GetDefaultTexture();  // Returns active texture (transparent during init)
+	}
+
+	if (m_pTextures[dwStage] == pActualTexture) return;
+
+	m_pTextures[dwStage] = pActualTexture;
+	m_pContext->PSSetShaderResources(dwStage, 1, &pActualTexture);
+}
+
+void CStateManager::GetTexture(DWORD dwStage, ID3D11ShaderResourceView** ppTexture)
+{
+	if (dwStage >= STATEMANAGER_MAX_STAGES)
+	{
+		*ppTexture = nullptr;
 		return;
-
-	m_lpD3DDev->SetTexture(dwStage, pTexture);
-	m_CurrentState.m_Textures[dwStage] = pTexture;
-}
-
-void CStateManager::GetTexture(DWORD dwStage, LPDIRECT3DBASETEXTURE9 * ppTexture) const
-{
-	*ppTexture = m_CurrentState.m_Textures[dwStage];
-}
-
-// Texture stage states
-void CStateManager::SaveTextureStageState(DWORD dwStage,D3DTEXTURESTAGESTATETYPE Type, DWORD dwValue)
-{
-	// Check that we have set this up before, if not, the default is this.
-#ifdef _DEBUG
-	if (m_bTextureStageStateSavingFlag[dwStage][Type])
-	{
-		Tracef(" CStateManager::SaveTextureStageState - This texture stage state is already saved [%d, %d]\n", dwStage, Type);
-		StateManager_Assert(!" This texture stage state is already saved!");
 	}
-	m_bTextureStageStateSavingFlag[dwStage][Type] = TRUE;
-#endif _DEBUG
-	m_CopyState.m_TextureStates[dwStage][Type] = m_CurrentState.m_TextureStates[dwStage][Type];
-	SetTextureStageState(dwStage, Type, dwValue);
+	*ppTexture = m_pTextures[dwStage];
 }
 
-void CStateManager::RestoreTextureStageState(DWORD dwStage, D3DTEXTURESTAGESTATETYPE Type)
+// Sampler states
+void CStateManager::SaveSamplerState(DWORD dwStage, ESamplerState Type, DWORD dwValue)
 {
-#ifdef _DEBUG
-	if (!m_bTextureStageStateSavingFlag[dwStage][Type])
-	{
-		Tracef(" CStateManager::RestoreTextureStageState - This texture stage state was not saved [%d, %d]\n", dwStage, Type);
-		StateManager_Assert(!" This texture stage state was not saved!");
-	}
-	m_bTextureStageStateSavingFlag[dwStage][Type] = FALSE;
-#endif _DEBUG
-	SetTextureStageState(dwStage, Type, m_CopyState.m_TextureStates[dwStage][Type]);
-}
-
-void CStateManager::SetTextureStageState(DWORD dwStage, D3DTEXTURESTAGESTATETYPE Type, DWORD dwValue)
-{
-	if (m_CurrentState.m_TextureStates[dwStage][Type] == dwValue)
-		return;
-
-	m_lpD3DDev->SetTextureStageState(dwStage, Type, dwValue);
-	m_CurrentState.m_TextureStates[dwStage][Type] = dwValue;
-}
-
-void CStateManager::GetTextureStageState(DWORD dwStage, D3DTEXTURESTAGESTATETYPE Type, DWORD * pdwValue) const
-{
-	*pdwValue = m_CurrentState.m_TextureStates[dwStage][Type];
-}
-
-////Converting2DirectX9
-void CStateManager::SaveSamplerState(DWORD dwStage, D3DSAMPLERSTATETYPE Type, DWORD dwValue)
-{
-	// Check that we have set this up before, if not, the default is this.
-#ifdef _DEBUG
-	if (m_bSamplerStateSavingFlag[dwStage][Type])
-	{
-	}
-	m_bSamplerStateSavingFlag[dwStage][Type] = TRUE;
-#endif _DEBUG
-	m_CopyState.m_SamplerStates[dwStage][Type] = m_CurrentState.m_SamplerStates[dwStage][Type];
+	if (dwStage >= STATEMANAGER_MAX_STAGES) return;
+	auto key = std::make_pair(dwStage, Type);
+	DWORD currentValue = 0;
+	GetSamplerState(dwStage, Type, &currentValue);
+	m_SavedSamplerStates[key] = currentValue;
 	SetSamplerState(dwStage, Type, dwValue);
 }
 
-void CStateManager::RestoreSamplerState(DWORD dwStage, D3DSAMPLERSTATETYPE Type)
+void CStateManager::RestoreSamplerState(DWORD dwStage, ESamplerState Type)
 {
-#ifdef _DEBUG
-	if (!m_bSamplerStateSavingFlag[dwStage][Type])
+	if (dwStage >= STATEMANAGER_MAX_STAGES) return;
+	auto key = std::make_pair(dwStage, Type);
+	auto it = m_SavedSamplerStates.find(key);
+	if (it != m_SavedSamplerStates.end())
 	{
+		SetSamplerState(dwStage, Type, it->second);
+		m_SavedSamplerStates.erase(it);
 	}
-	m_bSamplerStateSavingFlag[dwStage][Type] = FALSE;
-#endif _DEBUG
-	SetSamplerState(dwStage, Type, m_CopyState.m_SamplerStates[dwStage][Type]);
 }
 
-void CStateManager::SetSamplerState(DWORD dwStage, D3DSAMPLERSTATETYPE Type, DWORD dwValue)
+void CStateManager::SetSamplerState(DWORD dwStage, ESamplerState Type, DWORD dwValue)
 {
-    if (Type == D3DSAMP_MIPFILTER)
-    {
-        if (dwValue == D3DTEXF_ANISOTROPIC) dwValue = D3DTEXF_LINEAR;
-        const DWORD caps = m_mipFilterCaps;
-        if (dwValue == D3DTEXF_LINEAR && !(caps & D3DPTFILTERCAPS_MIPFLINEAR)) dwValue = D3DTEXF_POINT;
-        if (dwValue == D3DTEXF_POINT && !(caps & D3DPTFILTERCAPS_MIPFPOINT)) dwValue = D3DTEXF_NONE;
-    }
-	if (m_CurrentState.m_SamplerStates[dwStage][Type] == dwValue)
+	if (dwStage >= STATEMANAGER_MAX_STAGES) return;
+
+	switch (Type)
+	{
+	case SAMPLER_MINFILTER:
+	case SAMPLER_MAGFILTER:
+		// Filter mapping for min/mag
+		if (dwValue == FILTER_ANISOTROPIC)
+			m_CurrentState.samplerFilter[dwStage] = D3D11_FILTER_ANISOTROPIC;
+		else if (dwValue == FILTER_LINEAR)
+			m_CurrentState.samplerFilter[dwStage] = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+		else
+			m_CurrentState.samplerFilter[dwStage] = D3D11_FILTER_MIN_MAG_MIP_POINT;
+		m_bSamplerStateDirty[dwStage] = true;
+		break;
+
+	case SAMPLER_MIPFILTER:
+		// FILTER_NONE means disable mipmapping (MaxLOD = 0)
+		if (dwValue == FILTER_NONE)
+		{
+			m_CurrentState.bMipmapDisabled[dwStage] = true;
+		}
+		else
+		{
+			m_CurrentState.bMipmapDisabled[dwStage] = false;
+			// Also update filter if mip filter is specified
+			if (dwValue == FILTER_ANISOTROPIC)
+				m_CurrentState.samplerFilter[dwStage] = D3D11_FILTER_ANISOTROPIC;
+			else if (dwValue == FILTER_LINEAR)
+				m_CurrentState.samplerFilter[dwStage] = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+			else
+				m_CurrentState.samplerFilter[dwStage] = D3D11_FILTER_MIN_MAG_MIP_POINT;
+		}
+		m_bSamplerStateDirty[dwStage] = true;
+		break;
+
+	case SAMPLER_ADDRESSU:
+		m_CurrentState.addressU[dwStage] = (D3D11_TEXTURE_ADDRESS_MODE)dwValue;
+		m_bSamplerStateDirty[dwStage] = true;
+		break;
+
+	case SAMPLER_ADDRESSV:
+		m_CurrentState.addressV[dwStage] = (D3D11_TEXTURE_ADDRESS_MODE)dwValue;
+		m_bSamplerStateDirty[dwStage] = true;
+		break;
+
+	case SAMPLER_ADDRESSW:
+		m_CurrentState.addressW[dwStage] = (D3D11_TEXTURE_ADDRESS_MODE)dwValue;
+		m_bSamplerStateDirty[dwStage] = true;
+		break;
+
+	case SAMPLER_MAXANISOTROPY:
+		m_CurrentState.maxAnisotropy[dwStage] = dwValue;
+		m_bSamplerStateDirty[dwStage] = true;
+		break;
+	}
+}
+
+void CStateManager::GetSamplerState(DWORD dwStage, ESamplerState Type, DWORD* pdwValue)
+{
+	if (dwStage >= STATEMANAGER_MAX_STAGES)
+	{
+		*pdwValue = 0;
 		return;
+	}
 
-	m_lpD3DDev->SetSamplerState(dwStage, Type, dwValue);
-
-	m_CurrentState.m_SamplerStates[dwStage][Type] = dwValue;
-}
-
-void CStateManager::GetSamplerState(DWORD dwStage, D3DSAMPLERSTATETYPE Type, DWORD* pdwValue)
-{
-	*pdwValue = m_CurrentState.m_SamplerStates[dwStage][Type];
-}
-
-// Vertex Shader
-void CStateManager::SaveVertexShader(LPDIRECT3DVERTEXSHADER9 dwShader)
-{
-	m_CopyState.m_dwVertexShader = m_CurrentState.m_dwVertexShader;
-	SetVertexShader(dwShader);
-}
-
-void CStateManager::RestoreVertexShader()
-{
-	SetVertexShader(m_CopyState.m_dwVertexShader);
-}
-
-void CStateManager::SetVertexShader(LPDIRECT3DVERTEXSHADER9 dwShader)
-{
-	if (m_CurrentState.m_dwVertexShader != dwShader)
+	switch (Type)
 	{
-		m_CurrentState.m_dwVertexShader = dwShader;
-		m_lpD3DDev->SetVertexShader(dwShader);
+	case SAMPLER_MINFILTER:
+	case SAMPLER_MAGFILTER:
+	case SAMPLER_MIPFILTER:
+		if (m_CurrentState.samplerFilter[dwStage] == D3D11_FILTER_ANISOTROPIC)
+			*pdwValue = FILTER_ANISOTROPIC;
+		else if (m_CurrentState.samplerFilter[dwStage] == D3D11_FILTER_MIN_MAG_MIP_LINEAR)
+			*pdwValue = FILTER_LINEAR;
+		else
+			*pdwValue = FILTER_POINT;
+		break;
+	case SAMPLER_ADDRESSU:
+		*pdwValue = m_CurrentState.addressU[dwStage];
+		break;
+	case SAMPLER_ADDRESSV:
+		*pdwValue = m_CurrentState.addressV[dwStage];
+		break;
+	case SAMPLER_MAXANISOTROPY:
+		*pdwValue = m_CurrentState.maxAnisotropy[dwStage];
+		break;
+	default:
+		*pdwValue = 0;
+		break;
 	}
 }
 
-void CStateManager::GetVertexShader(LPDIRECT3DVERTEXSHADER9 * pdwShader) const
+void CStateManager::SetBestFiltering(DWORD dwStage)
 {
-	*pdwShader = m_CurrentState.m_dwVertexShader;
+	SetSamplerState(dwStage, SAMPLER_MINFILTER, FILTER_ANISOTROPIC);
+	SetSamplerState(dwStage, SAMPLER_MAGFILTER, FILTER_ANISOTROPIC);
+	SetSamplerState(dwStage, SAMPLER_MIPFILTER, FILTER_ANISOTROPIC);
 }
 
-// Vertex Declaration
-void CStateManager::SaveVertexDeclaration(LPDIRECT3DVERTEXDECLARATION9 dwShader)
+// Shaders
+void CStateManager::VSSetShader(ID3D11VertexShader* pShader)
 {
-	m_CopyState.m_dwVertexDeclaration = m_CurrentState.m_dwVertexDeclaration;
-	SetVertexDeclaration(dwShader);
+	m_pCurrentVertexShader = pShader;
+	m_pContext->VSSetShader(pShader, nullptr, 0);
 }
 
-void CStateManager::RestoreVertexDeclaration()
+void CStateManager::PSSetShader(ID3D11PixelShader* pShader)
 {
-	SetVertexDeclaration(m_CopyState.m_dwVertexDeclaration);
+	m_pCurrentPixelShader = pShader;
+	m_pContext->PSSetShader(pShader, nullptr, 0);
 }
 
-void CStateManager::SetVertexDeclaration(LPDIRECT3DVERTEXDECLARATION9 dwShader)
+void CStateManager::SetInputLayout(ID3D11InputLayout* pLayout)
 {
-	if (m_CurrentState.m_dwVertexDeclaration == dwShader)
-		return;
-
-	m_lpD3DDev->SetVertexDeclaration(dwShader);
-	m_CurrentState.m_dwVertexDeclaration = dwShader;
+	m_pContext->IASetInputLayout(pLayout);
 }
 
-void CStateManager::GetVertexDeclaration(LPDIRECT3DVERTEXDECLARATION9* pdwShader)
-{
-	*pdwShader = m_CurrentState.m_dwVertexDeclaration;
-}
-
-// Pixel Shader
-void CStateManager::SavePixelShader(LPDIRECT3DPIXELSHADER9 dwShader)
-{
-	m_CopyState.m_dwPixelShader = m_CurrentState.m_dwPixelShader;
-	SetPixelShader(dwShader);
-}
-
-void CStateManager::RestorePixelShader()
-{
-	SetPixelShader(m_CopyState.m_dwPixelShader);
-}
-
-void CStateManager::SetPixelShader(LPDIRECT3DPIXELSHADER9 dwShader)
-{
-	if (m_CurrentState.m_dwPixelShader != dwShader)
-	{
-		m_CurrentState.m_dwPixelShader = dwShader;
-		m_lpD3DDev->SetPixelShader(dwShader);
-	}
-}
-
-void CStateManager::GetPixelShader(LPDIRECT3DPIXELSHADER9 * pdwShader) const
-{
-	*pdwShader = m_CurrentState.m_dwPixelShader;
-}
-
-// FVF
-void CStateManager::SaveFVF(DWORD dwFVF)
-{
-	m_CopyState.m_dwFVF = m_CurrentState.m_dwFVF;
-	SetFVF(dwFVF);
-}
-
-void CStateManager::RestoreFVF()
-{
-	SetFVF(m_CopyState.m_dwFVF);
-}
-
-void CStateManager::SetFVF(DWORD dwFVF)
-{
-	if (m_CurrentState.m_dwFVF != dwFVF)
-	{
-		m_lpD3DDev->SetFVF(dwFVF);
-		m_CurrentState.m_dwFVF = dwFVF;
-	}
-}
-
-void CStateManager::GetFVF(DWORD* dwFVF)
-{
-	*dwFVF = m_CurrentState.m_dwFVF;
-}
-
-// *** These states are cached, but not protected from multiple sends of the same value.
 // Transform
-void CStateManager::SaveTransform(D3DTRANSFORMSTATETYPE Type, const D3DMATRIX* pMatrix)
+void CStateManager::SaveTransform(EMatrixSlot Transform, const Matrix* pMatrix)
 {
-#ifdef _DEBUG
-	if (m_bTransformSavingFlag[Type])
+	if ((UINT)Transform >= STATEMANAGER_MAX_TRANSFORMSTATES) return;
+	m_SavedMatrices[Transform] = m_Matrices[Transform];
+	SetMatrix(Transform, pMatrix);
+}
+
+void CStateManager::RestoreTransform(EMatrixSlot Transform)
+{
+	if ((UINT)Transform >= STATEMANAGER_MAX_TRANSFORMSTATES) return;
+	SetMatrix(Transform, &m_SavedMatrices[Transform]);
+}
+
+void CStateManager::SetMatrix(EMatrixSlot Type, const Matrix* pMatrix)
+{
+	if ((UINT)Type >= STATEMANAGER_MAX_TRANSFORMSTATES) return;
+	m_Matrices[Type] = *pMatrix;
+
+	if (SHADERMANAGER.IsInitialized())
 	{
-		Tracef(" CStateManager::SaveTransform - This transform is already saved [%d]\n", Type);
-		StateManager_Assert(!" This trasform is already saved!");
+		if (Type == MATRIX_VIEW || Type == MATRIX_PROJECTION)
+		{
+			// Get camera position from inverse view matrix
+			Matrix matInvView;
+			MatrixInverse(&matInvView, nullptr, &m_Matrices[MATRIX_VIEW]);
+			Vector3 vCameraPos(matInvView._41, matInvView._42, matInvView._43);
+			SHADERMANAGER.SetViewProjection(&m_Matrices[MATRIX_VIEW], &m_Matrices[MATRIX_PROJECTION]);
+			SHADERMANAGER.SetCameraPosition(&vCameraPos);
+			const D3D11_VIEWPORT& viewport = CGraphicBase::GetViewport();
+			SHADERMANAGER.SetViewportSize(viewport.Width, viewport.Height);
+		}
 	}
-	m_bTransformSavingFlag[Type] = TRUE;
-#endif _DEBUG
-
-	m_CopyState.m_Matrices[Type] = m_CurrentState.m_Matrices[Type];
-	SetTransform(Type, (D3DXMATRIX *)pMatrix);
 }
 
-void CStateManager::RestoreTransform(D3DTRANSFORMSTATETYPE Type)
+void CStateManager::GetMatrix(EMatrixSlot Type, Matrix* pMatrix)
 {
-#ifdef _DEBUG
-	if (!m_bTransformSavingFlag[Type])
+	if ((UINT)Type >= STATEMANAGER_MAX_TRANSFORMSTATES)
 	{
-		Tracef(" CStateManager::RestoreTransform - This transform was not saved [%d]\n", Type);
-		StateManager_Assert(!" This render state was not saved!");
+		MatrixIdentity(pMatrix);
+		return;
 	}
-	m_bTransformSavingFlag[Type] = FALSE;
-#endif _DEBUG
-
-	SetTransform(Type, &m_CopyState.m_Matrices[Type]);
+	*pMatrix = m_Matrices[Type];
 }
 
-// Don't cache-check the transform.  To much to do
-void CStateManager::SetTransform(D3DTRANSFORMSTATETYPE Type, const D3DMATRIX* pMatrix)
+// Stream/Index binding
+void CStateManager::SaveStreamSource(UINT StreamNumber, ID3D11Buffer* pStreamData, UINT Stride)
 {
-	if (m_bScene)
-	{
-		m_lpD3DDev->SetTransform(Type, pMatrix);
-	}
-	else
-	{
-		assert(D3DTS_VIEW==Type || D3DTS_PROJECTION==Type || D3DTS_WORLD==Type);
-	}
-
-	m_CurrentState.m_Matrices[Type] = *pMatrix;
-}
-
-void CStateManager::GetTransform(D3DTRANSFORMSTATETYPE Type, D3DMATRIX * pMatrix) const
-{
-	*pMatrix = m_CurrentState.m_Matrices[Type];
-}
-
-// SetVertexShaderConstant
-void CStateManager::SaveVertexShaderConstant(DWORD dwRegister,CONST void* pConstantData,DWORD dwConstantCount)
-{
-    if (!pConstantData || dwRegister > STATEMANAGER_MAX_VCONSTANTS || dwConstantCount > STATEMANAGER_MAX_VCONSTANTS - dwRegister) return;
-	DWORD i;
-
-	for (i = 0; i < dwConstantCount; i++)
-	{
-		StateManager_Assert((dwRegister + i) < STATEMANAGER_MAX_VCONSTANTS);
-		m_CopyState.m_VertexShaderConstants[dwRegister + i] = m_CurrentState.m_VertexShaderConstants[dwRegister + i];
-	}
-
-	SetVertexShaderConstant(dwRegister, pConstantData, dwConstantCount);
-}
-
-void CStateManager::RestoreVertexShaderConstant(DWORD dwRegister, DWORD dwConstantCount)
-{
-	SetVertexShaderConstant(dwRegister, &m_CopyState.m_VertexShaderConstants[dwRegister], dwConstantCount);
-}
-
-void CStateManager::SetVertexShaderConstant(DWORD first, CONST void* data, DWORD count)
-{
-    if (!data || first > STATEMANAGER_MAX_VCONSTANTS || count > STATEMANAGER_MAX_VCONSTANTS - first) return;
-    const auto* values = static_cast<const D3DXVECTOR4*>(data);
-    bool changed = m_bForce;
-    for (DWORD i = 0; i < count && !changed; ++i)
-        changed = !m_vertexConstantsValid[first + i] ||
-            memcmp(&m_CurrentState.m_VertexShaderConstants[first + i], values + i, sizeof(D3DXVECTOR4)) != 0;
-    if (!changed) return;
-    const HRESULT result = m_lpD3DDev->SetVertexShaderConstantF(first, static_cast<const float*>(data), count);
-    for (DWORD i = 0; i < count; ++i)
-    {
-        m_vertexConstantsValid[first + i] = SUCCEEDED(result);
-        if (SUCCEEDED(result)) m_CurrentState.m_VertexShaderConstants[first + i] = values[i];
-    }
-}
-
-// SetPixelShaderConstant
-void CStateManager::SavePixelShaderConstant(DWORD dwRegister,CONST void* pConstantData,DWORD dwConstantCount)
-{
-    if (!pConstantData || dwRegister > STATEMANAGER_MAX_PCONSTANTS || dwConstantCount > STATEMANAGER_MAX_PCONSTANTS - dwRegister) return;
-	DWORD i;
-
-	for (i = 0; i < dwConstantCount; i++)
-	{
-		StateManager_Assert((dwRegister + i) < STATEMANAGER_MAX_PCONSTANTS);
-		m_CopyState.m_PixelShaderConstants[dwRegister + i] = *(((D3DXVECTOR4*)pConstantData) + i);
-	}
-
-	SetPixelShaderConstant(dwRegister, pConstantData, dwConstantCount);
-}
-
-void CStateManager::RestorePixelShaderConstant(DWORD dwRegister, DWORD dwConstantCount)
-{
-	SetPixelShaderConstant(dwRegister, &m_CopyState.m_PixelShaderConstants[dwRegister], dwConstantCount);
-}
-
-void CStateManager::SetPixelShaderConstant(DWORD first, CONST void* data, DWORD count)
-{
-    if (!data || first > STATEMANAGER_MAX_PCONSTANTS || count > STATEMANAGER_MAX_PCONSTANTS - first) return;
-    const auto* values = static_cast<const D3DXVECTOR4*>(data);
-    bool changed = m_bForce;
-    for (DWORD i = 0; i < count && !changed; ++i)
-        changed = !m_pixelConstantsValid[first + i] ||
-            memcmp(&m_CurrentState.m_PixelShaderConstants[first + i], values + i, sizeof(D3DXVECTOR4)) != 0;
-    if (!changed) return;
-    const HRESULT result = m_lpD3DDev->SetPixelShaderConstantF(first, static_cast<const float*>(data), count);
-    for (DWORD i = 0; i < count; ++i)
-    {
-        m_pixelConstantsValid[first + i] = SUCCEEDED(result);
-        if (SUCCEEDED(result)) m_CurrentState.m_PixelShaderConstants[first + i] = values[i];
-    }
-}
-
-void CStateManager::SaveStreamSource(UINT StreamNumber, LPDIRECT3DVERTEXBUFFER9 pStreamData,UINT Stride)
-{
-	// Check that we have set this up before, if not, the default is this.
-	m_CopyState.m_StreamData[StreamNumber] = m_CurrentState.m_StreamData[StreamNumber];
-	SetStreamSource(StreamNumber, pStreamData, Stride);
+	if (StreamNumber >= STATEMANAGER_MAX_STREAMS) return;
+	m_SavedStreamData[StreamNumber] = m_StreamData[StreamNumber];
+	SetVertexBuffer(StreamNumber, pStreamData, Stride);
 }
 
 void CStateManager::RestoreStreamSource(UINT StreamNumber)
 {
-	SetStreamSource(StreamNumber,
-					m_CopyState.m_StreamData[StreamNumber].m_lpStreamData,
-					m_CopyState.m_StreamData[StreamNumber].m_Stride);
+	if (StreamNumber >= STATEMANAGER_MAX_STREAMS) return;
+	SetVertexBuffer(StreamNumber, m_SavedStreamData[StreamNumber].m_pStreamData,
+		m_SavedStreamData[StreamNumber].m_Stride, m_SavedStreamData[StreamNumber].m_Offset);
 }
 
-void CStateManager::SetStreamSource(UINT StreamNumber, LPDIRECT3DVERTEXBUFFER9 pStreamData, UINT Stride)
+void CStateManager::SetVertexBuffer(UINT StreamNumber, ID3D11Buffer* pStreamData, UINT Stride, UINT Offset)
 {
-	const CStreamData kStreamData(pStreamData, Stride);
-	if (m_CurrentState.m_StreamData[StreamNumber] == kStreamData)
-		return;
+	if (StreamNumber >= STATEMANAGER_MAX_STREAMS) return;
 
-	m_lpD3DDev->SetStreamSource(StreamNumber, pStreamData, 0, Stride);
-	m_CurrentState.m_StreamData[StreamNumber] = kStreamData;
+	CStreamData newData(pStreamData, Stride, Offset);
+	if (m_StreamData[StreamNumber] == newData) return;
+
+	m_StreamData[StreamNumber] = newData;
+	m_pContext->IASetVertexBuffers(StreamNumber, 1, &pStreamData, &Stride, &Offset);
 }
 
-void CStateManager::SaveIndices(LPDIRECT3DINDEXBUFFER9 pIndexData, UINT BaseVertexIndex)
+void CStateManager::SaveIndices(ID3D11Buffer* pIndexData)
 {
-	m_CopyState.m_IndexData = m_CurrentState.m_IndexData;
-	SetIndices(pIndexData, BaseVertexIndex);
+	m_SavedIndexData = m_IndexData;
+	SetIndexBuffer(pIndexData);
 }
 
 void CStateManager::RestoreIndices()
 {
-	SetIndices(m_CopyState.m_IndexData.m_lpIndexData, m_CopyState.m_IndexData.m_BaseVertexIndex);
+	SetIndexBuffer(m_SavedIndexData.m_pIndexData, m_SavedIndexData.m_Format, m_SavedIndexData.m_Offset);
 }
 
-void CStateManager::SetIndices(LPDIRECT3DINDEXBUFFER9 pIndexData, UINT BaseVertexIndex)
+void CStateManager::SetIndexBuffer(ID3D11Buffer* pIndexData, DXGI_FORMAT Format, UINT Offset)
 {
-	const CIndexData kIndexData(pIndexData, BaseVertexIndex);
-
-	if (m_CurrentState.m_IndexData == kIndexData)
+	if (!pIndexData)
 		return;
 
-	m_lpD3DDev->SetIndices(pIndexData);
-	m_CurrentState.m_IndexData = kIndexData;
+	CIndexData newData(pIndexData, Format, Offset);
+	if (m_IndexData == newData) return;
+
+	m_IndexData = newData;
+	m_pContext->IASetIndexBuffer(pIndexData, Format, Offset);
 }
 
-HRESULT CStateManager::DrawPrimitive(D3DPRIMITIVETYPE PrimitiveType, UINT StartVertex, UINT PrimitiveCount) const
+// State object updates
+void CStateManager::UpdateBlendState()
 {
-	return (m_lpD3DDev->DrawPrimitive(PrimitiveType, StartVertex, PrimitiveCount));
+	if (!m_bBlendStateDirty) return;
+
+	D3D11_BLEND_DESC desc;
+	ZeroMemory(&desc, sizeof(desc));
+	desc.AlphaToCoverageEnable = FALSE;
+	desc.IndependentBlendEnable = FALSE;
+	desc.RenderTarget[0].BlendEnable = m_CurrentState.bAlphaBlendEnable;
+	desc.RenderTarget[0].SrcBlend = m_CurrentState.srcBlend;
+	desc.RenderTarget[0].DestBlend = m_CurrentState.destBlend;
+	desc.RenderTarget[0].BlendOp = m_CurrentState.blendOp;
+	desc.RenderTarget[0].SrcBlendAlpha = m_CurrentState.srcBlendAlpha;
+	desc.RenderTarget[0].DestBlendAlpha = m_CurrentState.destBlendAlpha;
+	desc.RenderTarget[0].BlendOpAlpha = m_CurrentState.blendOpAlpha;
+	desc.RenderTarget[0].RenderTargetWriteMask = m_CurrentState.colorWriteMask;
+
+	ID3D11BlendState* pState = m_pStateCache->GetBlendState(desc);
+	if (pState && pState != m_pCurrentBlendState)
+	{
+		m_pCurrentBlendState = pState;
+		float blendFactor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+		m_pContext->OMSetBlendState(pState, blendFactor, 0xFFFFFFFF);
+	}
+
+	m_bBlendStateDirty = false;
 }
 
-HRESULT CStateManager::DrawPrimitiveUP(D3DPRIMITIVETYPE PrimitiveType, UINT PrimitiveCount, const void* pVertexStreamZeroData, UINT VertexStreamZeroStride)
+void CStateManager::UpdateRasterizerState()
 {
-	m_CurrentState.m_StreamData[0] = nullptr;
-	return (m_lpD3DDev->DrawPrimitiveUP(PrimitiveType, PrimitiveCount, pVertexStreamZeroData, VertexStreamZeroStride));
+	if (!m_bRasterizerStateDirty) return;
+
+	D3D11_RASTERIZER_DESC desc;
+	ZeroMemory(&desc, sizeof(desc));
+	desc.FillMode = m_CurrentState.fillMode;
+	desc.CullMode = m_CurrentState.cullMode;
+	desc.FrontCounterClockwise = FALSE;
+	desc.DepthBias = m_CurrentState.depthBias;
+	desc.DepthBiasClamp = m_CurrentState.depthBiasClamp;
+	desc.SlopeScaledDepthBias = m_CurrentState.slopeScaledDepthBias;
+	desc.DepthClipEnable = m_CurrentState.bDepthClipEnable;
+	desc.ScissorEnable = m_CurrentState.bScissorEnable;
+	desc.MultisampleEnable = m_CurrentState.bMultisampleEnable;
+	desc.AntialiasedLineEnable = m_CurrentState.bAntialiasedLineEnable;
+
+	ID3D11RasterizerState* pState = m_pStateCache->GetRasterizerState(desc);
+	if (pState && pState != m_pCurrentRasterizerState)
+	{
+		m_pCurrentRasterizerState = pState;
+		m_pContext->RSSetState(pState);
+	}
+
+	m_bRasterizerStateDirty = false;
 }
 
-HRESULT CStateManager::DrawIndexedPrimitive(D3DPRIMITIVETYPE PrimitiveType, UINT minIndex, UINT NumVertices, UINT startIndex, UINT primCount, INT baseVertexIndex) const
+void CStateManager::UpdateDepthStencilState()
 {
-	return (m_lpD3DDev->DrawIndexedPrimitive(PrimitiveType, baseVertexIndex, minIndex, NumVertices, startIndex, primCount));
+	if (!m_bDepthStencilStateDirty) return;
+
+	D3D11_DEPTH_STENCIL_DESC desc;
+	ZeroMemory(&desc, sizeof(desc));
+	desc.DepthEnable = m_CurrentState.bDepthEnable;
+	desc.DepthWriteMask = m_CurrentState.bDepthWriteEnable ? D3D11_DEPTH_WRITE_MASK_ALL : D3D11_DEPTH_WRITE_MASK_ZERO;
+	desc.DepthFunc = m_CurrentState.depthFunc;
+	desc.StencilEnable = m_CurrentState.bStencilEnable;
+	desc.StencilReadMask = m_CurrentState.stencilReadMask;
+	desc.StencilWriteMask = m_CurrentState.stencilWriteMask;
+	desc.FrontFace.StencilFailOp = D3D11_STENCIL_OP_KEEP;
+	desc.FrontFace.StencilDepthFailOp = D3D11_STENCIL_OP_KEEP;
+	desc.FrontFace.StencilPassOp = D3D11_STENCIL_OP_KEEP;
+	desc.FrontFace.StencilFunc = D3D11_COMPARISON_ALWAYS;
+	desc.BackFace = desc.FrontFace;
+
+	ID3D11DepthStencilState* pState = m_pStateCache->GetDepthStencilState(desc);
+	if (pState && pState != m_pCurrentDepthStencilState)
+	{
+		m_pCurrentDepthStencilState = pState;
+		m_pContext->OMSetDepthStencilState(pState, 0);
+	}
+
+	m_bDepthStencilStateDirty = false;
 }
 
-HRESULT CStateManager::DrawIndexedPrimitiveUP(D3DPRIMITIVETYPE PrimitiveType, UINT MinVertexIndex, UINT NumVertexIndices, UINT PrimitiveCount, CONST void * pIndexData, D3DFORMAT IndexDataFormat, CONST void * pVertexStreamZeroData, UINT VertexStreamZeroStride)
+void CStateManager::UpdateSamplerStates()
 {
-	m_CurrentState.m_IndexData = nullptr;
-	m_CurrentState.m_StreamData[0] = nullptr;
-	return (m_lpD3DDev->DrawIndexedPrimitiveUP(PrimitiveType, MinVertexIndex, NumVertexIndices, PrimitiveCount, pIndexData, IndexDataFormat, pVertexStreamZeroData, VertexStreamZeroStride));
+	for (DWORD i = 0; i < STATEMANAGER_MAX_STAGES; ++i)
+	{
+		if (!m_bSamplerStateDirty[i]) continue;
+
+		D3D11_SAMPLER_DESC desc;
+		ZeroMemory(&desc, sizeof(desc));
+		desc.Filter = m_CurrentState.samplerFilter[i];
+		desc.AddressU = m_CurrentState.addressU[i];
+		desc.AddressV = m_CurrentState.addressV[i];
+		desc.AddressW = m_CurrentState.addressW[i];
+		desc.MipLODBias = 0.0f;
+		desc.MaxAnisotropy = m_CurrentState.maxAnisotropy[i];
+		desc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+		desc.BorderColor[0] = 0.0f;
+		desc.BorderColor[1] = 0.0f;
+		desc.BorderColor[2] = 0.0f;
+		desc.BorderColor[3] = 0.0f;
+		desc.MinLOD = 0.0f;
+		desc.MaxLOD = m_CurrentState.bMipmapDisabled[i] ? 0.0f : D3D11_FLOAT32_MAX;
+
+		ID3D11SamplerState* pState = m_pStateCache->GetSamplerState(desc);
+		if (pState && pState != m_pCurrentSamplerStates[i])
+		{
+			m_pCurrentSamplerStates[i] = pState;
+			m_pContext->PSSetSamplers(i, 1, &pState);
+		}
+
+		m_bSamplerStateDirty[i] = false;
+	}
 }
 
+void CStateManager::CommitState()
+{
+	UpdateBlendState();
+	UpdateRasterizerState();
+	UpdateDepthStencilState();
+	UpdateSamplerStates();
+}
+
+D3D11_PRIMITIVE_TOPOLOGY CStateManager::ConvertPrimitiveType(EPrimitiveTopology type)
+{
+	switch (type)
+	{
+	case TOPOLOGY_POINTLIST:		return D3D11_PRIMITIVE_TOPOLOGY_POINTLIST;
+	case TOPOLOGY_LINELIST:		return D3D11_PRIMITIVE_TOPOLOGY_LINELIST;
+	case TOPOLOGY_LINESTRIP:		return D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP;
+	case TOPOLOGY_TRIANGLELIST:	return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	case TOPOLOGY_TRIANGLESTRIP:	return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
+	default:				return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	}
+}
+
+UINT CStateManager::GetPrimitiveVertexCount(EPrimitiveTopology type, UINT primitiveCount)
+{
+	switch (type)
+	{
+	case TOPOLOGY_POINTLIST:		return primitiveCount;
+	case TOPOLOGY_LINELIST:		return primitiveCount * 2;
+	case TOPOLOGY_LINESTRIP:		return primitiveCount + 1;
+	case TOPOLOGY_TRIANGLELIST:	return primitiveCount * 3;
+	case TOPOLOGY_TRIANGLESTRIP:	return primitiveCount + 2;
+	default:				return 0;
+	}
+}
+
+void CStateManager::EnsureShadersBound()
+{
+	if (!SHADERMANAGER.IsInitialized())
+	{
+		TraceError("EnsureShadersBound: ShaderManager not initialized!");
+		return;
+	}
+
+	const Matrix& matProj = m_Matrices[MATRIX_PROJECTION];
+	bool bIsOrtho = (fabsf(matProj._34) < 0.001f);
+
+	// Check if a shader is already explicitly bound
+	if (SHADERMANAGER.GetCurrentShader() != SHADER_NONE)
+	{
+		SHADERMANAGER.SetWorldMatrix(&m_Matrices[MATRIX_WORLD]);
+		SHADERMANAGER.CommitChanges();
+		return;
+	}
+
+	if (bIsOrtho)
+	{
+		SHADERMANAGER.BeginUI();
+	}
+	else
+	{
+		// 3D mode - select shader based on vertex format
+		switch (m_InputLayout)
+		{
+		case INPUT_LAYOUT_PNT:
+		case INPUT_LAYOUT_PNT2:
+		case INPUT_LAYOUT_SKINNED:
+			SHADERMANAGER.BeginMesh();
+			break;
+		case INPUT_LAYOUT_PN:
+		case INPUT_LAYOUT_TERRAIN_HTP:
+			SHADERMANAGER.BeginTerrain();
+			break;
+		case INPUT_LAYOUT_WATER:
+			SHADERMANAGER.BeginWater();
+			break;
+		case INPUT_LAYOUT_PDT:
+		case INPUT_LAYOUT_PDT2:
+		case INPUT_LAYOUT_PT:
+		case INPUT_LAYOUT_PD:
+		default:
+			SHADERMANAGER.BeginParticle();
+			break;
+		}
+	}
+
+	SHADERMANAGER.SetWorldMatrix(&m_Matrices[MATRIX_WORLD]);
+	SHADERMANAGER.CommitChanges();
+}
+
+// Drawing
+HRESULT CStateManager::Draw(EPrimitiveTopology PrimitiveType, UINT StartVertex, UINT PrimitiveCount)
+{
+	if (!m_pContext)
+	{
+		TraceError("Draw: m_pContext is NULL!");
+		return E_FAIL;
+	}
+
+	CommitState();
+	EnsureShadersBound();
+
+	m_pContext->IASetPrimitiveTopology(ConvertPrimitiveType(PrimitiveType));
+	m_pContext->Draw(GetPrimitiveVertexCount(PrimitiveType, PrimitiveCount), StartVertex);
+	return S_OK;
+}
+
+HRESULT CStateManager::DrawDynamic(EPrimitiveTopology PrimitiveType, UINT PrimitiveCount, const void* pVertexStreamZeroData, UINT VertexStreamZeroStride)
+{
+	if (!pVertexStreamZeroData || PrimitiveCount == 0)
+		return E_INVALIDARG;
+
+	CommitState();
+	EnsureShadersBound();
+
+	UINT vertexCount = GetPrimitiveVertexCount(PrimitiveType, PrimitiveCount);
+	UINT dataSize = vertexCount * VertexStreamZeroStride;
+
+	ID3D11Buffer* pVertexBuffer = nullptr;
+	bool bUsingTempBuffer = false;
+
+	if (m_pDynamicVertexBuffer && dataSize <= UP_VERTEX_BUFFER_SIZE)
+	{
+		D3D11_MAPPED_SUBRESOURCE mapped;
+		HRESULT hr = m_pContext->Map(m_pDynamicVertexBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		if (SUCCEEDED(hr))
+		{
+			memcpy(mapped.pData, pVertexStreamZeroData, dataSize);
+			m_pContext->Unmap(m_pDynamicVertexBuffer, 0);
+			pVertexBuffer = m_pDynamicVertexBuffer;
+		}
+	}
+
+	// Fallback: create temporary buffer for large data
+	if (!pVertexBuffer)
+	{
+		D3D11_BUFFER_DESC bufferDesc = {};
+		bufferDesc.ByteWidth = dataSize;
+		bufferDesc.Usage = D3D11_USAGE_DYNAMIC;
+		bufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+		bufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+
+		D3D11_SUBRESOURCE_DATA initData = {};
+		initData.pSysMem = pVertexStreamZeroData;
+
+		HRESULT hr = m_pDevice->CreateBuffer(&bufferDesc, &initData, &pVertexBuffer);
+		if (FAILED(hr))
+			return hr;
+		bUsingTempBuffer = true;
+	}
+
+	// Bind and draw
+	UINT offset = 0;
+	m_pContext->IASetVertexBuffers(0, 1, &pVertexBuffer, &VertexStreamZeroStride, &offset);
+	m_pContext->IASetPrimitiveTopology(ConvertPrimitiveType(PrimitiveType));
+	m_pContext->Draw(vertexCount, 0);
+
+	// Release temporary buffer if created
+	if (bUsingTempBuffer)
+		pVertexBuffer->Release();
+
+	return S_OK;
+}
+
+HRESULT CStateManager::DrawIndexed(EPrimitiveTopology PrimitiveType, UINT minIndex, UINT NumVertices, UINT startIndex, UINT primCount, INT baseVertexIndex)
+{
+	CommitState();
+	EnsureShadersBound();
+
+	m_pContext->IASetPrimitiveTopology(ConvertPrimitiveType(PrimitiveType));
+
+	UINT indexCount = 0;
+	switch (PrimitiveType)
+	{
+	case TOPOLOGY_TRIANGLELIST: indexCount = primCount * 3; break;
+	case TOPOLOGY_TRIANGLESTRIP: indexCount = primCount + 2; break;
+	case TOPOLOGY_LINELIST: indexCount = primCount * 2; break;
+	case TOPOLOGY_LINESTRIP: indexCount = primCount + 1; break;
+	default: indexCount = primCount * 3; break;
+	}
+
+	m_pContext->DrawIndexed(indexCount, startIndex, baseVertexIndex);
+	return S_OK;
+}
+
+HRESULT CStateManager::DrawIndexedDynamic(EPrimitiveTopology PrimitiveType, UINT MinVertexIndex, UINT NumVertexIndices, UINT PrimitiveCount, const void* pIndexData, DXGI_FORMAT IndexDataFormat, const void* pVertexStreamZeroData, UINT VertexStreamZeroStride)
+{
+	if (!pIndexData || !pVertexStreamZeroData || PrimitiveCount == 0)
+		return E_INVALIDARG;
+
+	CommitState();
+	EnsureShadersBound();
+
+	// Calculate sizes
+	UINT vertexDataSize = NumVertexIndices * VertexStreamZeroStride;
+	UINT indexSize = (IndexDataFormat == DXGI_FORMAT_R32_UINT) ? 4 : 2;
+	UINT indexCount = 0;
+	switch (PrimitiveType)
+	{
+	case TOPOLOGY_TRIANGLELIST: indexCount = PrimitiveCount * 3; break;
+	case TOPOLOGY_TRIANGLESTRIP: indexCount = PrimitiveCount + 2; break;
+	case TOPOLOGY_LINELIST: indexCount = PrimitiveCount * 2; break;
+	case TOPOLOGY_LINESTRIP: indexCount = PrimitiveCount + 1; break;
+	default: indexCount = PrimitiveCount * 3; break;
+	}
+	UINT indexDataSize = indexCount * indexSize;
+
+	ID3D11Buffer* pVertexBuffer = nullptr;
+	ID3D11Buffer* pIndexBuffer = nullptr;
+	bool bUsingTempVB = false;
+	bool bUsingTempIB = false;
+
+	// Use reusable dynamic vertex buffer if data fits
+	if (m_pDynamicVertexBuffer && vertexDataSize <= UP_VERTEX_BUFFER_SIZE)
+	{
+		D3D11_MAPPED_SUBRESOURCE mapped;
+		HRESULT hr = m_pContext->Map(m_pDynamicVertexBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		if (SUCCEEDED(hr))
+		{
+			memcpy(mapped.pData, pVertexStreamZeroData, vertexDataSize);
+			m_pContext->Unmap(m_pDynamicVertexBuffer, 0);
+			pVertexBuffer = m_pDynamicVertexBuffer;
+		}
+	}
+
+	// Fallback: create temporary vertex buffer
+	if (!pVertexBuffer)
+	{
+		D3D11_BUFFER_DESC vbDesc = {};
+		vbDesc.ByteWidth = vertexDataSize;
+		vbDesc.Usage = D3D11_USAGE_DYNAMIC;
+		vbDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+		vbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+
+		D3D11_SUBRESOURCE_DATA vbData = {};
+		vbData.pSysMem = pVertexStreamZeroData;
+
+		HRESULT hr = m_pDevice->CreateBuffer(&vbDesc, &vbData, &pVertexBuffer);
+		if (FAILED(hr))
+			return hr;
+		bUsingTempVB = true;
+	}
+
+	// Use reusable dynamic index buffer if data fits
+	if (m_pDynamicIndexBuffer && indexDataSize <= UP_INDEX_BUFFER_SIZE)
+	{
+		D3D11_MAPPED_SUBRESOURCE mapped;
+		HRESULT hr = m_pContext->Map(m_pDynamicIndexBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		if (SUCCEEDED(hr))
+		{
+			memcpy(mapped.pData, pIndexData, indexDataSize);
+			m_pContext->Unmap(m_pDynamicIndexBuffer, 0);
+			pIndexBuffer = m_pDynamicIndexBuffer;
+		}
+	}
+
+	// Fallback: create temporary index buffer
+	if (!pIndexBuffer)
+	{
+		D3D11_BUFFER_DESC ibDesc = {};
+		ibDesc.ByteWidth = indexDataSize;
+		ibDesc.Usage = D3D11_USAGE_DYNAMIC;
+		ibDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+		ibDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+
+		D3D11_SUBRESOURCE_DATA ibData = {};
+		ibData.pSysMem = pIndexData;
+
+		HRESULT hr = m_pDevice->CreateBuffer(&ibDesc, &ibData, &pIndexBuffer);
+		if (FAILED(hr))
+		{
+			if (bUsingTempVB) pVertexBuffer->Release();
+			return hr;
+		}
+		bUsingTempIB = true;
+	}
+
+	// Bind and draw
+	UINT offset = 0;
+	m_pContext->IASetVertexBuffers(0, 1, &pVertexBuffer, &VertexStreamZeroStride, &offset);
+	m_pContext->IASetIndexBuffer(pIndexBuffer, IndexDataFormat, 0);
+	m_pContext->IASetPrimitiveTopology(ConvertPrimitiveType(PrimitiveType));
+	m_pContext->DrawIndexed(indexCount, 0, MinVertexIndex);
+
+	// Release temporary buffers if created
+	if (bUsingTempVB) pVertexBuffer->Release();
+	if (bUsingTempIB) pIndexBuffer->Release();
+
+	return S_OK;
+}
+
+void CStateManager::SetInputLayout(EInputLayoutType type)
+{
+	m_InputLayout = type;
+
+	// Bind appropriate shader and input layout
+	if (SHADERMANAGER.IsInitialized())
+	{
+		SHADERMANAGER.BindForInputLayout(type);
+	}
+}
+
+EInputLayoutType CStateManager::GetInputLayout() const
+{
+	return m_InputLayout;
+}
+
+void CStateManager::SaveInputLayout()
+{
+	m_SavedInputLayout = m_InputLayout;
+}
+
+void CStateManager::SaveInputLayout(EInputLayoutType type)
+{
+	m_SavedInputLayout = m_InputLayout;
+	SetInputLayout(type);
+}
+
+void CStateManager::RestoreInputLayout()
+{
+	SetInputLayout(m_SavedInputLayout);
+}
+
+
+void CStateManager::SaveVertexShader()
+{
+	m_pSavedVertexShader = m_pCurrentVertexShader;
+}
+
+void CStateManager::RestoreVertexShader()
+{
+	VSSetShader(m_pSavedVertexShader);
+}
+
+void CStateManager::SavePixelShader()
+{
+	m_pSavedPixelShader = m_pCurrentPixelShader;
+}
+
+void CStateManager::RestorePixelShader()
+{
+	PSSetShader(m_pSavedPixelShader);
+}

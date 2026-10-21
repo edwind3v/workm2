@@ -52,8 +52,8 @@ class CGraphicImageInstance
 		virtual BOOL OnIsType(DWORD dwType);
 
 	protected:
-		D3DXCOLOR m_DiffuseColor;
-		D3DXVECTOR2 m_v2Position;
+		Color m_DiffuseColor;
+		Vector2 m_v2Position;
 
 		CGraphicImage::TRef m_roImage;
 
@@ -69,12 +69,12 @@ class CGraphicImageInstance
 #ifdef ENABLE_UI_MOVING
 public:
 	void SetScale(float fx, float fy);
-	void SetScale(D3DXVECTOR2 v2Scale);
-	const D3DXVECTOR2& GetScale() const;
+	void SetScale(Vector2 v2Scale);
+	const Vector2& GetScale() const;
 	void SetScalePercent(BYTE byPercent);
 	void SetScalePivotCenter(bool bScalePivotCenter);
 protected:
-	D3DXVECTOR2 m_v2Scale;
+	Vector2 m_v2Scale;
 	bool m_bScalePivotCenter;
 #endif
 

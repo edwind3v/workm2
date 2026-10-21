@@ -2628,7 +2628,7 @@ bool CPythonNetworkStream::RecvAddFlyTargetingPacket()
 	else
 	{
 		const float h = CPythonBackground::Instance().GetHeight(kPacket.lX,kPacket.lY) + 60.0f; // TEMPORARY HEIGHT
-		pShooter->GetGraphicThingInstancePtr()->AddFlyTarget(D3DXVECTOR3(kPacket.lX,kPacket.lY,h));
+		pShooter->GetGraphicThingInstancePtr()->AddFlyTarget(Vector3(kPacket.lX,kPacket.lY,h));
 		//pShooter->GetGraphicThingInstancePtr()->SetFlyTarget(kPacket.kPPosTarget.x,kPacket.kPPosTarget.y,);
 	}
 
@@ -2666,7 +2666,7 @@ bool CPythonNetworkStream::RecvFlyTargetingPacket()
 	else
 	{
 		const float h = CPythonBackground::Instance().GetHeight(kPacket.lX, kPacket.lY) + 60.0f; // TEMPORARY HEIGHT
-		pShooter->GetGraphicThingInstancePtr()->SetFlyTarget(D3DXVECTOR3(kPacket.lX,kPacket.lY,h));
+		pShooter->GetGraphicThingInstancePtr()->SetFlyTarget(Vector3(kPacket.lX,kPacket.lY,h));
 		//pShooter->GetGraphicThingInstancePtr()->SetFlyTarget(kPacket.kPPosTarget.x,kPacket.kPPosTarget.y,);
 	}
 

@@ -21,13 +21,13 @@ void CSpeedTreeDirectX::UploadWindMatrix(unsigned int uiLocation, const float* p
 	STATEMANAGER.SetVertexShaderConstant(uiLocation, pMatrix, 4);
 }
 
-void CSpeedTreeDirectX::UpdateCompundMatrix(const D3DXVECTOR3& c_rEyeVec, const D3DXMATRIX& c_rmatView, const D3DXMATRIX& c_rmatProj)
+void CSpeedTreeDirectX::UpdateCompundMatrix(const Vector3& c_rEyeVec, const Matrix& c_rmatView, const Matrix& c_rmatProj)
 {
-	D3DXMATRIX matBlend;
-	D3DXMatrixIdentity(&matBlend);
+	Matrix matBlend;
+	MatrixIdentity(&matBlend);
 
-	D3DXMATRIX matBlendShader;
-	D3DXMatrixMultiply(&matBlendShader, &c_rmatView, &c_rmatProj);
+	Matrix matBlendShader;
+	MatrixMultiply(&matBlendShader, &c_rmatView, &c_rmatProj);
 
 	float afDirection[3];
 	afDirection[0] = matBlendShader.m[0][2];
@@ -35,7 +35,7 @@ void CSpeedTreeDirectX::UpdateCompundMatrix(const D3DXVECTOR3& c_rEyeVec, const 
 	afDirection[2] = matBlendShader.m[2][2];
 	CSpeedTreeRT::SetCamera(c_rEyeVec, afDirection);
 
-	D3DXMatrixTranspose(&matBlendShader, &matBlendShader);
+	MatrixTranspose(&matBlendShader, &matBlendShader);
 	STATEMANAGER.SetVertexShaderConstant(c_nVertexShader_CompoundMatrix, (const float*)&matBlendShader, 4);
 }
 
@@ -99,24 +99,24 @@ void CSpeedTreeDirectX::Render(unsigned long ulRenderBitVector)
 	{
 		STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
 		STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
-		STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
+		STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAOP, TEXOP_MODULATE);
 	}
 	else
 	{
 		STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
 		STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
-		STATEMANAGER.SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
+		STATEMANAGER.SetTextureStageState(0, D3DTSS_COLOROP, TEXOP_MODULATE);
 		STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
 		STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
-		STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
+		STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAOP, TEXOP_MODULATE);
 		STATEMANAGER.SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
 		STATEMANAGER.SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
 		STATEMANAGER.SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_LINEAR);
 
 		STATEMANAGER.SetTextureStageState(1, D3DTSS_COLORARG1, D3DTA_TEXTURE);
 		STATEMANAGER.SetTextureStageState(1, D3DTSS_COLORARG2, D3DTA_CURRENT);
-		STATEMANAGER.SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_MODULATE);
-		STATEMANAGER.SetTextureStageState(1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
+		STATEMANAGER.SetTextureStageState(1, D3DTSS_COLOROP, TEXOP_MODULATE);
+		STATEMANAGER.SetTextureStageState(1, D3DTSS_ALPHAOP, TEXOP_DISABLE);
 		STATEMANAGER.SetSamplerState(1, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
 		STATEMANAGER.SetSamplerState(1, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
 	}
@@ -227,8 +227,8 @@ void CSpeedTreeDirectX::Render(unsigned long ulRenderBitVector)
 
 	if (!(ulRenderBitVector & Forest_RenderToShadow))
 	{
-		STATEMANAGER.SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
-		STATEMANAGER.SetTextureStageState(1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
+		STATEMANAGER.SetTextureStageState(1, D3DTSS_COLOROP, TEXOP_DISABLE);
+		STATEMANAGER.SetTextureStageState(1, D3DTSS_ALPHAOP, TEXOP_DISABLE);
 
 	}
 

@@ -75,10 +75,10 @@ class CEmitterProperty
 		BYTE m_byEmitterShape;
 		BYTE m_byEmitterAdvancedType;
 		BOOL m_bEmitFromEdgeFlag;
-		D3DXVECTOR3 m_v3EmittingSize;
+		Vector3 m_v3EmittingSize;
 		float m_fEmittingRadius;
 
-		D3DXVECTOR3 m_v3EmittingDirection;
+		Vector3 m_v3EmittingDirection;
 
 		//TTimeEventTableFloat m_TimeEventEmittingRadius;
 		TTimeEventTableFloat m_TimeEventEmittingSize;

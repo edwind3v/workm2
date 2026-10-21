@@ -44,7 +44,7 @@ bool CMapOutdoor::Update(float fX, float fY, float fZ)
 {
 	MapPerformance::Scope mapProfile("world.update", GetName().c_str());
 	CArea::BeginPreparationFrame();
-	D3DXVECTOR3 v3Player(fX, fY, fZ);
+	Vector3 v3Player(fX, fY, fZ);
 
 	m_v3Player=v3Player;
 
@@ -113,7 +113,7 @@ bool CMapOutdoor::Update(float fX, float fY, float fZ)
 	DWORD t3=ELTimer_GetMSec();
 #endif
 	mapStage.Reset("world.trees");
-	CSpeedTreeForest::Instance().UpdateSystem(CTimer::Instance().GetCurrentSecond());
+	CSpeedTreeForestDX11::Instance().UpdateSystem(CTimer::Instance().GetCurrentSecond());
 #ifdef __PERFORMANCE_CHECKER__
 	DWORD t4=ELTimer_GetMSec();
 #endif
@@ -206,14 +206,14 @@ struct FGetShadowReceiverFromCollisionData
 
 struct FPCBlockerDistanceSort
 {
-	D3DXVECTOR3 m_v3Eye;
-	FPCBlockerDistanceSort(D3DXVECTOR3 & v3Eye) : m_v3Eye(v3Eye) { }
+	Vector3 m_v3Eye;
+	FPCBlockerDistanceSort(Vector3 & v3Eye) : m_v3Eye(v3Eye) { }
 
 	bool operator () (CGraphicObjectInstance * plhs, CGraphicObjectInstance * prhs) const
 	{
 		const auto val1 = (plhs->GetPosition() - m_v3Eye);
 		const auto val2 = (prhs->GetPosition() - m_v3Eye);
-		return D3DXVec3LengthSq(&val1) > D3DXVec3LengthSq(&val2);
+		return Vec3LengthSq(&val1) > Vec3LengthSq(&val2);
 	}
 };
 
@@ -227,7 +227,7 @@ void CMapOutdoor::UpdateAroundAmbience(float fX, float fY, float fZ)
 	}
 }
 
-void CMapOutdoor::__UpdateArea(D3DXVECTOR3& v3Player)
+void CMapOutdoor::__UpdateArea(Vector3& v3Player)
 {
 #ifdef WORLD_EDITOR
 	__NEW_WorldEditor_UpdateArea();
@@ -236,7 +236,7 @@ void CMapOutdoor::__UpdateArea(D3DXVECTOR3& v3Player)
 #endif
 }
 
-void CMapOutdoor::__Game_UpdateArea(D3DXVECTOR3& v3Player)
+void CMapOutdoor::__Game_UpdateArea(Vector3& v3Player)
 {
 #ifdef __PERFORMANCE_CHECKER__
 	DWORD t1=timeGetTime();
@@ -253,12 +253,12 @@ void CMapOutdoor::__Game_UpdateArea(D3DXVECTOR3& v3Player)
 
 	const float fDistance = pCamera->GetDistance();
 
-	D3DXVECTOR3 v3View= pCamera->GetView();
-	D3DXVECTOR3 v3Target = pCamera->GetTarget();
-	D3DXVECTOR3 v3Eye= pCamera->GetEye();
+	Vector3 v3View= pCamera->GetView();
+	Vector3 v3Target = pCamera->GetTarget();
+	Vector3 v3Eye= pCamera->GetEye();
 
-	auto v3Light = D3DXVECTOR3(1.732f, 1.0f, -3.464f);
-	v3Light *= 50.0f / D3DXVec3Length(&v3Light);
+	auto v3Light = Vector3(1.732f, 1.0f, -3.464f);
+	v3Light *= 50.0f / Vec3Length(&v3Light);
 
 	/*
 	if (v3Target!=v3Player)
@@ -319,7 +319,7 @@ void CMapOutdoor::__NEW_WorldEditor_UpdateArea()
 }
 #endif
 #ifdef ENABLE_AREA_OPTIMIZATION
-void CMapOutdoor::__UpdateAroundAreaList(D3DXVECTOR3& v3Player)
+void CMapOutdoor::__UpdateAroundAreaList(Vector3& v3Player)
 #else
 void CMapOutdoor::__UpdateAroundAreaList() const
 #endif
@@ -419,7 +419,7 @@ struct FGetShadowReceiverFromHeightData
 	}
 };
 
-void CMapOutdoor::__CollectShadowReceiver(D3DXVECTOR3& v3Target, D3DXVECTOR3& v3Light)
+void CMapOutdoor::__CollectShadowReceiver(Vector3& v3Target, Vector3& v3Light)
 {
 	CDynamicSphereInstance s;
 	s.v3LastPosition = v3Target + v3Light;
@@ -489,8 +489,8 @@ struct PCBlocker_SInstanceList
 	PCBlocker_CDynamicSphereInstanceVector* m_pkDSIVector;
 
 	CCamera * m_pCamera;
-	D3DXVECTOR2 m_v2View;
-	D3DXVECTOR2 m_v2Target;
+	Vector2 m_v2View;
+	Vector2 m_v2Target;
 
 	PCBlocker_SInstanceList(PCBlocker_CDynamicSphereInstanceVector* pkDSIVector)
 	{
@@ -498,8 +498,8 @@ struct PCBlocker_SInstanceList
 		if (!m_pCamera)
 			return;
 
-		const D3DXVECTOR3 m_v3View = m_pCamera->GetView();
-		const D3DXVECTOR3 m_v3Target = m_pCamera->GetTarget();
+		const Vector3 m_v3View = m_pCamera->GetView();
+		const Vector3 m_v3Target = m_pCamera->GetTarget();
 
 		m_v2View.x = m_v3View.x;
 		m_v2View.y = m_v3View.y;
@@ -560,14 +560,14 @@ struct PCBlocker_SInstanceList
 
 	void __AppendObject(CGraphicObjectInstance * pInstance)
 	{
-		D3DXVECTOR3 v3Center;
+		Vector3 v3Center;
 		float fRadius;
 		pInstance->GetBoundingSphere(v3Center, fRadius);
 
-		D3DXVECTOR2 v2TargetToCenter;
+		Vector2 v2TargetToCenter;
 		v2TargetToCenter.x = v3Center.x - m_v2Target.x;
 		v2TargetToCenter.y = v3Center.y - m_v2Target.y;
-		if (D3DXVec2Dot(&m_v2View, &v2TargetToCenter) <= 0)
+		if (Vec2Dot(&m_v2View, &v2TargetToCenter) <= 0)
 		{
 			__AppendPCBlocker(pInstance);
 			return;
@@ -612,7 +612,7 @@ struct PCBlocker_SInstanceList
 	}
 };
 
-void CMapOutdoor::__CollectCollisionPCBlocker(D3DXVECTOR3& v3Eye, D3DXVECTOR3& v3Target, float fDistance)
+void CMapOutdoor::__CollectCollisionPCBlocker(Vector3& v3Eye, Vector3& v3Target, float fDistance)
 {
 #ifdef __PERFORMANCE_CHECKER__
 	DWORD t1=timeGetTime();
@@ -705,7 +705,7 @@ void CMapOutdoor::__CollectCollisionPCBlocker(D3DXVECTOR3& v3Eye, D3DXVECTOR3& v
 #endif
 }
 
-void CMapOutdoor::__CollectCollisionShadowReceiver(D3DXVECTOR3& v3Target, D3DXVECTOR3& v3Light)
+void CMapOutdoor::__CollectCollisionShadowReceiver(Vector3& v3Target, Vector3& v3Light)
 {
 	CDynamicSphereInstance s;
 	s.fRadius = 50.0f;

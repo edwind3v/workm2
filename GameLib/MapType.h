@@ -127,10 +127,10 @@ typedef struct SEnvironmentData
 {
 	// Light
 	BOOL		bDirLightsEnable[ENV_DIRLIGHT_NUM];
-	D3DLIGHT9	DirLights[ENV_DIRLIGHT_NUM];
+	TLight	DirLights[ENV_DIRLIGHT_NUM];
 
 	// Material
-	D3DMATERIAL9 Material;
+	TGraphicMaterial Material;
 
 	// Fog
 	BOOL bFogEnable;
@@ -142,11 +142,11 @@ typedef struct SEnvironmentData
 	float GetFogNearDistance() const;
 	float GetFogFarDistance() const;
 
-	D3DXCOLOR FogColor;
+	Color FogColor;
 
 	// Filtering
 	BOOL bFilteringEnable;
-	D3DXCOLOR FilteringColor;
+	Color FilteringColor;
 	BYTE byFilteringAlphaSrc;
 	BYTE byFilteringAlphaDest;
 
@@ -155,7 +155,7 @@ typedef struct SEnvironmentData
 	float fWindRandom;
 
 	// SkyBox
-	D3DXVECTOR3 v3SkyBoxScale;
+	Vector3 v3SkyBoxScale;
 	BOOL		bSkyBoxTextureRenderMode;
 
 	BYTE bySkyBoxGradientLevelUpper;
@@ -163,10 +163,10 @@ typedef struct SEnvironmentData
 
 	std::string strSkyBoxFaceFileName[6]; //order : front/back/left/right/top/bottom
 
-	D3DXVECTOR2 v2CloudScale;
+	Vector2 v2CloudScale;
 	float fCloudHeight;
-	D3DXVECTOR2 v2CloudTextureScale;
-	D3DXVECTOR2 v2CloudSpeed;
+	Vector2 v2CloudTextureScale;
+	Vector2 v2CloudSpeed;
 	std::string strCloudTextureFileName;
 	TGradientColor CloudGradientColor;
 
@@ -174,7 +174,7 @@ typedef struct SEnvironmentData
 
 	// LensFlare
 	BOOL bLensFlareEnable;
-	D3DXCOLOR LensFlareBrightnessColor;
+	Color LensFlareBrightnessColor;
 	float fLensFlareMaxBrightness;
 
 	BOOL bMainFlareEnable;
@@ -192,7 +192,7 @@ typedef struct SScreenPosition {
 	int y;
 } TScreenPosition;
 
-typedef D3DXVECTOR3 TPixelPosition;
+typedef Vector3 TPixelPosition;
 
 float SPixelPosition_CalculateDistanceSq3d(const TPixelPosition& c_rkPPosLeft, const TPixelPosition& c_rkPPosRight);
 

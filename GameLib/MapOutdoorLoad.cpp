@@ -38,7 +38,7 @@ bool CMapOutdoor::Load(float x, float y, float z)
 
 	m_lOldReadX = -1;
 
-	CSpeedTreeDirectX::Instance().SetRenderingDevice();
+	CSpeedTreeForestDX11::Instance().SetRenderingDevice(ms_pDevice);
 
 	Update(x, y, z);
 
@@ -311,7 +311,7 @@ void CMapOutdoor::CancelStreaming()
 	m_terrainPreparation.clear();
 }
 
-void CMapOutdoor::UpdateStreaming(const D3DXVECTOR3& player)
+void CMapOutdoor::UpdateStreaming(const Vector3& player)
 {
 	MapPerformance::Scope profile("stream.update");
 	const int size = CTerrainImpl::TERRAIN_XSIZE;
@@ -494,26 +494,26 @@ bool CMapOutdoor::LoadSetting(const char * c_szFileName)
 
 	m_fWaterTexCoordBase = 1.0f / (float)(CTerrainImpl::CELLSCALE * 4);
 
-	D3DXMatrixScaling(&m_matSplatAlpha,
+	MatrixScaling(&m_matSplatAlpha,
 		+m_fTerrainTexCoordBase * 2.0f * (float)(CTerrainImpl::PATCH_XSIZE) / (float)(CTerrainImpl::SPLATALPHA_RAW_XSIZE-2),
 		-m_fTerrainTexCoordBase * 2.0f * (float)(CTerrainImpl::PATCH_YSIZE) / (float)(CTerrainImpl::SPLATALPHA_RAW_XSIZE-2),
 		0.0f);
 	m_matSplatAlpha._41 = m_fTerrainTexCoordBase * 4.6f;
 	m_matSplatAlpha._42 = m_fTerrainTexCoordBase * 4.6f;
 
-	D3DXMatrixScaling(&m_matStaticShadow,
+	MatrixScaling(&m_matStaticShadow,
 		+m_fTerrainTexCoordBase * ((float) CTerrainImpl::PATCH_XSIZE / CTerrainImpl::XSIZE),
 		-m_fTerrainTexCoordBase * ((float) CTerrainImpl::PATCH_YSIZE / CTerrainImpl::XSIZE),
 		0.0f);
 	m_matStaticShadow._41 = 0.0f;
 	m_matStaticShadow._42 = 0.0f;
 
-	D3DXMatrixScaling(&m_matDynamicShadowScale, 1.0f / 2550.0f, -1.0f / 2550.0f, 1.0f);
+	MatrixScaling(&m_matDynamicShadowScale, 1.0f / 2550.0f, -1.0f / 2550.0f, 1.0f);
 	m_matDynamicShadowScale._41 = 0.5f;
 	m_matDynamicShadowScale._42 = 0.5f;
 
 	// Transform
-	D3DXMatrixScaling(&m_matBuildingTransparent, 1.0f / ((float)ms_iWidth), -1.0f / ((float)ms_iHeight), 1.0f);
+	MatrixScaling(&m_matBuildingTransparent, 1.0f / ((float)ms_iWidth), -1.0f / ((float)ms_iHeight), 1.0f);
 	m_matBuildingTransparent._41 = 0.5f;
 	m_matBuildingTransparent._42 = 0.5f;
 	return true;

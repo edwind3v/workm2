@@ -58,7 +58,7 @@ class CTerrain : public CTerrainImpl, public CGraphicBase
 		float			GetHeight(int x, int y) const;
 
 		// Normal Map
-		bool			GetNormal(int ix, int iy, D3DXVECTOR3 * pv3Normal);
+		bool			GetNormal(int ix, int iy, Vector3 * pv3Normal);
 
 		// TileMap
 		BYTE *			RAW_GetTileMap()		{ return m_abyTileMap; }
@@ -84,7 +84,7 @@ class CTerrain : public CTerrainImpl, public CGraphicBase
 
 		// MiniMap
 		void						LoadMiniMapTexture(const char * c_pszFileName);
-		inline LPDIRECT3DTEXTURE9	GetMiniMapTexture() const { return m_lpMiniMapTexture; }
+		inline ID3D11ShaderResourceView*	GetMiniMapTexture() const { return m_lpMiniMapTexture; }
 
 		// Marked Area
 		BOOL						IsMarked() const { return m_bMarked; }
@@ -113,7 +113,7 @@ class CTerrain : public CTerrainImpl, public CGraphicBase
 		void	RAW_DeallocateSplats(bool bBGLoading = false);
 		virtual void RAW_CountTiles();
 
-		LPDIRECT3DTEXTURE9 AddTexture32(BYTE byImageNum, BYTE * pbyImage, long lTextureWidth, long lTextureHeight);
+		ID3D11ShaderResourceView* AddTexture32(BYTE byImageNum, BYTE * pbyImage, long lTextureWidth, long lTextureHeight);
 		void PutImage32(BYTE * pbySrc, BYTE * pbyDst, long src_pitch, long dst_pitch, long lTextureWidth, long lTextureHeight, bool bResize = false) const;
 		void PutImage16(BYTE * pbySrc, BYTE * pbyDst, long src_pitch, long dst_pitch, long lTextureWidth, long lTextureHeight, bool bResize = false) const;
 
@@ -133,13 +133,13 @@ class CTerrain : public CTerrainImpl, public CGraphicBase
 
 		//MiniMap
 		CGraphicImageInstance	m_MiniMapGraphicImageInstance;
-		LPDIRECT3DTEXTURE9		m_lpMiniMapTexture;
+		ID3D11ShaderResourceView*		m_lpMiniMapTexture;
 
 		// Owner COutdoorMap poineter
 		CMapOutdoor *			m_pOwnerOutdoorMap;
 
 		// Picking
-		D3DXVECTOR3				m_v3Pick;
+		Vector3				m_v3Pick;
 
 		DWORD					m_dwNumTexturesShow;
 		std::vector<DWORD>		m_VectorNumShowTexture;
@@ -148,7 +148,7 @@ class CTerrain : public CTerrainImpl, public CGraphicBase
 
 		BOOL					m_bMarked;
 		TTerrainSplatPatch		m_MarkedSplatPatch;
-		LPDIRECT3DTEXTURE9		m_lpMarkedTexture;
+		ID3D11ShaderResourceView*		m_lpMarkedTexture;
 
 	public:
 		CTerrainPatch *	GetTerrainPatchPtr(BYTE byPatchNumX, BYTE byPatchNumY);

@@ -1,9 +1,9 @@
 #include "StdAfx.h"
 #include "ActorInstance.h"
 
-D3DXVECTOR3 CActorInstance::OnGetFlyTargetPosition()
+Vector3 CActorInstance::OnGetFlyTargetPosition()
 {
-	D3DXVECTOR3 v3Center;
+	Vector3 v3Center;
 	if (m_fRadius<=0)
 	{
 		BuildBoundingSphere();
@@ -14,7 +14,7 @@ D3DXVECTOR3 CActorInstance::OnGetFlyTargetPosition()
 		v3Center = m_v3Center;
 	}
 
-	D3DXVec3TransformCoord(&v3Center, &v3Center, &GetTransform());
+	Vec3TransformCoord(&v3Center, &v3Center, &GetTransform());
 	return v3Center;
 }
 
@@ -54,11 +54,11 @@ bool CActorInstance::__IsSameFlyTarget(CActorInstance * pInstance)
 	return true;
 }
 
-D3DXVECTOR3 CActorInstance::__GetFlyTargetPosition()
+Vector3 CActorInstance::__GetFlyTargetPosition()
 {
 	if (!m_kFlyTarget.IsValidTarget())
 	{
-		return D3DXVECTOR3(0.0f, 0.0f, 0.0f);
+		return Vector3(0.0f, 0.0f, 0.0f);
 	}
 
 	return m_kFlyTarget.GetFlyTargetPosition();
@@ -66,13 +66,13 @@ D3DXVECTOR3 CActorInstance::__GetFlyTargetPosition()
 
 float CActorInstance::GetFlyTargetDistance() const
 {
-	const D3DXVECTOR3& c_rv3FlyTargetPos=m_kFlyTarget.GetFlyTargetPosition();
-	const D3DXVECTOR3& c_rkPosSrc=GetPosition();
+	const Vector3& c_rv3FlyTargetPos=m_kFlyTarget.GetFlyTargetPosition();
+	const Vector3& c_rkPosSrc=GetPosition();
 
-	D3DXVECTOR3 kPPosDelta=c_rv3FlyTargetPos-c_rkPosSrc;
+	Vector3 kPPosDelta=c_rv3FlyTargetPos-c_rkPosSrc;
 	kPPosDelta.z=0;
 
-	return D3DXVec3Length(&kPPosDelta);
+	return Vec3Length(&kPPosDelta);
 }
 
 void CActorInstance::LookAtFlyTarget()
@@ -80,7 +80,7 @@ void CActorInstance::LookAtFlyTarget()
 	if (!IsFlyTargetObject())
 		return;
 
-	const D3DXVECTOR3& c_rv3FlyTargetPos=m_kFlyTarget.GetFlyTargetPosition();
+	const Vector3& c_rv3FlyTargetPos=m_kFlyTarget.GetFlyTargetPosition();
 	LookAt(c_rv3FlyTargetPos.x, c_rv3FlyTargetPos.y);
 }
 

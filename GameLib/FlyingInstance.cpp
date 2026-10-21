@@ -25,8 +25,8 @@ CFlyingInstance::~CFlyingInstance()
 
 void CFlyingInstance::__Initialize()
 {
-	m_qAttachRotation=m_qRot=D3DXQUATERNION(0.0f, 0.0f, 0.0f, 0.0f);
-	m_v3Accel=m_v3LocalVelocity=m_v3Velocity=m_v3Position=D3DXVECTOR3(0.0f, 0.0f, 0.0f);
+	m_qAttachRotation=m_qRot=Quaternion(0.0f, 0.0f, 0.0f, 0.0f);
+	m_v3Accel=m_v3LocalVelocity=m_v3Velocity=m_v3Position=Vector3(0.0f, 0.0f, 0.0f);
 
 	m_pHandler= nullptr;
 	m_pData= nullptr;
@@ -98,7 +98,7 @@ void CFlyingInstance::BuildAttachInstance()
 	}
 }
 
-void CFlyingInstance::Create(CFlyingData* pData, const D3DXVECTOR3& c_rv3StartPos, const CFlyTarget & c_rkTarget, bool canAttack)
+void CFlyingInstance::Create(CFlyingData* pData, const Vector3& c_rv3StartPos, const CFlyTarget & c_rkTarget, bool canAttack)
 {
 	m_FlyTarget = c_rkTarget;
 	m_canAttack = canAttack;
@@ -109,23 +109,23 @@ void CFlyingInstance::Create(CFlyingData* pData, const D3DXVECTOR3& c_rv3StartPo
 
 void CFlyingInstance::__SetTargetDirection(const CFlyTarget& c_rkTarget)
 {
-	D3DXVECTOR3 v3TargetPos=c_rkTarget.GetFlyTargetPosition();
+	Vector3 v3TargetPos=c_rkTarget.GetFlyTargetPosition();
 
 	if (m_pData->m_bMaintainParallel)
 	{
 		v3TargetPos.z += 50.0f;
 	}
 
-	D3DXVECTOR3 v3TargetDir=v3TargetPos-m_v3Position;
+	Vector3 v3TargetDir=v3TargetPos-m_v3Position;
 
-	D3DXVec3Normalize(&v3TargetDir, &v3TargetDir);
+	Vec3Normalize(&v3TargetDir, &v3TargetDir);
 	__SetTargetNormalizedDirection(v3TargetDir);
 }
 
-void CFlyingInstance::__SetTargetNormalizedDirection(const D3DXVECTOR3 & v3NomalizedDirection)
+void CFlyingInstance::__SetTargetNormalizedDirection(const Vector3 & v3NomalizedDirection)
 {
-	const D3DXQUATERNION q = SafeRotationNormalizedArc(D3DXVECTOR3(0.0f,-1.0f,0.0f),v3NomalizedDirection);
-	D3DXQuaternionMultiply(&m_qRot,&m_qRot,&q);
+	const Quaternion q = SafeRotationNormalizedArc(Vector3(0.0f,-1.0f,0.0f),v3NomalizedDirection);
+	QuaternionMultiply(&m_qRot,&m_qRot,&q);
 	Vec3TransformQuaternion(&m_v3Velocity,&m_v3LocalVelocity,&m_qRot);
 	Vec3TransformQuaternion(&m_v3Accel, &m_pData->m_v3Accel, &m_qRot);
 }
@@ -139,30 +139,30 @@ void CFlyingInstance::SetFlyTarget(const CFlyTarget & cr_Target)
 	__SetTargetDirection(m_FlyTarget);
 }
 
-void CFlyingInstance::AdjustDirectionForHoming(const D3DXVECTOR3 & v3TargetPosition)
+void CFlyingInstance::AdjustDirectionForHoming(const Vector3 & v3TargetPosition)
 {
-	D3DXVECTOR3 vTargetDir(v3TargetPosition);
+	Vector3 vTargetDir(v3TargetPosition);
 	vTargetDir -= m_v3Position;
-	D3DXVec3Normalize(&vTargetDir,&vTargetDir);
-	D3DXVECTOR3 vVel;
-	D3DXVec3Normalize(&vVel, &m_v3Velocity);
+	Vec3Normalize(&vTargetDir,&vTargetDir);
+	Vector3 vVel;
+	Vec3Normalize(&vVel, &m_v3Velocity);
 
 	const auto val = (vVel - vTargetDir);
-	if (D3DXVec3LengthSq(&val) < 0.001f)
+	if (Vec3LengthSq(&val) < 0.001f)
 		return;
 
-	D3DXQUATERNION q = SafeRotationNormalizedArc(vVel,vTargetDir);
+	Quaternion q = SafeRotationNormalizedArc(vVel,vTargetDir);
 
 	if (m_pData->m_fHomingMaxAngle > 180)
 	{
 		Vec3TransformQuaternionSafe(&m_v3Velocity, &m_v3Velocity, &q);
 		Vec3TransformQuaternionSafe(&m_v3Accel, &m_v3Accel, &q);
-		D3DXQuaternionMultiply(&m_qRot, &q, &m_qRot);
+		QuaternionMultiply(&m_qRot, &q, &m_qRot);
 		return;
 	}
 
-	const float c = cosf(D3DXToRadian(m_pData->m_fHomingMaxAngle));
-	const float s = sinf(D3DXToRadian(m_pData->m_fHomingMaxAngle));
+	const float c = cosf(ToRadian(m_pData->m_fHomingMaxAngle));
+	const float s = sinf(ToRadian(m_pData->m_fHomingMaxAngle));
 
 	if (q.w <= -1.0f + 0.0001f)
 	{
@@ -184,20 +184,20 @@ void CFlyingInstance::AdjustDirectionForHoming(const D3DXVECTOR3 & v3TargetPosit
 	}*/
 	Vec3TransformQuaternionSafe(&m_v3Velocity, &m_v3Velocity, &q);
 	Vec3TransformQuaternionSafe(&m_v3Accel, &m_v3Accel, &q);
-	D3DXQuaternionMultiply(&m_qRot, &m_qRot, &q);
+	QuaternionMultiply(&m_qRot, &m_qRot, &q);
 }
 
 void CFlyingInstance::UpdateAttachInstance()
 {
 	// Update Attach Rotation
-	D3DXQUATERNION q;
-	D3DXQuaternionRotationYawPitchRoll(&q,
-		D3DXToRadian(m_pData->m_v3AngVel.y)*CTimer::Instance().GetElapsedSecond(),
-		D3DXToRadian(m_pData->m_v3AngVel.x)*CTimer::Instance().GetElapsedSecond(),
-		D3DXToRadian(m_pData->m_v3AngVel.z)*CTimer::Instance().GetElapsedSecond());
+	Quaternion q;
+	QuaternionRotationYawPitchRoll(&q,
+		ToRadian(m_pData->m_v3AngVel.y)*CTimer::Instance().GetElapsedSecond(),
+		ToRadian(m_pData->m_v3AngVel.x)*CTimer::Instance().GetElapsedSecond(),
+		ToRadian(m_pData->m_v3AngVel.z)*CTimer::Instance().GetElapsedSecond());
 
-	D3DXQuaternionMultiply(&m_qAttachRotation, &m_qAttachRotation, &q);
-	D3DXQuaternionMultiply(&q, &m_qAttachRotation, &m_qRot);
+	QuaternionMultiply(&m_qAttachRotation, &m_qAttachRotation, &q);
+	QuaternionMultiply(&q, &m_qAttachRotation, &m_qRot);
 
 	CEffectManager & rem = CEffectManager::Instance();
 	TAttachEffectInstanceVector::iterator it;
@@ -206,27 +206,27 @@ void CFlyingInstance::UpdateAttachInstance()
 		const CFlyingData::TFlyingAttachData & rfad = m_pData->GetAttachDataReference(it->iAttachIndex);
 		assert(rfad.iType == CFlyingData::FLY_ATTACH_EFFECT);
 		rem.SelectEffectInstance(it->dwEffectInstanceIndex);
-		D3DXMATRIX m;
+		Matrix m;
 		switch(rfad.iFlyType)
 		{
 			case CFlyingData::FLY_ATTACH_TYPE_LINE:
-				D3DXMatrixRotationQuaternion(&m,&m_qRot);
-				//D3DXMatrixRotationQuaternion(&m,&q);
+				MatrixRotationQuaternion(&m,&m_qRot);
+				//MatrixRotationQuaternion(&m,&q);
 				m._41=m_v3Position.x;
 				m._42=m_v3Position.y;
 				m._43=m_v3Position.z;
 				break;
 			case CFlyingData::FLY_ATTACH_TYPE_MULTI_LINE:
 				{
-					D3DXVECTOR3 p(
-						-sinf(D3DXToRadian(rfad.fRoll))*rfad.fDistance,
+					Vector3 p(
+						-sinf(ToRadian(rfad.fRoll))*rfad.fDistance,
 						0.0f,
-						-cosf(D3DXToRadian(rfad.fRoll))*rfad.fDistance);
+						-cosf(ToRadian(rfad.fRoll))*rfad.fDistance);
 					//Vec3TransformQuaternionSafe(&p,&p,&m_qRot);
 					Vec3TransformQuaternionSafe(&p,&p,&q);
 					p+=m_v3Position;
-					//D3DXMatrixRotationQuaternion(&m,&m_qRot);
-					D3DXMatrixRotationQuaternion(&m,&q);
+					//MatrixRotationQuaternion(&m,&m_qRot);
+					MatrixRotationQuaternion(&m,&q);
 					m._41=p.x;
 					m._42=p.y;
 					m._43=p.z;
@@ -235,15 +235,15 @@ void CFlyingInstance::UpdateAttachInstance()
 			case CFlyingData::FLY_ATTACH_TYPE_SINE:
 				{
 					const float angle = (CTimer::Instance().GetCurrentSecond() - m_fStartTime)*2*3.1415926535897931f/rfad.fPeriod;
-					D3DXVECTOR3 p(
-						-sinf(D3DXToRadian(rfad.fRoll))*rfad.fAmplitude*sinf(angle),
+					Vector3 p(
+						-sinf(ToRadian(rfad.fRoll))*rfad.fAmplitude*sinf(angle),
 						0.0f,
-						-cosf(D3DXToRadian(rfad.fRoll))*rfad.fAmplitude*sinf(angle));
+						-cosf(ToRadian(rfad.fRoll))*rfad.fAmplitude*sinf(angle));
 					Vec3TransformQuaternionSafe(&p,&p,&q);
 					//Vec3TransformQuaternionSafe(&p,&p,&m_qRot);
 					p+=m_v3Position;
-					D3DXMatrixRotationQuaternion(&m,&q);
-					//D3DXMatrixRotationQuaternion(&m,&m_qRot);
+					MatrixRotationQuaternion(&m,&q);
+					//MatrixRotationQuaternion(&m,&m_qRot);
 					m._41=p.x;
 					m._42=p.y;
 					m._43=p.z;
@@ -254,15 +254,15 @@ void CFlyingInstance::UpdateAttachInstance()
 				{
 					const float dt = CTimer::Instance().GetCurrentSecond() - m_fStartTime;
 					const float angle = dt/rfad.fPeriod;
-					D3DXVECTOR3 p(
-						-sinf(D3DXToRadian(rfad.fRoll))*rfad.fAmplitude*exp(-angle)*angle,
+					Vector3 p(
+						-sinf(ToRadian(rfad.fRoll))*rfad.fAmplitude*exp(-angle)*angle,
 						0.0f,
-						-cosf(D3DXToRadian(rfad.fRoll))*rfad.fAmplitude*exp(-angle)*angle);
+						-cosf(ToRadian(rfad.fRoll))*rfad.fAmplitude*exp(-angle)*angle);
 					//Vec3TransformQuaternionSafe(&p,&p,&m_qRot);
 					Vec3TransformQuaternionSafe(&p,&p,&q);
 					p+=m_v3Position;
-					D3DXMatrixRotationQuaternion(&m,&q);
-					//D3DXMatrixRotationQuaternion(&m,&m_qRot);
+					MatrixRotationQuaternion(&m,&q);
+					//MatrixRotationQuaternion(&m,&m_qRot);
 					m._41=p.x;
 					m._42=p.y;
 					m._43=p.z;
@@ -272,13 +272,13 @@ void CFlyingInstance::UpdateAttachInstance()
 		}
 		rem.SetEffectInstanceGlobalMatrix(m);
 		if (it->pFlyTrace)
-			it->pFlyTrace->UpdateNewPosition(D3DXVECTOR3(m._41,m._42,m._43));
+			it->pFlyTrace->UpdateNewPosition(Vector3(m._41,m._42,m._43));
 	}
 }
 struct FCheckBackgroundDuringFlying {
 	CDynamicSphereInstance s;
 	bool bHit;
-	FCheckBackgroundDuringFlying(const D3DXVECTOR3 & v1, const D3DXVECTOR3 & v2)
+	FCheckBackgroundDuringFlying(const Vector3 & v1, const Vector3 & v2)
 	{
 		s.fRadius = 1.0f;
 		s.v3LastPosition = v1;
@@ -308,7 +308,7 @@ struct FCheckAnotherMonsterDuringFlying {
 	CDynamicSphereInstance s;
 	CGraphicObjectInstance * pInst;
 	const IActorInstance * pOwner;
-	FCheckAnotherMonsterDuringFlying(const IActorInstance * pOwner, const D3DXVECTOR3 & v1, const D3DXVECTOR3 & v2)
+	FCheckAnotherMonsterDuringFlying(const IActorInstance * pOwner, const Vector3 & v1, const Vector3 & v2)
 		: pOwner(pOwner)
 	{
 		s.fRadius = 10.0f;
@@ -352,12 +352,12 @@ bool CFlyingInstance::Update()
 			AdjustDirectionForHoming(m_FlyTarget.GetFlyTargetPosition());
 	}
 
-	const D3DXVECTOR3 v3LastPosition = m_v3Position;
+	const Vector3 v3LastPosition = m_v3Position;
 
 	m_v3Velocity += m_v3Accel*CTimer::Instance().GetElapsedSecond();
 	m_v3Velocity.z+=m_pData->m_fGravity * CTimer::Instance().GetElapsedSecond();
-	const D3DXVECTOR3 v3Movement = m_v3Velocity * CTimer::Instance().GetElapsedSecond();
-	const float _fMoveDistance = D3DXVec3Length(&v3Movement);
+	const Vector3 v3Movement = m_v3Velocity * CTimer::Instance().GetElapsedSecond();
+	const float _fMoveDistance = Vec3Length(&v3Movement);
 	const float fCollisionSphereRadius = max(_fMoveDistance*2, m_pData->m_fCollisionSphereRadius);
 	m_fRemainRange -= _fMoveDistance;
 	m_v3Position += v3Movement;
@@ -527,9 +527,9 @@ void CFlyingInstance::__Bomb() const
 	const DWORD dwEmptyIndex = rkEftMgr.GetEmptyIndex();
 	rkEftMgr.CreateEffectInstance(dwEmptyIndex,m_pData->m_dwBombEffectID);
 
-	D3DXMATRIX m;
-//	D3DXMatrixRotationQuaternion(&m,&m_qRot);
-	D3DXMatrixIdentity(&m);
+	Matrix m;
+//	MatrixRotationQuaternion(&m,&m_qRot);
+	MatrixIdentity(&m);
 	m._41 = m_v3Position.x;
 	m._42 = m_v3Position.y;
 	m._43 = m_v3Position.z;
@@ -554,35 +554,35 @@ void CFlyingInstance::RenderAttachInstance()
 	}
 }
 
-void CFlyingInstance::SetDataPointer(CFlyingData * pData, const D3DXVECTOR3 & v3StartPosition)
+void CFlyingInstance::SetDataPointer(CFlyingData * pData, const Vector3 & v3StartPosition)
 {
 	__SetDataPointer(pData, v3StartPosition);
 }
 
-void CFlyingInstance::__SetDataPointer(CFlyingData * pData, const D3DXVECTOR3 & v3StartPosition)
+void CFlyingInstance::__SetDataPointer(CFlyingData * pData, const Vector3 & v3StartPosition)
 {
 	m_pData = pData;
-	m_qRot = D3DXQUATERNION(0.0f,0.0f,0.0f,1.0f),
+	m_qRot = Quaternion(0.0f,0.0f,0.0f,1.0f),
 	m_v3Position = (v3StartPosition);
 	m_bAlive = (true);
 
 	m_fStartTime = CTimer::Instance().GetCurrentSecond();
 
-	D3DXQuaternionRotationYawPitchRoll(&m_qRot,D3DXToRadian(pData->m_fRollAngle-90.0f),0.0f,D3DXToRadian(pData->m_fConeAngle));
+	QuaternionRotationYawPitchRoll(&m_qRot,ToRadian(pData->m_fRollAngle-90.0f),0.0f,ToRadian(pData->m_fConeAngle));
 	if (pData->m_bSpreading)
 	{
-		D3DXQUATERNION q1, q2;
-		const auto val1 = D3DXVECTOR3(0.0f,0.0f,1.0f);
-		D3DXQuaternionRotationAxis(&q2, &val1,(frandom(-3.141592f/3,+3.141592f/3)+frandom(-3.141592f/3,+3.141592f/3))/2);
-		const auto val2 = D3DXVECTOR3(0.0f,-1.0f,0.0f);
-		D3DXQuaternionRotationAxis(&q1, &val2, frandom(0,2*3.1415926535897931f));
-		D3DXQuaternionMultiply(&q1,&q2,&q1);
-		D3DXQuaternionMultiply(&m_qRot,&q1,&m_qRot);
+		Quaternion q1, q2;
+		const auto val1 = Vector3(0.0f,0.0f,1.0f);
+		QuaternionRotationAxis(&q2, &val1,(frandom(-3.141592f/3,+3.141592f/3)+frandom(-3.141592f/3,+3.141592f/3))/2);
+		const auto val2 = Vector3(0.0f,-1.0f,0.0f);
+		QuaternionRotationAxis(&q1, &val2, frandom(0,2*3.1415926535897931f));
+		QuaternionMultiply(&q1,&q2,&q1);
+		QuaternionMultiply(&m_qRot,&q1,&m_qRot);
 	}
-	m_v3Velocity = m_v3LocalVelocity = D3DXVECTOR3(0.0f,-pData->m_fInitVel,0.0f);
+	m_v3Velocity = m_v3LocalVelocity = Vector3(0.0f,-pData->m_fInitVel,0.0f);
 	m_v3Accel = pData->m_v3Accel;
 	m_fRemainRange = pData->m_fRange;
-	m_qAttachRotation = D3DXQUATERNION(0.0f,0.0f,0.0f,1.0f);
+	m_qAttachRotation = Quaternion(0.0f,0.0f,0.0f,1.0f);
 
 	BuildAttachInstance();
 	UpdateAttachInstance();

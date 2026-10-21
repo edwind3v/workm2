@@ -389,11 +389,11 @@ HRESULT CreateModelPipeline(ID3D11Device* device,
 		DXGI_FORMAT_R16_UINT, static_cast<UINT>(snapshot.indices.size()));
 	if (FAILED(hr)) return hr;
 
-	D3DXMATRIX view, projection, viewProjection;
-	const D3DXVECTOR3 eye(2.8f, -3.0f, 2.0f);
-	const D3DXVECTOR3 target(0, 0, 0);
-	const D3DXVECTOR3 up(0, 0, 1);
-	D3DXMatrixLookAtLH(&view, &eye, &target, &up);
+	Matrix view, projection, viewProjection;
+	const Vector3 eye(2.8f, -3.0f, 2.0f);
+	const Vector3 target(0, 0, 0);
+	const Vector3 up(0, 0, 1);
+	MatrixLookAtLH(&view, &eye, &target, &up);
 	// The previous fixed 60-degree perspective view made certain valid Granny
 	// meshes occupy only a few hundred pixels in the 256x256 image. Project
 	// the *deformed* vertices into view space and fit their XY bounds to 80%
@@ -403,10 +403,10 @@ HRESULT CreateModelPipeline(ID3D11Device* device,
 	float maxX = -FLT_MAX, maxY = -FLT_MAX;
 	for (const auto& vertex : normalized)
 	{
-		const D3DXVECTOR3 position(vertex.position[0],
+		const Vector3 position(vertex.position[0],
 			vertex.position[1], vertex.position[2]);
-		D3DXVECTOR3 inView;
-		D3DXVec3TransformCoord(&inView, &position, &view);
+		Vector3 inView;
+		Vec3TransformCoord(&inView, &position, &view);
 		minX = (std::min)(minX, inView.x);
 		maxX = (std::max)(maxX, inView.x);
 		minY = (std::min)(minY, inView.y);
@@ -418,10 +418,10 @@ HRESULT CreateModelPipeline(ID3D11Device* device,
 	const float halfSide = visibleSpan * 0.625f;
 	const float centerX = 0.5f * (minX + maxX);
 	const float centerY = 0.5f * (minY + maxY);
-	D3DXMatrixOrthoOffCenterLH(&projection,
+	MatrixOrthoOffCenterLH(&projection,
 		centerX - halfSide, centerX + halfSide,
 		centerY - halfSide, centerY + halfSide, 0.1f, 100.0f);
-	D3DXMatrixMultiply(&viewProjection, &view, &projection);
+	MatrixMultiply(&viewProjection, &view, &projection);
 	TraceError("DX11_MODEL_CAMERA mode=ortho_fit bounds=%.3fx%.3f target_fill=0.80",
 		maxX - minX, maxY - minY);
 	hr = pipeline->cb.CreateConstant(device, &viewProjection, sizeof(viewProjection));

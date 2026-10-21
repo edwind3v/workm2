@@ -15,10 +15,10 @@ float CInstanceBase::ms_fHorseDustGap;
 DWORD CInstanceBase::ms_adwCRCAffectEffect[CInstanceBase::EFFECT_NUM];
 std::string CInstanceBase::ms_astAffectEffectAttachBone[EFFECT_NUM];
 
-#define BYTE_COLOR_TO_D3DX_COLOR(r, g, b) D3DXCOLOR(float(r)/255.0f, float(g)/255.0f, float(b)/255.0f, 1.0f)
+#define BYTE_COLOR_TO_D3DX_COLOR(r, g, b) Color(float(r)/255.0f, float(g)/255.0f, float(b)/255.0f, 1.0f)
 
-D3DXCOLOR g_akD3DXClrTitle[CInstanceBase::TITLE_NUM];
-D3DXCOLOR g_akD3DXClrName[CInstanceBase::NAMECOLOR_NUM];
+Color g_akD3DXClrTitle[CInstanceBase::TITLE_NUM];
+Color g_akD3DXClrName[CInstanceBase::NAMECOLOR_NUM];
 
 std::map<int, std::string> g_TitleNameMap;
 std::set<DWORD> g_kSet_dwPVPReadyKey;
@@ -52,11 +52,11 @@ void  CInstanceBase::SetEmpireNameMode(bool isEnable)
 	}
 }
 
-const D3DXCOLOR& CInstanceBase::GetIndexedNameColor(UINT eNameColor)
+const Color& CInstanceBase::GetIndexedNameColor(UINT eNameColor)
 {
 	if (eNameColor>=NAMECOLOR_NUM)
 	{
-		static D3DXCOLOR s_kD3DXClrNameDefault(0xffffffff);
+		static Color s_kD3DXClrNameDefault(0xffffffff);
 		return s_kD3DXClrNameDefault;
 	}
 
@@ -96,10 +96,10 @@ bool CInstanceBase::ProcessDamage()
 
 	CEffectManager& rkEftMgr=CEffectManager::Instance();
 
-	D3DXVECTOR3 v3Pos = m_GraphicThingInstance.GetPosition();
+	Vector3 v3Pos = m_GraphicThingInstance.GetPosition();
 	v3Pos.z += float(m_GraphicThingInstance.GetHeight());
 
-	auto v3Rot = D3DXVECTOR3(0.0f, 0.0f, cameraAngle);
+	auto v3Rot = Vector3(0.0f, 0.0f, cameraAngle);
 
 	if ( (flag & DAMAGE_DODGE) || (flag & DAMAGE_BLOCK) )
 	{
@@ -156,19 +156,19 @@ bool CInstanceBase::ProcessDamage()
 
 		rkEftMgr.SetEffectTextures(ms_adwCRCAffectEffect[rdwCRCEft],textures);
 
-		D3DXMATRIX matrix,matTrans;
-		D3DXMatrixIdentity(&matrix);
+		Matrix matrix,matTrans;
+		MatrixIdentity(&matrix);
 		matrix._41 = v3Pos.x;
 		matrix._42 = v3Pos.y;
 		matrix._43 = v3Pos.z;
-		D3DXMatrixTranslation(&matrix,v3Pos.x,v3Pos.y,v3Pos.z);
-		D3DXMatrixMultiply(&matrix,&pCamera->GetInverseViewMatrix(),&matrix);
-		D3DXMatrixTranslation(&matTrans,FONT_WIDTH*index,0,0);
+		MatrixTranslation(&matrix,v3Pos.x,v3Pos.y,v3Pos.z);
+		MatrixMultiply(&matrix,&pCamera->GetInverseViewMatrix(),&matrix);
+		MatrixTranslation(&matTrans,FONT_WIDTH*index,0,0);
 		matTrans._41 = -matTrans._41;
 		matrix = matTrans*matrix;
-		D3DXMatrixMultiply(&matrix,&pCamera->GetViewMatrix(),&matrix);
+		MatrixMultiply(&matrix,&pCamera->GetViewMatrix(),&matrix);
 
-		rkEftMgr.CreateEffect(ms_adwCRCAffectEffect[rdwCRCEft],D3DXVECTOR3(matrix._41,matrix._42,matrix._43)
+		rkEftMgr.CreateEffect(ms_adwCRCAffectEffect[rdwCRCEft],Vector3(matrix._41,matrix._42,matrix._43)
 			,v3Rot);
 
 		textures.clear();
@@ -195,7 +195,7 @@ void CInstanceBase::SkillUp()
 
 void CInstanceBase::CreateSpecialEffect(DWORD iEffectIndex)
 {
-	const D3DXMATRIX & c_rmatGlobal = m_GraphicThingInstance.GetTransform();
+	const Matrix & c_rmatGlobal = m_GraphicThingInstance.GetTransform();
 
 	const DWORD dwEffectIndex = CEffectManager::Instance().GetEmptyIndex();
 	const DWORD dwEffectCRC = ms_adwCRCAffectEffect[iEffectIndex];
@@ -480,7 +480,7 @@ bool CInstanceBase::IsPVPInstance(CInstanceBase& rkInstSel)
 											//__FindDUELKey(dwVIDSrc, dwVIDDst);
 }
 
-const D3DXCOLOR& CInstanceBase::GetNameColor()
+const Color& CInstanceBase::GetNameColor()
 {
 	return GetIndexedNameColor(GetNameColorIndex());
 }
@@ -559,15 +559,15 @@ UINT CInstanceBase::GetNameColorIndex()
 		return NAMECOLOR_MOB;
 	}
 
-	return D3DXCOLOR(0xffffffff);
+	return Color(0xffffffff);
 }
 
-const D3DXCOLOR& CInstanceBase::GetTitleColor() const
+const Color& CInstanceBase::GetTitleColor() const
 {
 	const UINT uGrade = GetAlignmentGrade();
 	if ( uGrade >= TITLE_NUM)
 	{
-		static D3DXCOLOR s_kD3DXClrTitleDefault(0xffffffff);
+		static Color s_kD3DXClrTitleDefault(0xffffffff);
 		return s_kD3DXClrTitleDefault;
 	}
 
@@ -592,7 +592,7 @@ void CInstanceBase::AttachTextTail()
 	float fTextTailHeight=IsMountingHorse() ? 110.0f : 10.0f;
 #endif
 
-	static auto s_kD3DXClrTextTail=D3DXCOLOR(1.0f, 1.0f, 1.0f, 1.0f);
+	static auto s_kD3DXClrTextTail=Color(1.0f, 1.0f, 1.0f, 1.0f);
 	CPythonTextTail::Instance().RegisterCharacterTextTail(m_dwGuildID, dwVID, s_kD3DXClrTextTail, fTextTailHeight);
 
 	// CHARACTER_LEVEL
@@ -613,7 +613,7 @@ void CInstanceBase::DetachTextTail()
 
 void CInstanceBase::UpdateTextTailLevel(DWORD level)
 {
-	static auto s_kLevelColor = D3DXCOLOR(152.0f/255.0f, 255.0f/255.0f, 51.0f/255.0f, 1.0f);
+	static auto s_kLevelColor = Color(152.0f/255.0f, 255.0f/255.0f, 51.0f/255.0f, 1.0f);
 
 	char szText[256];
 	sprintf(szText, "Lv %d", level);
@@ -950,7 +950,7 @@ void CInstanceBase::SetEmoticon(UINT eEmoticon)
 	}
 	if (IsPossibleEmoticon())
 	{
-		D3DXVECTOR3 v3Pos = m_GraphicThingInstance.GetPosition();
+		Vector3 v3Pos = m_GraphicThingInstance.GetPosition();
 #ifdef ENABLE_RACE_HEIGHT
 		v3Pos.z += float(GetBaseHeight() + m_GraphicThingInstance.GetHeight());
 #else
@@ -959,10 +959,10 @@ void CInstanceBase::SetEmoticon(UINT eEmoticon)
 
 		const CCamera * pCamera = CCameraManager::Instance().GetCurrentCamera();
 
-		const D3DXVECTOR3 v3Dir = (pCamera->GetEye()-v3Pos)*9/10;
+		const Vector3 v3Dir = (pCamera->GetEye()-v3Pos)*9/10;
 		v3Pos = pCamera->GetEye()-v3Dir;
 
-		v3Pos = D3DXVECTOR3(0,0,0);
+		v3Pos = Vector3(0,0,0);
 #ifdef ENABLE_RACE_HEIGHT
 		v3Pos.z += float(GetBaseHeight() + m_GraphicThingInstance.GetHeight());
 #else
@@ -1060,14 +1060,14 @@ void CInstanceBase::RegisterTitleName(int iIndex, const char * c_szTitleName)
 	g_TitleNameMap.emplace(iIndex, c_szTitleName);
 }
 
-D3DXCOLOR __RGBToD3DXColoru(UINT r, UINT g, UINT b)
+Color __RGBToColoru(UINT r, UINT g, UINT b)
 {
 	DWORD dwColor=0xff;dwColor<<=8;
 	dwColor|=r;dwColor<<=8;
 	dwColor|=g;dwColor<<=8;
 	dwColor|=b;
 
-	return D3DXCOLOR(dwColor);
+	return Color(dwColor);
 }
 
 bool CInstanceBase::RegisterNameColor(UINT uIndex, UINT r, UINT g, UINT b)
@@ -1075,7 +1075,7 @@ bool CInstanceBase::RegisterNameColor(UINT uIndex, UINT r, UINT g, UINT b)
 	if (uIndex>=NAMECOLOR_NUM)
 		return false;
 
-	g_akD3DXClrName[uIndex]=__RGBToD3DXColoru(r, g, b);
+	g_akD3DXClrName[uIndex]=__RGBToColoru(r, g, b);
 	return true;
 }
 
@@ -1084,7 +1084,7 @@ bool CInstanceBase::RegisterTitleColor(UINT uIndex, UINT r, UINT g, UINT b)
 	if (uIndex>=TITLE_NUM)
 		return false;
 
-	g_akD3DXClrTitle[uIndex]=__RGBToD3DXColoru(r, g, b);
+	g_akD3DXClrTitle[uIndex]=__RGBToColoru(r, g, b);
 	return true;
 }
 

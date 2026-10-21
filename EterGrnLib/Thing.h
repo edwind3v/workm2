@@ -19,12 +19,16 @@ class CGraphicThing : public CResource
 		virtual void			DestroyDeviceObjects();
 
 		bool					CheckModelIndex(int iModel) const;
-		CGrannyModel *			GetModelPointer(int iModel) const;
+		CGrannyModel *			GetModelPointer(int iModel);
 		int						GetModelCount() const;
 
 		bool					CheckMotionIndex(int iMotion) const;
-		CGrannyMotion *			GetMotionPointer(int iMotion) const;
+		CGrannyMotion *			GetMotionPointer(int iMotion);
 		int						GetMotionCount() const;
+
+#if defined(__BL_GR2_FILE_LOAD_IMPROVE__)
+		void					LoadNew(granny_file* file, bool cached);
+#endif
 
 	protected:
 		void					Initialize();
@@ -46,5 +50,9 @@ class CGraphicThing : public CResource
 
 		CGrannyModel *			m_models;
 		CGrannyMotion *			m_motions;
-};
 
+#if defined(__BL_GR2_FILE_LOAD_IMPROVE__)
+		bool					m_bIsCached;
+#endif
+};
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

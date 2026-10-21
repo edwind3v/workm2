@@ -761,11 +761,11 @@ void CPythonPlayer::NEW_GetMouseDirRotation(float fScrX, float fScrY, float* pfD
 
 float CPythonPlayer::GetDegreeFromPosition(int ix, int iy, int iHalfWidth, int iHalfHeight) const
 {
-	D3DXVECTOR3 vtDir(float(ix - iHalfWidth), float(iy - iHalfHeight), 0.0f);
-	D3DXVec3Normalize(&vtDir, &vtDir);
+	Vector3 vtDir(float(ix - iHalfWidth), float(iy - iHalfHeight), 0.0f);
+	Vec3Normalize(&vtDir, &vtDir);
 
-	const D3DXVECTOR3 vtStan(0, -1, 0);
-	float ret = D3DXToDegree(acosf(D3DXVec3Dot(&vtDir, &vtStan)));
+	const Vector3 vtStan(0, -1, 0);
+	float ret = ToDegree(acosf(Vec3Dot(&vtDir, &vtStan)));
 
 	if (vtDir.x < 0.0f)
 		ret = 360.0f - ret;

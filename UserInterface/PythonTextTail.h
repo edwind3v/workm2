@@ -30,7 +30,7 @@ class CPythonTextTail : public CSingleton<CPythonTextTail>
 			float distanceSquared{};
 			std::uint64_t shownFrame{};
 #endif
-			D3DXCOLOR						Color{};
+			Color						Color{};
 			BOOL							bNameFlag{};
 
 			float							xStart{}, yStart{};
@@ -72,11 +72,11 @@ class CPythonTextTail : public CSingleton<CPythonTextTail>
 		void ShowCharacterTextTail(DWORD VirtualID);
 		void ShowItemTextTail(DWORD VirtualID);
 
-		void RegisterCharacterTextTail(DWORD dwGuildID, DWORD dwVirtualID, const D3DXCOLOR & c_rColor, float fAddHeight=10.0f);
+		void RegisterCharacterTextTail(DWORD dwGuildID, DWORD dwVirtualID, const Color & c_rColor, float fAddHeight=10.0f);
 		void RegisterItemTextTail(DWORD VirtualID, const char * c_szText, CGraphicObjectInstance * pOwner);
 		void RegisterChatTail(DWORD VirtualID, const char * c_szChat);
 		void RegisterInfoTail(DWORD VirtualID, const char * c_szChat);
-		void SetCharacterTextTailColor(DWORD VirtualID, const D3DXCOLOR & c_rColor);
+		void SetCharacterTextTailColor(DWORD VirtualID, const Color & c_rColor);
 		void SetItemTextTailOwner(DWORD dwVID, const char * c_szName);
 		void DeleteCharacterTextTail(DWORD VirtualID);
 		void DeleteItemTextTail(DWORD VirtualID);
@@ -88,14 +88,14 @@ class CPythonTextTail : public CSingleton<CPythonTextTail>
 		bool IsChatTextTail(DWORD dwVID);
 
 		void EnablePKTitle(BOOL bFlag) const;
-		void AttachTitle(DWORD dwVID, const char * c_szName, const D3DXCOLOR& c_rColor);
+		void AttachTitle(DWORD dwVID, const char * c_szName, const Color& c_rColor);
 		void DetachTitle(DWORD dwVID);
 
-		void AttachLevel(DWORD dwVID, const char* c_szText, const D3DXCOLOR& c_rColor);
+		void AttachLevel(DWORD dwVID, const char* c_szText, const Color& c_rColor);
 		void DetachLevel(DWORD dwVID);
 
 	protected:
-		TTextTail * RegisterTextTail(DWORD dwVirtualID, const char * c_szText, CGraphicObjectInstance * pOwner, float fHeight, const D3DXCOLOR & c_rColor);
+		TTextTail * RegisterTextTail(DWORD dwVirtualID, const char * c_szText, CGraphicObjectInstance * pOwner, float fHeight, const Color & c_rColor);
 		void DeleteTextTail(TTextTail * pTextTail);
 
 		void UpdateTextTail(TTextTail * pTextTail) const;

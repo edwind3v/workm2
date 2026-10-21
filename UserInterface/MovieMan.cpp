@@ -1,641 +1,504 @@
 #include "stdafx.h"
 #include "MovieMan.h"
 #include "PythonApplication.h"
+#include "../EterLib/ShaderManager.h"
+#include "../EterLib/GrpBase.h"
 
-// 2007-08-19, nuclei
-// add following files to the [Project Settings-Linker-Input]
-// DEBUG:	../dshow/strmbasd.lib ../dshow/dmoguids.lib ddraw.lib
-// RELEASE:	../dshow/strmbase.lib ../dshow/dmoguids.lib ddraw.lib
+/*
+ * MovieMan.cpp
+ * DX11 Native Video Playback using Media Foundation Source Reader
+ *
+ * All rendering uses D3D11: video frames uploaded to DYNAMIC texture,
+ * drawn as fullscreen quad via UI shader. No GDI operations.
+ */
 
-// 2007-08-09, nuclei
-// if one of following header files are missing,
-// please install "Microsoft Platform SDK for Windows Server 2003 R2" or later
-#include "ddraw.h"
-#include "mmstream.h"
-#include "amstream.h"
-#include "ddstream.h"
-#include "uuids.h"
-#include "control.h"
-#include "dmodshow.h"
-#include "dmoreg.h"
+#define LOGO_PMANG_FILE         "ymir.mpg"
+#define LOGO_NW_FILE            "logoNW.mpg"
+#define LOGO_EA_FILE            "logoEA.mpg"
+#define LOGO_EA_ENGLISH_FILE    "logoEA_english.mpg"
+#define LOGO_GAMEON             "gameonbi.mpg"
+#define LOGO_IAH_FILE           "logoIAH.mpg"
+#define INTRO_FILE              "intro.mpg"
+#define LEGAL_FILE_00           "legal00.mpg"
+#define LEGAL_FILE_01           "legal01.mpg"
+#define TUTORIAL_0              "TutorialMovie\\Tutorial0.mpg"
+#define TUTORIAL_1              "TutorialMovie\\Tutorial1.mpg"
+#define TUTORIAL_2              "TutorialMovie\\Tutorial2.mpg"
 
-#define LOGO_PMANG_FILE			"ymir.mpg"
-#define LOGO_NW_FILE			"logoNW.mpg"
-#define LOGO_EA_FILE			"logoEA.mpg"
-#define LOGO_EA_ENGLISH_FILE	"logoEA_english.mpg"
-#define LOGO_GAMEON				"gameonbi.mpg"	//for japan
-#define LOGO_IAH_FILE			"logoIAH.mpg"
-#define INTRO_FILE				"intro.mpg"
-#define LEGAL_FILE_00			"legal00.mpg"
-#define LEGAL_FILE_01			"legal01.mpg"
-#define TUTORIAL_0				"TutorialMovie\\Tutorial0.mpg"
-#define TUTORIAL_1				"TutorialMovie\\Tutorial1.mpg"
-#define TUTORIAL_2				"TutorialMovie\\Tutorial2.mpg"
-
-void CMovieMan::ClearToBlack() const
+CMovieMan::CMovieMan()
+    : m_bMFInitialized(false)
+    , m_videoWidth(0)
+    , m_videoHeight(0)
+    , m_pVideoTexture(nullptr)
+    , m_pVideoSRV(nullptr)
 {
-	PAINTSTRUCT ps;
-	HDC dc;
-
-	// Get the repaint DC and then fill the window with black.
-
-	const HWND window =  CPythonApplication::Instance().GetWindowHandle();//CFFClientApp::GetInstance()->GetMainWindow();
-	InvalidateRect( window, nullptr, FALSE );
-	dc = BeginPaint( window, &ps );
-
-	PatBlt( dc, ps.rcPaint.left, ps.rcPaint.top, ps.rcPaint.right, ps.rcPaint.bottom, BLACKNESS);
-
-	EndPaint( window, &ps );
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 }
 
-void CMovieMan::FillRect( RECT& fillRect, DWORD fillColor ) const
+CMovieMan::~CMovieMan()
 {
-	assert(m_pPrimarySurface);
-
-	if (fillRect.bottom == fillRect.top || fillRect.left == fillRect.right)
-	{
-		return;
-	}
-
-	DDBLTFX colorFillBltFX;
-	colorFillBltFX.dwSize = sizeof(DDBLTFX);
-	colorFillBltFX.dwFillColor = fillColor;
-	if (!m_usingRGB32 || FAILED(m_pPrimarySurface->Blt(&fillRect, nullptr, nullptr, DDBLT_WAIT | DDBLT_COLORFILL, &colorFillBltFX)))
-	{
-		GDIFillRect(fillRect, fillColor);
-		return;
-	}
+    ShutdownMediaFoundation();
+    DestroyVideoTexture();
+    CoUninitialize();
 }
 
-inline void CMovieMan::GDIFillRect( RECT& fillRect, DWORD fillColor ) const
+bool CMovieMan::InitializeMediaFoundation()
 {
-	const HBRUSH fillBrush = CreateSolidBrush(
-		RGB((fillColor >> 16) & 255, (fillColor >> 8) & 255, fillColor & 255)
-		);
+    if (m_bMFInitialized)
+        return true;
 
-	const HDC desktopDC = GetDC(nullptr);
-	::FillRect(desktopDC, &fillRect, fillBrush);
-	ReleaseDC(nullptr, desktopDC);
+    HRESULT hr = MFStartup(MF_VERSION);
+    if (FAILED(hr))
+    {
+        TraceError("MovieMan: MFStartup failed (hr=0x%08X)", hr);
+        return false;
+    }
 
-	DeleteObject(fillBrush);
+    m_bMFInitialized = true;
+    return true;
 }
 
-//----------------------------------------------------------------------------------------------------
-//
-inline void CMovieMan::GDIBlt(IDirectDrawSurface *pSrcSurface, RECT *pDestRect) const
+void CMovieMan::ShutdownMediaFoundation()
 {
-	HDC surfaceDC;
-	const HDC desktopDC = GetDC(nullptr);
-	if (SUCCEEDED(pSrcSurface->GetDC(&surfaceDC)))
-	{
-		StretchBlt(desktopDC, pDestRect->left, pDestRect->top, pDestRect->right - pDestRect->left, pDestRect->bottom - pDestRect->top,
-			surfaceDC, 0, 0, m_movieWidth, m_movieHeight, SRCCOPY);
-		pSrcSurface->ReleaseDC(surfaceDC);
-	}
-	ReleaseDC(nullptr, desktopDC);
+    if (m_bMFInitialized)
+    {
+        MFShutdown();
+        m_bMFInitialized = false;
+    }
 }
 
-void CMovieMan::PlayLogo(const char *pcszName)
+//////////////////////////////////////////////////////////////////////////
+// D3D11 Rendering Helpers
+//////////////////////////////////////////////////////////////////////////
+
+bool CMovieMan::CreateVideoTexture()
 {
-	PlayMovie(pcszName);
+    DestroyVideoTexture();
+
+    auto* pDevice = CGraphicBase::GetDevice();
+    if (!pDevice || m_videoWidth == 0 || m_videoHeight == 0)
+        return false;
+
+    D3D11_TEXTURE2D_DESC texDesc = {};
+    texDesc.Width = m_videoWidth;
+    texDesc.Height = m_videoHeight;
+    texDesc.MipLevels = 1;
+    texDesc.ArraySize = 1;
+    texDesc.Format = DXGI_FORMAT_B8G8R8X8_UNORM;
+    texDesc.SampleDesc.Count = 1;
+    texDesc.Usage = D3D11_USAGE_DYNAMIC;
+    texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+
+    HRESULT hr = pDevice->CreateTexture2D(&texDesc, nullptr, &m_pVideoTexture);
+    if (FAILED(hr))
+    {
+        TraceError("MovieMan: CreateTexture2D failed (hr=0x%08X)", hr);
+        return false;
+    }
+
+    hr = pDevice->CreateShaderResourceView(m_pVideoTexture, nullptr, &m_pVideoSRV);
+    if (FAILED(hr))
+    {
+        TraceError("MovieMan: CreateSRV failed (hr=0x%08X)", hr);
+        m_pVideoTexture->Release();
+        m_pVideoTexture = nullptr;
+        return false;
+    }
+
+    return true;
+}
+
+void CMovieMan::DestroyVideoTexture()
+{
+    if (m_pVideoSRV) { m_pVideoSRV->Release(); m_pVideoSRV = nullptr; }
+    if (m_pVideoTexture) { m_pVideoTexture->Release(); m_pVideoTexture = nullptr; }
+}
+
+void CMovieMan::CalcMovieRect(int srcWidth, int srcHeight, RECT& movieRect)
+{
+    UINT clientWidth = 0, clientHeight = 0;
+    CGraphicBase::GetBackBufferSize(&clientWidth, &clientHeight);
+
+    int nMovieWidth, nMovieHeight;
+    if (srcWidth >= srcHeight)
+    {
+        nMovieWidth = (int)clientWidth;
+        nMovieHeight = srcHeight * nMovieWidth / srcWidth;
+        if (nMovieHeight > (int)clientHeight)
+            nMovieHeight = (int)clientHeight;
+    }
+    else
+    {
+        nMovieHeight = (int)clientHeight;
+        nMovieWidth = srcWidth * nMovieHeight / srcHeight;
+        if (nMovieWidth > (int)clientWidth)
+            nMovieWidth = (int)clientWidth;
+    }
+
+    movieRect.left = ((int)clientWidth - nMovieWidth) / 2;
+    movieRect.top = ((int)clientHeight - nMovieHeight) / 2;
+    movieRect.right = movieRect.left + nMovieWidth;
+    movieRect.bottom = movieRect.top + nMovieHeight;
+}
+
+void CMovieMan::PresentClear(float r, float g, float b)
+{
+    auto* pCtx = CGraphicBase::GetContext();
+    auto* pRTV = CGraphicBase::GetRenderTargetView();
+    auto* pSwapChain = CGraphicBase::GetSwapChain();
+    if (!pCtx || !pRTV || !pSwapChain)
+        return;
+
+    float clearColor[4] = { r, g, b, 1.0f };
+    pCtx->ClearRenderTargetView(pRTV, clearColor);
+#ifdef ENABLE_MSAA
+    CGraphicBase::ResolveMSAA();
+#endif
+    pSwapChain->Present(0, 0);
+}
+
+void CMovieMan::RenderVideoFrame(BYTE* pFrameData, UINT stride, const RECT& movieRect)
+{
+    auto* pCtx = CGraphicBase::GetContext();
+    auto* pRTV = CGraphicBase::GetRenderTargetView();
+    auto* pSwapChain = CGraphicBase::GetSwapChain();
+    if (!pCtx || !pRTV || !pSwapChain || !m_pVideoTexture || !m_pVideoSRV)
+        return;
+
+    // Upload frame data to DYNAMIC texture
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    if (FAILED(pCtx->Map(m_pVideoTexture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+        return;
+
+    BYTE* pDst = (BYTE*)mapped.pData;
+    BYTE* pSrc = pFrameData;
+    UINT rowSize = m_videoWidth * 4;
+
+    for (UINT y = 0; y < m_videoHeight; y++)
+    {
+        memcpy(pDst, pSrc, rowSize);
+        pSrc += stride;
+        pDst += mapped.RowPitch;
+    }
+
+    pCtx->Unmap(m_pVideoTexture, 0);
+
+    // Clear render target to black (handles letterbox bars)
+    float black[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    pCtx->ClearRenderTargetView(pRTV, black);
+
+    Matrix matIdentity;
+    MatrixIdentity(&matIdentity);
+    SHADERMANAGER.SetMatrix(MATRIX_PROJECTION, &matIdentity);
+    SHADERMANAGER.SetMatrix(MATRIX_VIEW, &matIdentity);
+    SHADERMANAGER.SetMatrix(MATRIX_WORLD, &matIdentity);
+    SHADERMANAGER.SetPipelineState(PSTATE_DEPTHENABLE, FALSE);
+    SHADERMANAGER.SetPipelineState(PSTATE_DEPTHWRITEMASK, FALSE);
+    SHADERMANAGER.SetPipelineState(PSTATE_CULLMODE, CULL_NONE);
+    SHADERMANAGER.SetPipelineState(PSTATE_BLENDENABLE, FALSE);
+    SHADERMANAGER.SetMaterialParams(0, 0, 0, 0);
+
+    // Use LINEAR filtering for quality video scaling
+    SHADERMANAGER.SetSamplerState(0, SAMPLER_MINFILTER, FILTER_LINEAR);
+    SHADERMANAGER.SetSamplerState(0, SAMPLER_MAGFILTER, FILTER_LINEAR);
+
+    // Bind video texture and UI shader
+    SHADERMANAGER.SetShaderResource(0, m_pVideoSRV);
+    SHADERMANAGER.SetShaderResource(1, NULL);
+    SHADERMANAGER.SetInputLayout(INPUT_LAYOUT_PDT);
+    SHADERMANAGER.BeginUI();
+
+    // Draw textured quad at movie rect (pixel coordinates)
+    struct PDTVertex { float x, y, z; DWORD color; float u, v; };
+
+    float x1 = (float)movieRect.left;
+    float y1 = (float)movieRect.top;
+    float x2 = (float)movieRect.right;
+    float y2 = (float)movieRect.bottom;
+
+    PDTVertex quad[4] = {
+        { x1, y1, 0.0f, 0xFFFFFFFF, 0.0f, 0.0f },
+        { x2, y1, 0.0f, 0xFFFFFFFF, 1.0f, 0.0f },
+        { x1, y2, 0.0f, 0xFFFFFFFF, 0.0f, 1.0f },
+        { x2, y2, 0.0f, 0xFFFFFFFF, 1.0f, 1.0f },
+    };
+
+    SHADERMANAGER.DrawDynamic(TOPOLOGY_TRIANGLESTRIP, 2, quad, sizeof(PDTVertex));
+
+#ifdef ENABLE_MSAA
+    CGraphicBase::ResolveMSAA();
+#endif
+    pSwapChain->Present(1, 0);
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Public Interface
+//////////////////////////////////////////////////////////////////////////
+
+void CMovieMan::ClearToBlack()
+{
+    PresentClear(0.0f, 0.0f, 0.0f);
+}
+
+void CMovieMan::PlayLogo(const char* pcszName)
+{
+    PlayMovie(pcszName);
 }
 
 void CMovieMan::PlayIntro()
 {
-	PlayMovie( INTRO_FILE, MOVIEMAN_SKIPPABLE_YES, MOVIEMAN_POSTEFFECT_FADEOUT, 0xFFFFFF );
+    PlayMovie(INTRO_FILE, MOVIEMAN_SKIPPABLE_YES, MOVIEMAN_POSTEFFECT_FADEOUT, 0xFFFFFF);
 }
 
 BOOL CMovieMan::PlayTutorial(LONG nIdx)
 {
-	BOOL bRet = FALSE;
-	ClearToBlack();
-	switch( nIdx ) {
-		case 0:
-			bRet = PlayMovie( TUTORIAL_0, MOVIEMAN_SKIPPABLE_YES, MOVIEMAN_POSTEFFECT_FADEOUT, 0xFFFFFF );
-			return bRet;
-		case 1:
-			bRet = PlayMovie( TUTORIAL_1, MOVIEMAN_SKIPPABLE_YES, MOVIEMAN_POSTEFFECT_FADEOUT, 0xFFFFFF );
-			return bRet;
-		case 2:
-			bRet = PlayMovie( TUTORIAL_2, MOVIEMAN_SKIPPABLE_YES, MOVIEMAN_POSTEFFECT_FADEOUT, 0xFFFFFF );
-			return bRet;
-	}
-	return bRet;
+    ClearToBlack();
+
+    switch (nIdx)
+    {
+    case 0:
+        return PlayMovie(TUTORIAL_0, MOVIEMAN_SKIPPABLE_YES, MOVIEMAN_POSTEFFECT_FADEOUT, 0xFFFFFF);
+    case 1:
+        return PlayMovie(TUTORIAL_1, MOVIEMAN_SKIPPABLE_YES, MOVIEMAN_POSTEFFECT_FADEOUT, 0xFFFFFF);
+    case 2:
+        return PlayMovie(TUTORIAL_2, MOVIEMAN_SKIPPABLE_YES, MOVIEMAN_POSTEFFECT_FADEOUT, 0xFFFFFF);
+    }
+
+    return FALSE;
 }
 
-BOOL CMovieMan::PlayMovie( const char *cpFileName, const bool bSkipAllowed, const int nPostEffectID, const DWORD dwPostEffectData )
+BOOL CMovieMan::PlayMovie(const char* cpFileName, bool bSkipAllowed, int nPostEffectID, DWORD dwPostEffectData)
 {
-	HWND hWnd = CPythonApplication::Instance().GetWindowHandle();
+    HWND hWnd = CPythonApplication::Instance().GetWindowHandle();
 
-	IDirectDraw *pDD = nullptr;
-	DirectDrawCreate(nullptr, &pDD, nullptr);
-	pDD->SetCooperativeLevel(hWnd, DDSCL_NORMAL);
+    // Initialize Media Foundation
+    if (!InitializeMediaFoundation())
+    {
+        TraceError("MovieMan: Failed to initialize Media Foundation");
+        return FALSE;
+    }
 
-	DDSURFACEDESC ddsd;
-	ZeroMemory(&ddsd, sizeof(ddsd));
-	ddsd.dwSize = sizeof(ddsd);
-	ddsd.dwFlags = DDSD_CAPS;
-	ddsd.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE;
-	if (FAILED(pDD->CreateSurface(&ddsd, &m_pPrimarySurface, nullptr)))
-	{
-		pDD->Release();
-		return FALSE;
-	}
+    // Convert filename to full path
+    WCHAR wPath[MAX_PATH + 1];
+    MultiByteToWideChar(CP_ACP, 0, cpFileName, -1, wPath, MAX_PATH + 1);
 
-	ZeroMemory(&ddsd, sizeof(ddsd));
-	ddsd.dwSize = sizeof(ddsd);
-	ddsd.dwFlags = DDSD_PIXELFORMAT;
-	m_pPrimarySurface->GetSurfaceDesc(&ddsd);
-	ddsd.ddpfPixelFormat.dwSize = sizeof(ddsd.ddpfPixelFormat);
-	m_usingRGB32 = (ddsd.ddpfPixelFormat.dwRGBBitCount == 32);
+    WCHAR wsFullPath[MAX_PATH + 1] = {};
+    GetCurrentDirectoryW(MAX_PATH, wsFullPath);
+    wcscat_s(wsFullPath, L"\\");
+    wcscat_s(wsFullPath, wPath);
 
-	IDirectDrawClipper *pDDClipper = nullptr;
-	HRESULT hr = pDD->CreateClipper(0, &pDDClipper, nullptr);
-	if (SUCCEEDED(hr))
-	{
-		pDDClipper->SetHWnd(0, hWnd);
-		m_pPrimarySurface->SetClipper(pDDClipper);
-	}
+    // Check if file exists (optional intro videos)
+    if (GetFileAttributesW(wsFullPath) == INVALID_FILE_ATTRIBUTES)
+        return FALSE;
 
-	IMultiMediaStream *pMMStream = nullptr;
-	hr = RenderFileToMMStream(cpFileName, &pMMStream, pDD);
-	if (SUCCEEDED(hr))
-	{
-		IMediaStream *pPrimaryVidStream = nullptr;
-		HRESULT hr = pMMStream->GetMediaStream(MSPID_PrimaryVideo, &pPrimaryVidStream);
-		if (SUCCEEDED(hr))
-		{
-			IDirectDrawMediaStream *pDDStream = nullptr;
-			pPrimaryVidStream->QueryInterface(IID_IDirectDrawMediaStream, (void **) &pDDStream);
-			pPrimaryVidStream->Release();
+    // Create source reader attributes
+    IMFAttributes* pAttributes = nullptr;
+    HRESULT hr = MFCreateAttributes(&pAttributes, 2);
+    if (FAILED(hr))
+    {
+        TraceError("MovieMan: MFCreateAttributes failed (hr=0x%08X)", hr);
+        return FALSE;
+    }
 
-			ddsd.dwSize = sizeof(ddsd);
-			hr = pDDStream->GetFormat(&ddsd, nullptr, nullptr, nullptr);
-			if (SUCCEEDED(hr))
-			{
-				m_movieWidth = ddsd.dwWidth;
-				m_movieHeight = ddsd.dwHeight;
+    // Enable video processing for format conversion
+    pAttributes->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
+    pAttributes->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE);
 
-				DDSURFACEDESC ddsdBackSurface;
-				ZeroMemory(&ddsdBackSurface, sizeof(ddsdBackSurface));
-				ddsdBackSurface.ddpfPixelFormat.dwSize = sizeof(ddsdBackSurface.ddpfPixelFormat);
-				ddsdBackSurface.ddpfPixelFormat.dwFlags = DDPF_RGB;
-				ddsdBackSurface.ddpfPixelFormat.dwRGBBitCount = 32;
-				ddsdBackSurface.ddpfPixelFormat.dwRBitMask = 255 << 16;
-				ddsdBackSurface.ddpfPixelFormat.dwGBitMask = 255 << 8;
-				ddsdBackSurface.ddpfPixelFormat.dwBBitMask = 255;
-				ddsdBackSurface.dwSize = sizeof(ddsdBackSurface);
-				ddsdBackSurface.dwFlags = DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH | DDSD_PIXELFORMAT;
-				ddsdBackSurface.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_SYSTEMMEMORY;
-				ddsdBackSurface.dwHeight = m_movieHeight;
-				ddsdBackSurface.dwWidth = m_movieWidth;
+    // Create source reader
+    IMFSourceReader* pSourceReader = nullptr;
+    hr = MFCreateSourceReaderFromURL(wsFullPath, pAttributes, &pSourceReader);
+    pAttributes->Release();
 
-				IDirectDrawSurface *pSurface;
-				hr = pDD->CreateSurface(&ddsdBackSurface, &pSurface, nullptr);
-				if (SUCCEEDED(hr))
-				{
-					RenderStreamToSurface(pSurface, pDDStream, pMMStream, bSkipAllowed, nPostEffectID, dwPostEffectData);
-					pSurface->Release();
-				}
-			}
-			pDDStream->Release();
-		}
-		pMMStream->Release();
-	}
+    if (FAILED(hr))
+    {
+        TraceError("MovieMan: MFCreateSourceReaderFromURL failed (hr=0x%08X) for %s", hr, cpFileName);
+        return FALSE;
+    }
 
-	m_pPrimarySurface->Release();
-	m_pPrimarySurface = nullptr;
+    // Configure output format to RGB32
+    IMFMediaType* pMediaType = nullptr;
+    hr = MFCreateMediaType(&pMediaType);
+    if (FAILED(hr))
+    {
+        TraceError("MovieMan: MFCreateMediaType failed (hr=0x%08X)", hr);
+        pSourceReader->Release();
+        return FALSE;
+    }
 
-	if (m_pBasicAudio)
-	{
-		m_pBasicAudio->Release();
-		m_pBasicAudio = nullptr;
-	}
+    pMediaType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+    pMediaType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
 
-	if (pDDClipper)
-	{
-		pDDClipper->Release();
-		pDDClipper = nullptr;
-	}
+    hr = pSourceReader->SetCurrentMediaType((DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, pMediaType);
+    pMediaType->Release();
 
-	pDD->Release();
+    if (FAILED(hr))
+    {
+        TraceError("MovieMan: SetCurrentMediaType failed (hr=0x%08X)", hr);
+        pSourceReader->Release();
+        return FALSE;
+    }
 
-	MSG msg;
-	while (PeekMessage(&msg, hWnd, WM_KEYFIRST, WM_KEYLAST, PM_REMOVE));
-	while (PeekMessage(&msg, hWnd, WM_MOUSEFIRST, WM_MOUSELAST, PM_REMOVE));
+    // Get video dimensions
+    IMFMediaType* pOutputType = nullptr;
+    hr = pSourceReader->GetCurrentMediaType((DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM, &pOutputType);
+    if (SUCCEEDED(hr))
+    {
+        MFGetAttributeSize(pOutputType, MF_MT_FRAME_SIZE, &m_videoWidth, &m_videoHeight);
+        pOutputType->Release();
+    }
 
-	return SUCCEEDED(hr);
+    if (m_videoWidth == 0 || m_videoHeight == 0)
+    {
+        m_videoWidth = 640;
+        m_videoHeight = 480;
+    }
+
+    // Create D3D11 video texture
+    if (!CreateVideoTexture())
+    {
+        TraceError("MovieMan: Failed to create video texture (%dx%d)", m_videoWidth, m_videoHeight);
+        pSourceReader->Release();
+        return FALSE;
+    }
+
+    RECT movieRect;
+    CalcMovieRect(m_videoWidth, m_videoHeight, movieRect);
+
+    // Clear to black before starting
+    PresentClear(0.0f, 0.0f, 0.0f);
+
+    // Main playback loop
+    #define KEY_DOWN(vk) (GetAsyncKeyState(vk) & 0x8000)
+
+    bool bPlaying = true;
+    while (bPlaying)
+    {
+        // Process Windows messages
+        MSG msg;
+        while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+
+        // Check for skip
+        if (bSkipAllowed && (KEY_DOWN(VK_LBUTTON) || KEY_DOWN(VK_ESCAPE) || KEY_DOWN(VK_SPACE)))
+        {
+            break;
+        }
+
+        // Read next frame
+        DWORD dwStreamIndex, dwFlags;
+        LONGLONG llTimestamp;
+        IMFSample* pSample = nullptr;
+
+        hr = pSourceReader->ReadSample(
+            (DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+            0,
+            &dwStreamIndex,
+            &dwFlags,
+            &llTimestamp,
+            &pSample);
+
+        if (FAILED(hr))
+        {
+            TraceError("MovieMan: ReadSample failed (hr=0x%08X)", hr);
+            break;
+        }
+
+        // Check for end of stream
+        if (dwFlags & MF_SOURCE_READERF_ENDOFSTREAM)
+        {
+            if (pSample) pSample->Release();
+            bPlaying = false;
+            break;
+        }
+
+        // Process frame
+        if (pSample)
+        {
+            IMFMediaBuffer* pBuffer = nullptr;
+            hr = pSample->ConvertToContiguousBuffer(&pBuffer);
+            if (SUCCEEDED(hr))
+            {
+                BYTE* pData = nullptr;
+                DWORD dwMaxLength, dwCurrentLength;
+
+                hr = pBuffer->Lock(&pData, &dwMaxLength, &dwCurrentLength);
+                if (SUCCEEDED(hr))
+                {
+                    // Upload to GPU texture, draw quad, present
+                    RenderVideoFrame(pData, m_videoWidth * 4, movieRect);
+                    pBuffer->Unlock();
+                }
+                pBuffer->Release();
+            }
+            pSample->Release();
+        }
+
+        // Small delay to control frame rate
+        Sleep(1);
+    }
+
+    // Cleanup
+    pSourceReader->Release();
+    DestroyVideoTexture();
+
+    // Post effect
+    switch (nPostEffectID)
+    {
+    case MOVIEMAN_POSTEFFECT_FADEOUT:
+        RenderPostEffectFadeOut(MOVIEMAN_FADE_DURATION, dwPostEffectData);
+        break;
+    }
+
+    // Clear pending input
+    MSG msg;
+    while (PeekMessage(&msg, hWnd, WM_KEYFIRST, WM_KEYLAST, PM_REMOVE));
+    while (PeekMessage(&msg, hWnd, WM_MOUSEFIRST, WM_MOUSELAST, PM_REMOVE));
+
+    return TRUE;
 }
 
-//----------------------------------------------------------------------------------------------------
-//
-void CMovieMan::GetWindowRect(RECT& windowRect) const
+void CMovieMan::RenderPostEffectFadeOut(int fadeOutDuration, DWORD fadeOutColor)
 {
-	const HWND hWnd = CPythonApplication::Instance().GetWindowHandle();
-	POINT p;
+    auto* pCtx = CGraphicBase::GetContext();
+    auto* pRTV = CGraphicBase::GetRenderTargetView();
+    auto* pSwapChain = CGraphicBase::GetSwapChain();
+    if (!pCtx || !pRTV || !pSwapChain)
+        return;
 
-	// Get the position of the upper-left client coordinate (in screen space).
+    float r = ((fadeOutColor >> 16) & 255) / 255.0f;
+    float g = ((fadeOutColor >> 8) & 255) / 255.0f;
+    float b = (fadeOutColor & 255) / 255.0f;
 
-	p.x = 0;
-	p.y = 0;
-	ClientToScreen( hWnd, &p );
+    LONG fadeBegin = GetTickCount();
+    float fadeProgress = 0.0f;
 
-	// Get the client rectangle of the window.
+    while ((fadeProgress = ((float)((LONG)GetTickCount() - fadeBegin) / fadeOutDuration)) < 1.0f)
+    {
+        // Process messages during fade
+        MSG msg;
+        while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
 
-	GetClientRect( hWnd, &windowRect );
+        float clearColor[4] = { r * fadeProgress, g * fadeProgress, b * fadeProgress, 1.0f };
+        pCtx->ClearRenderTargetView(pRTV, clearColor);
+#ifdef ENABLE_MSAA
+        CGraphicBase::ResolveMSAA();
+#endif
+        pSwapChain->Present(1, 0);
+    }
 
-	OffsetRect( &windowRect, p.x, p.y );
+    // Final fill with target color
+    float finalColor[4] = { r, g, b, 1.0f };
+    pCtx->ClearRenderTargetView(pRTV, finalColor);
+#ifdef ENABLE_MSAA
+    CGraphicBase::ResolveMSAA();
+#endif
+    pSwapChain->Present(0, 0);
 }
-
-//----------------------------------------------------------------------------------------------------
-//
-void CMovieMan::CalcMovieRect(int srcWidth, int srcHeight, RECT& movieRect)
-{
-	RECT windowRect;
-	GetWindowRect(windowRect);
-
-	int nMovieWidth, nMovieHeight;
-	if (srcWidth >= srcHeight)
-	{
-		nMovieWidth = (windowRect.right - windowRect.left);
-		nMovieHeight =  srcHeight * nMovieWidth / srcWidth;
-		if( nMovieHeight > windowRect.bottom - windowRect.top )
-			nMovieHeight = windowRect.bottom - windowRect.top;
-	}
-	else
-	{
-		nMovieHeight = (windowRect.bottom - windowRect.top);
-		nMovieWidth =  srcWidth * nMovieHeight / srcHeight;
-		if( nMovieWidth > windowRect.right - windowRect.left )
-			nMovieWidth = windowRect.right - windowRect.left;
-	}
-	movieRect.left = windowRect.left + ((windowRect.right - windowRect.left) - nMovieWidth) / 2;
-	movieRect.top = windowRect.top + ((windowRect.bottom - windowRect.top) - nMovieHeight) / 2;
-	movieRect.right = movieRect.left + nMovieWidth;
-	movieRect.bottom = movieRect.top + nMovieHeight;
-}
-
-//----------------------------------------------------------------------------------------------------
-//
-void CMovieMan::CalcBackgroundRect(const RECT& movieRect, RECT& upperRect, RECT& lowerRect)
-{
-	RECT windowRect;
-	GetWindowRect(windowRect);
-
-	if (m_movieWidth > m_movieHeight)
-	{
-		SetRect(&upperRect, windowRect.left, windowRect.top, windowRect.right, movieRect.top);
-		SetRect(&lowerRect, windowRect.left, movieRect.bottom, windowRect.right, windowRect.bottom);
-	}
-	else
-	{
-		SetRect(&upperRect, windowRect.left, windowRect.top, movieRect.left, windowRect.bottom);
-		SetRect(&lowerRect, movieRect.right, windowRect.top, windowRect.right, windowRect.bottom);
-	}
-}
-
-//----------------------------------------------------------------------------------------------------
-//
-HRESULT CMovieMan::RenderStreamToSurface(IDirectDrawSurface *pSurface, IDirectDrawMediaStream *pDDStream, IMultiMediaStream *pMMStream, bool bSkipAllowed, int nPostEffectID, DWORD dwPostEffectData)
-{
-	#define KEY_DOWN(vk)	(GetAsyncKeyState(vk) & 0x8000)
-
-	IDirectDrawStreamSample *pSample = nullptr;
-	const HRESULT hr = pDDStream->CreateSample(pSurface, nullptr, 0, &pSample);
-	if (SUCCEEDED(hr))
-	{
-		RECT movieRect;
-		RECT upperRect, lowerRect;
-		CalcMovieRect(m_movieWidth, m_movieHeight, movieRect);
-		CalcBackgroundRect(movieRect, upperRect, lowerRect);
-		FillRect(upperRect, 0);
-		FillRect(lowerRect, 0);
-
-		pMMStream->SetState(STREAMSTATE_RUN);
-		while (pSample->Update(0, nullptr, nullptr, 0) == S_OK)
-		{
-			CalcMovieRect(m_movieWidth, m_movieHeight, movieRect);
-			if (FAILED(m_pPrimarySurface->Blt(&movieRect, pSurface, nullptr, DDBLT_WAIT, nullptr)))
-			{
-				GDIBlt(pSurface, &movieRect);
-			}
-
-			if (bSkipAllowed && (KEY_DOWN(VK_LBUTTON) || KEY_DOWN(VK_ESCAPE) || KEY_DOWN(VK_SPACE)))
-			{
-				break;
-			}
-		}
-
-		switch(nPostEffectID)
-		{
-		case MOVIEMAN_POSTEFFECT_FADEOUT:
-			RenderPostEffectFadeOut(pSurface, MOVIEMAN_FADE_DURATION, dwPostEffectData);
-			break;
-		}
-
-		pMMStream->SetState(STREAMSTATE_STOP);
-		pSample->Release();
-	}
-
-	return hr;
-}
-
-HRESULT CMovieMan::RenderFileToMMStream(const char *cpFilename, IMultiMediaStream **ppMMStream, IDirectDraw *pDD)
-{
-	IAMMultiMediaStream *pAMStream;
-	HRESULT hr = CoCreateInstance(CLSID_AMMultiMediaStream, nullptr, CLSCTX_INPROC_SERVER, IID_IAMMultiMediaStream, (void **) &pAMStream);
-	if (FAILED(hr))
-	{
-		return hr;
-	}
-
-	WCHAR wPath[MAX_PATH + 1];
-	MultiByteToWideChar(CP_ACP, 0, cpFilename, -1, wPath, MAX_PATH + 1);
-
-	WCHAR wsDir[MAX_PATH + 1];
-	::memset(wsDir, 0, sizeof(wsDir));
-	::GetCurrentDirectoryW( MAX_PATH, wsDir );
-	::wcsncat( wsDir, L"\\", sizeof(WCHAR)*1 );
-	::wcsncat( wsDir, wPath, sizeof(WCHAR)*::wcsnlen(wPath, MAX_PATH) );
-	::memset(wPath, 0, sizeof(wPath));
-	::wcsncpy( wPath, wsDir, sizeof(WCHAR)*::wcsnlen(wsDir, MAX_PATH) );
-
-	pAMStream->Initialize(STREAMTYPE_READ, AMMSF_NOGRAPHTHREAD, nullptr);
-	pAMStream->AddMediaStream(pDD, &MSPID_PrimaryVideo, 0, nullptr);
-	pAMStream->AddMediaStream(nullptr, &MSPID_PrimaryAudio, AMMSF_ADDDEFAULTRENDERER, nullptr);
-
-	std::string ext;
-	GetFileExtension(cpFilename, strlen(cpFilename), &ext);
-	std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-	if (ext == "mpg")
-	{
-		// 2007-08-01, nuclei
-		hr = BuildFilterGraphManually(wPath, pAMStream, CLSID_MPEG1Splitter, CLSID_CMpegVideoCodec, CLSID_CMpegAudioCodec);
-	}
-	else if (ext == "mp43")
-	{
-		// 2007-08-12, nuclei
-		hr = BuildFilterGraphManually(wPath, pAMStream, CLSID_AviSplitter, CLSID_MP4VideoCodec, CLSID_MP3AudioCodec);
-	}
-	else
-	{
-		hr = pAMStream->OpenFile(wPath, 0);
-	}
-
-	if (SUCCEEDED(hr))
-	{
-		pAMStream->QueryInterface(IID_IMultiMediaStream, (void**) ppMMStream);
-	}
-
-	pAMStream->Release();
-
-	return hr;
-}
-
-//----------------------------------------------------------------------------------------------------
-//
-HRESULT CMovieMan::RenderPostEffectFadeOut(IDirectDrawSurface *pSurface, int fadeOutDuration, DWORD fadeOutColor)
-{
-	DDSURFACEDESC lockedSurfaceDesc;
-
-	int *pCopiedSrcSurBuf = nullptr;
-	LONG fadeBegin = GetTickCount();
-	float fadeProgress = 0.0;
-	while ((fadeProgress = ((float)((LONG)GetTickCount()) - fadeBegin) / fadeOutDuration) < 1.0)
-	{
-		ZeroMemory(&lockedSurfaceDesc, sizeof(lockedSurfaceDesc));
-		lockedSurfaceDesc.dwSize = sizeof(lockedSurfaceDesc);
-		HRESULT hr = pSurface->Lock(nullptr, &lockedSurfaceDesc, DDLOCK_WAIT | DDLOCK_NOSYSLOCK | DDLOCK_READONLY, nullptr);
-		if (FAILED(hr))
-		{
-			return hr;
-		}
-
-		if (!pCopiedSrcSurBuf)
-		{
-			if (!(pCopiedSrcSurBuf = (int*)malloc((LONG)lockedSurfaceDesc.lPitch * m_movieHeight)))
-			{
-				pSurface->Unlock(lockedSurfaceDesc.lpSurface);
-				return E_OUTOFMEMORY;
-			}
-			CopyMemory(pCopiedSrcSurBuf, lockedSurfaceDesc.lpSurface, (LONG)lockedSurfaceDesc.lPitch * m_movieHeight);
-		}
-
-		int *pSrcSurfaceBuf = pCopiedSrcSurBuf;
-		auto pDestSurfaceBuf = (int*)lockedSurfaceDesc.lpSurface;
-
-		int fadeOutColorRed = (int)(((fadeOutColor >> 16) & 255) * fadeProgress);
-		int fadeOutColorGreen = (int)(((fadeOutColor >> 8) & 255) * fadeProgress);
-		int fadeOutColorBlue = (int)((fadeOutColor & 255) * fadeProgress);
-		for(int y = 0; y < m_movieHeight; ++y)
-		{
-			for(int x = 0; x < m_movieWidth; ++x)
-			{
-				DWORD srcPixel = *pSrcSurfaceBuf;
-				*pDestSurfaceBuf = RGB(
-					(srcPixel & 255) * (1 - fadeProgress) + fadeOutColorBlue,
-					((srcPixel >> 8) & 255) * (1 - fadeProgress) + fadeOutColorGreen,
-					((srcPixel >> 16) & 255) * (1 - fadeProgress) + fadeOutColorRed);
-				pSrcSurfaceBuf++;
-				pDestSurfaceBuf++;
-			}
-			pSrcSurfaceBuf += (lockedSurfaceDesc.lPitch / 4) - m_movieWidth;
-			pDestSurfaceBuf += (lockedSurfaceDesc.lPitch / 4) - m_movieWidth;
-		}
-		pSurface->Unlock(lockedSurfaceDesc.lpSurface);
-
-		RECT movieRect;
-		CalcMovieRect(m_movieWidth, m_movieHeight, movieRect);
-		if (FAILED(m_pPrimarySurface->Blt(&movieRect, pSurface, nullptr, DDBLT_WAIT, nullptr)))
-		{
-			GDIBlt(pSurface, &movieRect);
-		}
-
-		RECT upperRect, lowerRect;
-		CalcBackgroundRect(movieRect, upperRect, lowerRect);
-		FillRect(upperRect, (fadeOutColorRed << 16) | (fadeOutColorGreen << 8) | fadeOutColorBlue);
-		FillRect(lowerRect, (fadeOutColorRed << 16) | (fadeOutColorGreen << 8) | fadeOutColorBlue);
-
-		if (m_pBasicAudio)
-		{
-			m_pBasicAudio->put_Volume((long)(-10000 * fadeProgress));
-		}
-	}
-
-	free(pCopiedSrcSurBuf);
-
-	RECT windowRect;
-	GetWindowRect(windowRect);
-	FillRect(windowRect, fadeOutColor);
-
-	return S_OK;
-}
-
-//----------------------------------------------------------------------------------------------------
-//
-HRESULT CMovieMan::BuildFilterGraphManually(
-	WCHAR* wpFilename,
-	IAMMultiMediaStream *pAMStream,
-	const GUID FAR clsidSplitter,
-	const GUID FAR clsidVideoCodec,
-	const GUID FAR clsidAudioCodec)
-{
-	IGraphBuilder* pGraphBuilder = nullptr;
-	pAMStream->GetFilterGraph(&pGraphBuilder);
-
-	assert(pGraphBuilder);
-
-//#ifdef _DEBUG
-//	DWORD dwRegister;
-//	AddToRot(pGraphBuilder, &dwRegister);
-//#endif
-
-	IBaseFilter *pSourceFilter = nullptr;
-	IBaseFilter *pSplitterFilter = nullptr;
-	IBaseFilter *pVideoFilter = nullptr;
-	IBaseFilter *pAudioFilter = nullptr;
-
-	CoCreateInstance(clsidSplitter, nullptr, CLSCTX_INPROC_SERVER, IID_IBaseFilter, (void **) &pSplitterFilter);
-	CoCreateInstance(clsidVideoCodec, nullptr, CLSCTX_INPROC_SERVER, IID_IBaseFilter, (void **) &pVideoFilter);
-	CoCreateInstance(clsidAudioCodec, nullptr, CLSCTX_INPROC_SERVER, IID_IBaseFilter, (void **) &pAudioFilter);
-
-	if (!pVideoFilter && IsEqualGUID(clsidVideoCodec, CLSID_MP4VideoCodec))
-	{
-		// Create the DMO Wrapper filter.
-		HRESULT hr = CoCreateInstance(CLSID_DMOWrapperFilter, nullptr, CLSCTX_INPROC, IID_IBaseFilter, (void **)&pVideoFilter);
-		if (SUCCEEDED(hr))
-		{
-			IDMOWrapperFilter *pWrap;
-			hr = pVideoFilter->QueryInterface(IID_IDMOWrapperFilter, (void **)&pWrap);
-			if (SUCCEEDED(hr))
-			{
-				hr = pWrap->Init(CLSID_MP43DMOCodec, DMOCATEGORY_VIDEO_DECODER);
-				pWrap->Release();
-			}
-		}
-	}
-
-	pGraphBuilder->AddSourceFilter(wpFilename, L"Source Filter", &pSourceFilter);
-	pGraphBuilder->AddFilter(pSplitterFilter, L"Splitter");
-	pGraphBuilder->AddFilter(pVideoFilter, L"Video Decoder");
-	pGraphBuilder->AddFilter(pAudioFilter, L"Audio Decoder");
-
-	assert(m_pBasicAudio == nullptr);
-	pGraphBuilder->QueryInterface(IID_IBasicAudio, (void**) &m_pBasicAudio);
-
-	// Connect "Source" -> "Splitter"
-	IPin *pInPin = nullptr;
-	IPin *pOutPin = nullptr;
-	IPin *pSplitterVideoOutPin = nullptr;
-	IPin *pSplitterAudioOutPin = nullptr;
-	IEnumPins *pEnumPins = nullptr;
-	pSourceFilter->EnumPins(&pEnumPins);
-	pEnumPins->Next(1, &pOutPin, nullptr);
-	pEnumPins->Release();
-	pSplitterFilter->EnumPins(&pEnumPins);
-	pEnumPins->Next(1, &pInPin, nullptr);
-	pEnumPins->Release();
-	HRESULT hr = pGraphBuilder->Connect(pOutPin, pInPin);
-	pInPin->Release();
-	pOutPin->Release();
-	if (SUCCEEDED(hr))
-	{
-		pSplitterFilter->EnumPins(&pEnumPins);
-		PIN_INFO pinInfo;
-		while( SUCCEEDED(pEnumPins->Next(1, &pInPin, nullptr)) )
-		{
-			pInPin->QueryPinInfo(&pinInfo);
-			pinInfo.pFilter->Release();
-			if (pinInfo.dir == PINDIR_OUTPUT)
-			{
-				pSplitterVideoOutPin = pInPin;
-				pEnumPins->Next(1, &pSplitterAudioOutPin, nullptr);
-				break;
-			}
-			pInPin->Release();
-		}
-		pEnumPins->Release();
-
-		// Splitter -> Video/Audio codecs
-		pVideoFilter->EnumPins(&pEnumPins);
-		pEnumPins->Next(1, &pInPin, nullptr);
-		pEnumPins->Next(1, &pOutPin, nullptr);
-		pEnumPins->Release();
-		hr = pGraphBuilder->Connect(pSplitterVideoOutPin, pInPin);
-		if (SUCCEEDED(hr))
-		{
-			hr = pGraphBuilder->Render(pOutPin);
-			pInPin->Release();
-			pOutPin->Release();
-
-			if (pSplitterAudioOutPin && pAudioFilter)
-			{
-				pAudioFilter->EnumPins(&pEnumPins);
-				pEnumPins->Next(1, &pInPin, nullptr);
-				pEnumPins->Next(1, &pOutPin, nullptr);
-				pEnumPins->Release();
-				pGraphBuilder->Connect(pSplitterAudioOutPin, pInPin);
-				pGraphBuilder->Render(pOutPin);
-				pInPin->Release();
-				pOutPin->Release();
-			}
-		}
-	}
-
-//#ifdef _DEBUG
-//	RemoveFromRot(dwRegister);
-//#endif
-
-	if (pSplitterVideoOutPin)
-	{
-		pSplitterVideoOutPin->Release();
-	}
-	if (pSplitterAudioOutPin)
-	{
-		pSplitterAudioOutPin->Release();
-	}
-	pVideoFilter->Release();
-	if (pAudioFilter)
-	{
-		pAudioFilter->Release();
-	}
-	pSplitterFilter->Release();
-	pSourceFilter->Release();
-	pGraphBuilder->Release();
-
-	return hr;
-}
-
-//#ifdef _DEBUG
-//HRESULT	CMovieMan::AddToRot(IGraphBuilder* pGraphBuilder, DWORD *pdwRegister)
-//{
-//	assert(pGraphBuilder);
-//
-//	IMoniker *pMoniker;
-//	IRunningObjectTable *pROT;
-//	if (FAILED(GetRunningObjectTable(0, &pROT))) {
-//		return E_FAIL;
-//	}
-//
-//	ZString monikerName;
-//	monikerName.Format(_T("FilterGraph %08x pid %08x"), (DWORD_PTR)pGraphBuilder, GetCurrentProcessId());
-//	HRESULT hr = CreateItemMoniker(L"!", monikerName, &pMoniker);
-//	if (SUCCEEDED(hr)) {
-//		hr = pROT->Register(ROTFLAGS_REGISTRATIONKEEPSALIVE, pGraphBuilder,
-//			pMoniker, pdwRegister);
-//		pMoniker->Release();
-//	}
-//	pROT->Release();
-//	return hr;
-//}
-//
-//void CMovieMan::RemoveFromRot(DWORD pdwRegister)
-//{
-//	IRunningObjectTable *pROT;
-//	if (SUCCEEDED(GetRunningObjectTable(0, &pROT))) {
-//		pROT->Revoke(pdwRegister);
-//		pROT->Release();
-//	}
-//}
-//#endif
-

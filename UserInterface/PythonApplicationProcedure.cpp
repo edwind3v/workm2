@@ -203,7 +203,7 @@ LRESULT CPythonApplication::WindowProcedure(HWND hWnd, UINT uiMsg, WPARAM wParam
 						GetClientRect(&rcWnd);
 
 						const UINT uWidth=rcWnd.right-rcWnd.left;
-						const UINT uHeight=rcWnd.bottom-rcWnd.left;
+						const UINT uHeight=rcWnd.bottom-rcWnd.top;
 						m_grpDevice.ResizeBackBuffer(uWidth, uHeight);
 					}
 					break;
@@ -224,7 +224,7 @@ LRESULT CPythonApplication::WindowProcedure(HWND hWnd, UINT uiMsg, WPARAM wParam
 				GetClientRect(&rcWnd);
 
 				const UINT uWidth=rcWnd.right-rcWnd.left;
-				const UINT uHeight=rcWnd.bottom-rcWnd.left;
+				const UINT uHeight=rcWnd.bottom-rcWnd.top;
 				m_grpDevice.ResizeBackBuffer(uWidth, uHeight);
 				OnSizeChange(short(LOWORD(lParam)), short(HIWORD(lParam)));
 			}

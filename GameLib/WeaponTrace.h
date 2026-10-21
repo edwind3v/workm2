@@ -3,17 +3,10 @@
 // change CatMull to cubic spline
 #include "../eterGrnLib/ThingInstance.h"
 
+struct WeaponTraceSplineSegment;
+
 class CWeaponTrace
 {
-	/*
-	public:
-		typedef struct SSplineValue
-		{
-			float fValue1;
-			float fValue2;
-			float fValue3;
-		} TSplineValue;
-	*/
 	public:
 		static void DestroySystem();
 		static void Delete(CWeaponTrace* pkWTDel);
@@ -46,24 +39,24 @@ class CWeaponTrace
 
 	protected:
 		bool BuildVertex();
+		bool BuildSplineCoefficients(std::vector<WeaponTraceSplineSegment>& outSegments, int& outNumSamples);
 
 	protected:
 
 		float m_fLastUpdate;
 
-		typedef std::pair<float, D3DXVECTOR3> TTimePoint;
+		typedef std::pair<float, Vector3> TTimePoint;
 		typedef std::deque<TTimePoint> TTimePointList;
 		TTimePointList m_ShortTimePointList;
 		TTimePointList m_LongTimePointList;
 
+		// CPU fallback vertex output
 		std::vector<TPDTVertex> m_PDTVertexVector;
+		std::vector<TPDTVertex> m_ShortVertexVector;
+		std::vector<TPDTVertex> m_LongVertexVector;
 
 		float m_fLifeTime;
 		float m_fSamplingTime;
-
-		//std::vector<TPDTVertex> m_PDTVertexVector;
-		//std::vector<TPDTVertex> m_CurvingTraceVector;
-		//std::vector<TSplineValue> m_SplineValueVector;
 
 		CGraphicThingInstance * m_pInstance;
 		DWORD m_dwModelInstanceIndex;
@@ -84,4 +77,3 @@ class CWeaponTrace
 	protected:
 		static CDynamicPool<CWeaponTrace> ms_kPool;
 };
-

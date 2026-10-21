@@ -4,7 +4,7 @@
 
 #include "stdafx.h"
 #include "Decal.h"
-#include "StateManager.h"
+#include "ShaderManager.h"
 
 //////////////////////////////////////////////////////////////////////
 // CDecal
@@ -22,15 +22,15 @@ CDecal::~CDecal()
 
 void CDecal::Clear()
 {
-	m_v3Center = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
-	m_v3Normal = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
+	m_v3Center = Vector3(0.0f, 0.0f, 0.0f);
+	m_v3Normal = Vector3(0.0f, 0.0f, 0.0f);
 
-	m_v4LeftPlane = D3DXPLANE(0.0f, 0.0f, 0.0f, 0.0f);
-	m_v4RightPlane = D3DXPLANE(0.0f, 0.0f, 0.0f, 0.0f);
-	m_v4TopPlane = D3DXPLANE(0.0f, 0.0f, 0.0f, 0.0f);
-	m_v4BottomPlane = D3DXPLANE(0.0f, 0.0f, 0.0f, 0.0f);
-	m_v4FrontPlane = D3DXPLANE(0.0f, 0.0f, 0.0f, 0.0f);
-	m_v4BackPlane = D3DXPLANE(0.0f, 0.0f, 0.0f, 0.0f);
+	m_v4LeftPlane = Plane(0.0f, 0.0f, 0.0f, 0.0f);
+	m_v4RightPlane = Plane(0.0f, 0.0f, 0.0f, 0.0f);
+	m_v4TopPlane = Plane(0.0f, 0.0f, 0.0f, 0.0f);
+	m_v4BottomPlane = Plane(0.0f, 0.0f, 0.0f, 0.0f);
+	m_v4FrontPlane = Plane(0.0f, 0.0f, 0.0f, 0.0f);
+	m_v4BackPlane = Plane(0.0f, 0.0f, 0.0f, 0.0f);
 
 	m_dwVertexCount = 0;
 	m_dwPrimitiveCount = 0;
@@ -41,23 +41,23 @@ void CDecal::Clear()
 	memset(m_Indices, 0, sizeof(m_Indices));
 }
 
-void CDecal::ClipMesh(DWORD dwPrimitiveCount, const D3DXVECTOR3 *c_pv3Vertex, const D3DXVECTOR3 *c_pv3Normal)
+void CDecal::ClipMesh(DWORD dwPrimitiveCount, const Vector3 *c_pv3Vertex, const Vector3 *c_pv3Normal)
 {
-	D3DXVECTOR3		v3NewVertex[9];
-	D3DXVECTOR3		v3NewNormal[9];
+	Vector3		v3NewVertex[9];
+	Vector3		v3NewNormal[9];
 
 	// Clip one triangle at a time
 	for(DWORD dwi = 0; dwi < dwPrimitiveCount; ++dwi)
 	{
-		const D3DXVECTOR3 & v3_1 = c_pv3Vertex[3 * dwi];
-		const D3DXVECTOR3 & v3_2 = c_pv3Vertex[3 * dwi + 1];
-		const D3DXVECTOR3 & v3_3 = c_pv3Vertex[3 * dwi + 2];
+		const Vector3 & v3_1 = c_pv3Vertex[3 * dwi];
+		const Vector3 & v3_2 = c_pv3Vertex[3 * dwi + 1];
+		const Vector3 & v3_3 = c_pv3Vertex[3 * dwi + 2];
 
-		D3DXVECTOR3 v3Cross;
+		Vector3 v3Cross;
 		auto val1 = (v3_2 - v3_1);
 		auto val2 = (v3_3 - v3_1);
-		D3DXVec3Cross(&v3Cross, &val1, &val2);
-		if (D3DXVec3Dot(&m_v3Normal, &v3Cross) > ( m_cfDecalEpsilon ) * D3DXVec3Length(&v3Cross))
+		Vec3Cross(&v3Cross, &val1, &val2);
+		if (Vec3Dot(&m_v3Normal, &v3Cross) > ( m_cfDecalEpsilon ) * Vec3Length(&v3Cross))
 		{
 			v3NewVertex[0] = v3_1;
 			v3NewVertex[1] = v3_2;
@@ -73,7 +73,7 @@ void CDecal::ClipMesh(DWORD dwPrimitiveCount, const D3DXVECTOR3 *c_pv3Vertex, co
 	}
 }
 
-bool CDecal::AddPolygon(DWORD dwAddCount, const D3DXVECTOR3 *c_pv3Vertex, const D3DXVECTOR3  * /*c_pv3Normal */)
+bool CDecal::AddPolygon(DWORD dwAddCount, const Vector3 *c_pv3Vertex, const Vector3  * /*c_pv3Normal */)
 {
 	if (m_dwVertexCount + dwAddCount >= MAX_DECAL_VERTICES)
 		return false;
@@ -99,9 +99,9 @@ bool CDecal::AddPolygon(DWORD dwAddCount, const D3DXVECTOR3 *c_pv3Vertex, const 
 	{
 		*wIndex++ = (WORD) dwCount;
 		m_Vertices[dwCount].position = c_pv3Vertex[dwVertexNum];
-		//const D3DXVECTOR3 & v3Normal = c_pv3Normal[dwVertexNum];
-		//float fAlpha = (D3DXVec3Dot(&m_v3Normal, &v3Normal) / D3DXVec3Length(&v3Normal) - m_cfDecalEpsilon) * fOne_over_1MinusDecalEpsilon;
-		//m_Vertices[dwCount].diffuse = D3DXCOLOR(1.0f, 1.0f, 1.0f, (fAlpha > 0.0f) ? fAlpha : 0.0f);
+		//const Vector3 & v3Normal = c_pv3Normal[dwVertexNum];
+		//float fAlpha = (Vec3Dot(&m_v3Normal, &v3Normal) / Vec3Length(&v3Normal) - m_cfDecalEpsilon) * fOne_over_1MinusDecalEpsilon;
+		//m_Vertices[dwCount].diffuse = Color(1.0f, 1.0f, 1.0f, (fAlpha > 0.0f) ? fAlpha : 0.0f);
 		m_Vertices[dwCount].diffuse = 0xFFFFFFFF;
 		++dwCount;
 	}
@@ -111,13 +111,13 @@ bool CDecal::AddPolygon(DWORD dwAddCount, const D3DXVECTOR3 *c_pv3Vertex, const 
 }
 
 DWORD CDecal::ClipPolygon(DWORD dwVertexCount,
-						 const D3DXVECTOR3 *c_pv3Vertex,
-						 const D3DXVECTOR3 *c_pv3Normal,
-						 D3DXVECTOR3 *c_pv3NewVertex,
-						 D3DXVECTOR3 *c_pv3NewNormal) const
+						 const Vector3 *c_pv3Vertex,
+						 const Vector3 *c_pv3Normal,
+						 Vector3 *c_pv3NewVertex,
+						 Vector3 *c_pv3NewNormal) const
 {
-	D3DXVECTOR3		v3TempVertex[9];
-	D3DXVECTOR3		v3TempNormal[9];
+	Vector3		v3TempVertex[9];
+	Vector3		v3TempNormal[9];
 
 	// Clip against all six planes
 	DWORD dwCount = ClipPolygonAgainstPlane(m_v4LeftPlane, dwVertexCount, c_pv3Vertex, c_pv3Normal, v3TempVertex, v3TempNormal);
@@ -144,12 +144,12 @@ DWORD CDecal::ClipPolygon(DWORD dwVertexCount,
 	return dwCount;
 }
 
-DWORD CDecal::ClipPolygonAgainstPlane(const D3DXPLANE& c_rv4Plane,
+DWORD CDecal::ClipPolygonAgainstPlane(const Plane& c_rv4Plane,
 									  DWORD dwVertexCount,
-									  const D3DXVECTOR3 *c_pv3Vertex,
-									  const D3DXVECTOR3 *c_pv3Normal,
-									  D3DXVECTOR3 *c_pv3NewVertex,
-									  D3DXVECTOR3 *c_pv3NewNormal)
+									  const Vector3 *c_pv3Vertex,
+									  const Vector3 *c_pv3Normal,
+									  Vector3 *c_pv3NewVertex,
+									  Vector3 *c_pv3NewNormal)
 {
 	bool bNegative[10];
 
@@ -157,7 +157,7 @@ DWORD CDecal::ClipPolygonAgainstPlane(const D3DXPLANE& c_rv4Plane,
 	DWORD dwNegativeCount = 0;
 	for (DWORD dwi = 0; dwi < dwVertexCount; ++dwi)
 	{
-		const bool bNeg = (D3DXPlaneDotCoord(&c_rv4Plane, &c_pv3Vertex[dwi]) < 0.0F);
+		const bool bNeg = (PlaneDotCoord(&c_rv4Plane, &c_pv3Vertex[dwi]) < 0.0F);
 		bNegative[dwi] = bNeg;
 		dwNegativeCount += bNeg;
 	}
@@ -178,12 +178,12 @@ DWORD CDecal::ClipPolygonAgainstPlane(const D3DXPLANE& c_rv4Plane,
 			{
 				// Current vertex is on negative side of plane,
 				// but previous vertex is on positive side.
-				const D3DXVECTOR3& v3_1 = c_pv3Vertex[dwPrevIndex];
-				const D3DXVECTOR3& v3_2 = c_pv3Vertex[dwCurIndex];
-				const float ft = D3DXPlaneDotCoord(&c_rv4Plane, &v3_1) / (c_rv4Plane.a * (v3_1.x - v3_2.x) + c_rv4Plane.b * (v3_1.y - v3_2.y) + c_rv4Plane.c * (v3_1.z - v3_2.z));
+				const Vector3& v3_1 = c_pv3Vertex[dwPrevIndex];
+				const Vector3& v3_2 = c_pv3Vertex[dwCurIndex];
+				const float ft = PlaneDotCoord(&c_rv4Plane, &v3_1) / (c_rv4Plane.a * (v3_1.x - v3_2.x) + c_rv4Plane.b * (v3_1.y - v3_2.y) + c_rv4Plane.c * (v3_1.z - v3_2.z));
  				c_pv3NewVertex[dwCount] = v3_1 * (1.0f - ft) + v3_2 * ft;
-				const D3DXVECTOR3& v3_n1 = c_pv3Normal[dwPrevIndex];
-				const D3DXVECTOR3& v3_n2 = c_pv3Normal[dwCurIndex];
+				const Vector3& v3_n1 = c_pv3Normal[dwPrevIndex];
+				const Vector3& v3_n2 = c_pv3Normal[dwCurIndex];
  				c_pv3NewNormal[dwCount] = v3_n1 * (1.0f - ft) + v3_n2 * ft;
 				++dwCount;
 			}
@@ -194,12 +194,12 @@ DWORD CDecal::ClipPolygonAgainstPlane(const D3DXPLANE& c_rv4Plane,
 			{
 				// Current vertex is on positive side of plane,
 				// but previous vertex is on negative side.
-				const D3DXVECTOR3& v3_1 = c_pv3Vertex[dwCurIndex];
-				const D3DXVECTOR3& v3_2 = c_pv3Vertex[dwPrevIndex];
-				const float ft = D3DXPlaneDotCoord(&c_rv4Plane, &v3_1) / (c_rv4Plane.a * (v3_1.x - v3_2.x) + c_rv4Plane.b * (v3_1.y - v3_2.y) + c_rv4Plane.c * (v3_1.z - v3_2.z));
+				const Vector3& v3_1 = c_pv3Vertex[dwCurIndex];
+				const Vector3& v3_2 = c_pv3Vertex[dwPrevIndex];
+				const float ft = PlaneDotCoord(&c_rv4Plane, &v3_1) / (c_rv4Plane.a * (v3_1.x - v3_2.x) + c_rv4Plane.b * (v3_1.y - v3_2.y) + c_rv4Plane.c * (v3_1.z - v3_2.z));
  				c_pv3NewVertex[dwCount] = v3_1 * (1.0f - ft) + v3_2 * ft;
-				const D3DXVECTOR3& v3_n1 = c_pv3Normal[dwCurIndex];
-				const D3DXVECTOR3& v3_n2 = c_pv3Normal[dwPrevIndex];
+				const Vector3& v3_n1 = c_pv3Normal[dwCurIndex];
+				const Vector3& v3_n2 = c_pv3Normal[dwPrevIndex];
  				c_pv3NewNormal[dwCount] = v3_n1 * (1.0f - ft) + v3_n2 * ft;
 				++dwCount;
 			}
@@ -223,21 +223,44 @@ void CDecal::Update()
 
 void CDecal::Render()
 {
-	D3DXMATRIX matWorld;
-	D3DXMatrixIdentity(&matWorld);
-	STATEMANAGER.SetTransform(D3DTS_WORLD, &matWorld);
+	Matrix matWorld;
+	MatrixIdentity(&matWorld);
+	SHADERMANAGER.SetMatrix(MATRIX_WORLD, &matWorld);
 
-	STATEMANAGER.SetFVF(D3DFVF_XYZ|D3DFVF_DIFFUSE|D3DFVF_TEX1);
+
+	// Bind shader before rendering
+	SHADERMANAGER.SetParticleColor(0xFFFFFFFF);  // White - decals use per-vertex color
+	SHADERMANAGER.BeginParticle();
 
 	for (DWORD dwi = 0; dwi < m_TriangleFanStructVector.size(); ++dwi)
-		STATEMANAGER.DrawIndexedPrimitiveUP(D3DPT_TRIANGLEFAN,
-		m_TriangleFanStructVector[dwi].m_wMinIndex,
-		m_TriangleFanStructVector[dwi].m_dwVertexCount,
-		m_TriangleFanStructVector[dwi].m_dwPrimitiveCount,
-		m_Indices + m_TriangleFanStructVector[dwi].m_wMinIndex,
-		D3DFMT_INDEX16,
-		m_Vertices,
-		sizeof(TPDTVertex));
+	{
+		const TTRIANGLEFANSTRUCT& fan = m_TriangleFanStructVector[dwi];
+		DWORD dwVertexCount = fan.m_dwVertexCount;
+		DWORD dwPrimitiveCount = fan.m_dwPrimitiveCount;
+		WORD wMinIndex = fan.m_wMinIndex;
+
+		if (dwVertexCount < 3 || dwPrimitiveCount == 0)
+			continue;
+
+		WORD listIndices[MAX_DECAL_VERTICES * 3];
+		DWORD listIndexCount = 0;
+
+		for (DWORD tri = 0; tri < dwPrimitiveCount && listIndexCount + 3 <= MAX_DECAL_VERTICES * 3; ++tri)
+		{
+			listIndices[listIndexCount++] = wMinIndex;           // Center vertex (first vertex of fan)
+			listIndices[listIndexCount++] = wMinIndex + tri + 1; // Current edge vertex
+			listIndices[listIndexCount++] = wMinIndex + tri + 2; // Next edge vertex
+		}
+
+		SHADERMANAGER.DrawIndexedDynamic(TOPOLOGY_TRIANGLELIST,
+			wMinIndex,
+			dwVertexCount,
+			dwPrimitiveCount,
+			listIndices,
+			DXGI_FORMAT_R16_UINT,
+			m_Vertices,
+			sizeof(TPDTVertex));
+	}
 }
 
 /*

@@ -1,4 +1,7 @@
 #include "StdAfx.h"
+#include "../EterLib/ShaderInit.h"
+extern float MIN_FOG;
+#include "../EterLib/ShaderManager.h"
 #include "../eterLib/StateManager.h"
 #include "../EterPack/EterPackManager.h"
 
@@ -223,39 +226,66 @@ void CMapManager::BeginEnvironment()
 
 	CMapOutdoor& rkMap=GetMapOutdoorRef();
 
+	SHADERMANAGER.PushState();
 	// Light always on
- 	STATEMANAGER.SaveRenderState(D3DRS_LIGHTING, TRUE);
+	SHADERMANAGER.SetLightingEnabled(true);
 
 	// Fog
- 	STATEMANAGER.SaveRenderState(D3DRS_FOGENABLE, mc_pcurEnvironmentData->bFogEnable);
 
-	// Material
-	STATEMANAGER.SetMaterial(&mc_pcurEnvironmentData->Material);
 
-	// Directional Light
-	if (mc_pcurEnvironmentData->bDirLightsEnable[ENV_DIRLIGHT_BACKGROUND])
+#ifdef ENABLE_HEIGHT_FOG
 	{
-		ms_lpd3dDevice->LightEnable(0, TRUE);
+		const Color& sunDiffuse = mc_pcurEnvironmentData->DirLights[ENV_DIRLIGHT_BACKGROUND].Diffuse;
+		const Color& sunAmbient = mc_pcurEnvironmentData->DirLights[ENV_DIRLIGHT_BACKGROUND].Ambient;
 
-		rkMap.ApplyLight((DWORD)mc_pcurEnvironmentData, mc_pcurEnvironmentData->DirLights[ENV_DIRLIGHT_BACKGROUND]);
+		float intensity = (sunDiffuse.r + sunDiffuse.g + sunDiffuse.b
+						+ sunAmbient.r + sunAmbient.g + sunAmbient.b) / 6.0f;
+		intensity = max(0.15f, intensity);
+		float fogR = sunDiffuse.r * 0.4f + sunAmbient.r * 0.2f + 0.3f * intensity;
+		float fogG = sunDiffuse.g * 0.4f + sunAmbient.g * 0.2f + 0.35f * intensity;
+		float fogB = sunDiffuse.b * 0.4f + sunAmbient.b * 0.2f + 0.4f * intensity;
+
+		float maxC = max(fogR, max(fogG, fogB));
+		if (maxC > 1.0f) { fogR /= maxC; fogG /= maxC; fogB /= maxC; }
+
+		BYTE rr = (BYTE)(fogR * 255.0f);
+		BYTE gg = (BYTE)(fogG * 255.0f);
+		BYTE bb = (BYTE)(fogB * 255.0f);
+		DWORD dwHeightFogColor = 0xFF000000 | (rr << 16) | (gg << 8) | bb;
+
+		float fFogNear = mc_pcurEnvironmentData->GetFogNearDistance();
+		float fFogFar = max(fFogNear + 1.0f, mc_pcurEnvironmentData->GetFogFarDistance());
+
+		SHADERMANAGER.SetFogEnabled(mc_pcurEnvironmentData->bFogEnable != 0);
+		SHADERMANAGER.SetFogParams(fFogNear, fFogFar, dwHeightFogColor);
+
+		CSpeedTreeForestDX11& rkForest = CSpeedTreeForestDX11::Instance();
+		rkForest.SetFog(fFogNear, fFogFar);
+
+		Color fogColor(dwHeightFogColor);
+		UpdateShaderFogConstants(mc_pcurEnvironmentData->bFogEnable != 0, fFogNear, fFogFar, 0.0f, fogColor, true);
 	}
-	else
-		ms_lpd3dDevice->LightEnable(0, FALSE);
+#else
+#if defined(__BL_FOG_FIX__)
+	SHADERMANAGER.SetFogEnabled(m_isFogModeEnabled ? mc_pcurEnvironmentData->bFogEnable : false);
+#else
+	SHADERMANAGER.SetFogEnabled(mc_pcurEnvironmentData->bFogEnable != 0);
+#endif
 
 	if (mc_pcurEnvironmentData->bFogEnable)
 	{
-		const DWORD dwFogColor = mc_pcurEnvironmentData->FogColor;
-		STATEMANAGER.SetRenderState(D3DRS_FOGCOLOR, dwFogColor);
+		DWORD dwFogColor = mc_pcurEnvironmentData->FogColor;
+		SHADERMANAGER.SetFogColor(dwFogColor);
 
 		if (mc_pcurEnvironmentData->bDensityFog)
 		{
 			float fDensity = 0.00015f;
-			STATEMANAGER.SetRenderState(D3DRS_FOGVERTEXMODE, D3DFOG_EXP);					// pixel fog
-			STATEMANAGER.SetRenderState(D3DRS_FOGDENSITY, *((DWORD *) &fDensity));			// vertex fog
+			Color fogColor(dwFogColor);
+			UpdateShaderFogConstants(true, 0.0f, 0.0f, fDensity, fogColor, false);
 		}
 		else
 		{
-			CSpeedTreeForest& rkForest = CSpeedTreeForest::Instance();
+			CSpeedTreeForestDX11& rkForest=CSpeedTreeForestDX11::Instance();
 			rkForest.SetFog(
 				mc_pcurEnvironmentData->GetFogNearDistance(),
 				mc_pcurEnvironmentData->GetFogFarDistance()
@@ -263,23 +293,24 @@ void CMapManager::BeginEnvironment()
 
 			float fFogNear=mc_pcurEnvironmentData->GetFogNearDistance();
 			float fFogFar=mc_pcurEnvironmentData->GetFogFarDistance();
-			STATEMANAGER.SetRenderState(D3DRS_FOGVERTEXMODE, D3DFOG_LINEAR);								// vertex fox
-			STATEMANAGER.SetRenderState(D3DRS_RANGEFOGENABLE, TRUE);											// vertex fox
-			STATEMANAGER.SetRenderState(D3DRS_FOGSTART, *((DWORD *) &fFogNear));	// USED BY D3DFOG_LINEAR
-			STATEMANAGER.SetRenderState(D3DRS_FOGEND, *((DWORD *) &fFogFar));		// USED BY D3DFOG_LINEAR
+			SHADERMANAGER.SetFogParams(fFogNear, fFogFar, dwFogColor);
+
+			Color fogColor(dwFogColor);
+			UpdateShaderFogConstants(true, fFogNear, fFogFar, 0.0f, fogColor, true);
 		}
 	}
+	else
+	{
+		UpdateShaderFogConstants(false, 0.0f, 0.0f, 0.0f, Color(1, 1, 1, 1), true);
+	}
+#endif
 
 	rkMap.OnBeginEnvironment();
 }
 
 void CMapManager::EndEnvironment() const
 {
-	if (!mc_pcurEnvironmentData)
-		return;
-
-	STATEMANAGER.RestoreRenderState(D3DRS_LIGHTING);
-	STATEMANAGER.RestoreRenderState(D3DRS_FOGENABLE);
+	if (m_pkMap && mc_pcurEnvironmentData) SHADERMANAGER.PopState();
 }
 
 void CMapManager::SetEnvironmentData(int nEnvDataIndex)
@@ -479,7 +510,7 @@ CArea::TCRCWithNumberVector & CMapManager::GetRenderedGraphicThingInstanceNum(DW
 	return rkMap.GetRenderedGraphicThingInstanceNum(pdwGraphicThingInstanceNum, pdwCRCNum);
 }
 
-bool CMapManager::GetNormal(int ix, int iy, D3DXVECTOR3 * pv3Normal) const
+bool CMapManager::GetNormal(int ix, int iy, Vector3 * pv3Normal) const
 {
 	if (!IsMapReady())
 		return false;
@@ -488,7 +519,7 @@ bool CMapManager::GetNormal(int ix, int iy, D3DXVECTOR3 * pv3Normal) const
 	return rkMap.GetNormal(ix, iy, pv3Normal);
 }
 
-bool CMapManager::isPhysicalCollision(const D3DXVECTOR3 & c_rvCheckPosition)
+bool CMapManager::isPhysicalCollision(const Vector3 & c_rvCheckPosition)
 {
 	if (!IsMapReady())
 		return false;

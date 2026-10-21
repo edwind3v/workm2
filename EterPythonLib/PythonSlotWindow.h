@@ -81,7 +81,7 @@ namespace UI
 				// Toggle
 				BOOL	bActive;
 				#ifdef ENABLE_HIGHLIGHT_NEW_ITEM
-				D3DXCOLOR d3Color{1.f, 1.f, 1.f, 1.f};
+				Color d3Color{1.f, 1.f, 1.f, 1.f};
 				#endif
 
 				int		ixPosition;
@@ -132,11 +132,11 @@ namespace UI
 
 			void ClearAllSlot();
 			void ClearSlot(DWORD dwIndex);
-			void SetSlot(DWORD dwIndex, DWORD dwVirtualNumber, BYTE byWidth, BYTE byHeight, CGraphicImage * pImage, D3DXCOLOR& diffuseColor);
+			void SetSlot(DWORD dwIndex, DWORD dwVirtualNumber, BYTE byWidth, BYTE byHeight, CGraphicImage * pImage, Color& diffuseColor);
 			void SetSlotCount(DWORD dwIndex, DWORD dwCount);
 			void SetSlotCountNew(DWORD dwIndex, DWORD dwGrade, DWORD dwCount);
 			void SetSlotCoolTime(DWORD dwIndex, float fCoolTime, float fElapsedTime = 0.0f);
-			void ActivateSlot(DWORD dwIndex, const D3DXCOLOR & color);
+			void ActivateSlot(DWORD dwIndex, const Color & color);
 			void DeactivateSlot(DWORD dwIndex);
 			void RefreshSlot();
 

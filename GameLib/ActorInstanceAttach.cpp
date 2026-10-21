@@ -269,7 +269,7 @@ DWORD CActorInstance::AttachEffectByName(DWORD dwParentPartIndex, const char * c
 	return AttachEffectByID(dwParentPartIndex, c_pszBoneName, dwCRC);
 }
 
-DWORD CActorInstance::AttachEffectByID(DWORD dwParentPartIndex, const char * c_pszBoneName, DWORD dwEffectID, const D3DXVECTOR3 * c_pv3Position)
+DWORD CActorInstance::AttachEffectByID(DWORD dwParentPartIndex, const char * c_pszBoneName, DWORD dwEffectID, const Vector3 * c_pv3Position)
 {
 	TAttachingEffect ae;
 	ae.iLifeType = EFFECT_LIFE_INFINITE;
@@ -279,11 +279,11 @@ DWORD CActorInstance::AttachEffectByID(DWORD dwParentPartIndex, const char * c_p
 	ae.isAttaching = TRUE;
 	if (c_pv3Position)
 	{
-		D3DXMatrixTranslation(&ae.matTranslation, c_pv3Position->x, c_pv3Position->y, c_pv3Position->z);
+		MatrixTranslation(&ae.matTranslation, c_pv3Position->x, c_pv3Position->y, c_pv3Position->z);
 	}
 	else
 	{
-		D3DXMatrixIdentity(&ae.matTranslation);
+		MatrixIdentity(&ae.matTranslation);
 	}
 	CEffectManager& rkEftMgr=CEffectManager::Instance();
 	rkEftMgr.CreateEffectInstance(ae.dwEffectIndex, dwEffectID);
@@ -555,17 +555,17 @@ void CActorInstance::UpdateAttachingInstances()
 
 				if (it->iBoneIndex == -1)
 				{
-					D3DXMATRIX matTransform;
+					Matrix matTransform;
 					matTransform = it->matTranslation;
 					matTransform *= m_worldMatrix;
 					rkEftMgr.SetEffectInstanceGlobalMatrix(matTransform);
 				}
 				else
 				{
-					D3DXMATRIX * pBoneMat;
+					Matrix * pBoneMat;
 					if (GetBoneMatrix(it->dwModelIndex, it->iBoneIndex, &pBoneMat))
 					{
-						D3DXMATRIX matTransform;
+						Matrix matTransform;
 						matTransform = *pBoneMat;
 						matTransform *= it->matTranslation;
 						matTransform *= m_worldMatrix;

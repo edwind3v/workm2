@@ -2,7 +2,8 @@
 
 #include <granny.h>
 #include <windows.h>
-#include <d3d9.h>
+#include <functional>
+#include <d3d11.h>
 
 #include "../eterlib/ReferenceObject.h"
 #include "../eterlib/Ref.h"
@@ -17,6 +18,10 @@ class CGrannyMaterial : public CReferenceObject
 		static void CreateSphereMap(UINT uMapIndex, const char* c_szSphereMapImageFileName);
 		static void DestroySphereMap();
 
+		// State caching for performance - call at frame start
+		static void ResetRenderStateCache();
+		static void RestoreRenderStateCache();
+
 	public:
 		enum EType
 		{
@@ -29,8 +34,8 @@ class CGrannyMaterial : public CReferenceObject
 		static void TranslateSpecularMatrix(float fAddX, float fAddY, float fAddZ);
 
 	private:
-		static D3DXMATRIX ms_matSpecular;
-		static D3DXVECTOR3 ms_v3SpecularTrans;
+		static Matrix ms_matSpecular;
+		static Vector3 ms_v3SpecularTrans;
 
 	public:
 		CGrannyMaterial();
@@ -39,11 +44,11 @@ class CGrannyMaterial : public CReferenceObject
 		void					Destroy();
 		void					Copy(CGrannyMaterial& rkMtrl);
 		bool					IsEqual(granny_material * pgrnMaterial) const;
-		bool					IsIn(const char* c_szImageName, int* iStage) const;
+		bool					IsIn(const char* c_szImageName, int* iStage);
 		void					SetSpecularInfo(BOOL bFlag, float fPower, BYTE uSphereMapIndex);
 
 		void					ApplyRenderState();
-		void					RestoreRenderState();
+		void					RestorePipelineState();
 
 	protected:
 		void					Initialize();
@@ -58,17 +63,16 @@ class CGrannyMaterial : public CReferenceObject
 		const CGraphicTexture * GetDiffuseTexture() const;
 		const CGraphicTexture * GetOpacityTexture() const;
 
-		LPDIRECT3DTEXTURE9		GetD3DTexture(int iStage) const;
+		ID3D11ShaderResourceView*	GetD3DTexture(int iStage) const;
+		bool					IsTextureLoaded() const;
 
 		bool					IsTwoSided() const		{ return m_bTwoSideRender; }
 
-	public:
-		float					__GetSpecularPower() const { return m_fSpecularPower; }
-		bool					__IsSpecularEnabled() const { return m_bSpecularEnable; }
-		BYTE					GetSphereMapIndex() const { return m_bSphereMapIndex; }
-
 	protected:
-		CGraphicImage *			__GetImagePointer(const char * c_szFileName) const;
+		CGraphicImage *			__GetImagePointer(const char * c_szFileName);
+
+		BOOL					__IsSpecularEnable() const;
+		float					__GetSpecularPower() const;
 
 		void					__ApplyDiffuseRenderState();
 		void					__RestoreDiffuseRenderState();
@@ -82,7 +86,6 @@ class CGrannyMaterial : public CReferenceObject
 
 		float					m_fSpecularPower;
 		BOOL					m_bSpecularEnable;
-		bool m_specularInitialized = false;
 		bool					m_bTwoSideRender;
 		DWORD					m_dwLastCullRenderStateForTwoSideRendering;
 		BYTE					m_bSphereMapIndex;
@@ -96,6 +99,11 @@ class CGrannyMaterial : public CReferenceObject
 			SPHEREMAP_NUM = 10,
 		};
 		static CGraphicImageInstance ms_akSphereMapInstance[SPHEREMAP_NUM];
+
+		static thread_local ID3D11ShaderResourceView* ms_pLastTexture[2];
+		static thread_local CGrannyMaterial* ms_pLastMaterial;
+		static thread_local bool ms_bSpecularStateApplied;
+		static thread_local bool ms_bTwoSideStateApplied;
 };
 
 class CGrannyMaterialPalette
@@ -110,13 +118,25 @@ class CGrannyMaterialPalette
 		DWORD	RegisterMaterial(granny_material* pgrnMaterial);
 		void	SetMaterialImagePointer(const char* c_szMtrlName, CGraphicImage* pImage);
 		void	SetMaterialData(const char* c_szMtrlName, const SMaterialData& c_rkMaterialData);
-		void	SetSpecularInfo(const char* c_szMtrlName, BOOL bEnable, float fPower) const;
+		void	SetSpecularInfo(const char* c_szMtrlName, BOOL bEnable, float fPower);
 
-		CGrannyMaterial& GetMaterialRef(DWORD mtrlIndex) const;
+		CGrannyMaterial& GetMaterialRef(DWORD mtrlIndex);
 
-		DWORD	GetMaterialCount() const;
+		DWORD GetMaterialCount() const;
+        size_t GetBatchHash() const {
+            size_t result = m_mtrlVector.size();
+            for (const auto& material : m_mtrlVector)
+                result ^= std::hash<void*>()(material.GetPointer()) + 0x9e3779b9 + (result << 6) + (result >> 2);
+            return result;
+        }
+        bool HasSameMaterials(const CGrannyMaterialPalette& other) const {
+            if (m_mtrlVector.size() != other.m_mtrlVector.size()) return false;
+            for (size_t i = 0; i < m_mtrlVector.size(); ++i)
+                if (m_mtrlVector[i].GetPointer() != other.m_mtrlVector[i].GetPointer()) return false;
+            return true;
+        }
 
 	protected:
 		std::vector<CGrannyMaterial::TRef> m_mtrlVector;
 };
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

@@ -12,8 +12,8 @@ class CBlockTexture : public CGraphicBase
 
 		bool Create(CGraphicDib * pDIB, const RECT & c_rRect, DWORD dwWidth, DWORD dwHeight);
 		void SetClipRect(const RECT & c_rRect);
-		void Render(int ix, int iy) const;
-		void InvalidateRect(const RECT & c_rsrcRect) const;
+		void Render(int ix, int iy);
+		void InvalidateRect(const RECT & c_rsrcRect);
 
 	protected:
 		CGraphicDib * m_pDIB;
@@ -22,6 +22,7 @@ class CBlockTexture : public CGraphicBase
 		BOOL m_bClipEnable;
 		DWORD m_dwWidth;
 		DWORD m_dwHeight;
-		LPDIRECT3DTEXTURE9 m_lpd3dTexture;
-};
 
+		ID3D11Texture2D* m_pTexture;
+		ID3D11ShaderResourceView* m_pSRV;
+};

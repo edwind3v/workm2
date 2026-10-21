@@ -99,7 +99,7 @@ bool CFlyingManager::RegisterFlyingData(const char* c_szFilename, DWORD & r_dwRe
 	return true;
 }
 
-CFlyingInstance * CFlyingManager::CreateFlyingInstanceFlyTarget(const DWORD dwID, const D3DXVECTOR3 & v3StartPosition, const CFlyTarget & cr_FlyTarget, bool canAttack)
+CFlyingInstance * CFlyingManager::CreateFlyingInstanceFlyTarget(const DWORD dwID, const Vector3 & v3StartPosition, const CFlyTarget & cr_FlyTarget, bool canAttack)
 {
 	if (!m_kMap_pkFlyData.contains(dwID))
 	{
@@ -178,7 +178,7 @@ void CFlyingManager::CreateIndexedFly(DWORD dwIndex, CActorInstance * pStartActo
 		case INDEX_FLY_TYPE_NORMAL:
 		{
 			CreateFlyingInstanceFlyTarget(rIndexFlyData.dwCRC,
-											D3DXVECTOR3(posStart.x, posStart.y, posStart.z),
+											Vector3(posStart.x, posStart.y, posStart.z),
 											pEndActor,
 											false);
 			break;
@@ -188,20 +188,20 @@ void CFlyingManager::CreateIndexedFly(DWORD dwIndex, CActorInstance * pStartActo
 			const float fRot = fmod(pStartActor->GetRotation() - 90.0f + 360.0f, 360.0f) + frandom(-30.0f, 30.0f);
 
 			const float fDistance = frandom(2000.0f, 5000.0f);
-			const float fxRand = fDistance * cosf(D3DXToRadian(fRot));
-			const float fyRand = fDistance * sinf(D3DXToRadian(fRot));
+			const float fxRand = fDistance * cosf(ToRadian(fRot));
+			const float fyRand = fDistance * sinf(ToRadian(fRot));
 			const float fzRand = frandom(1000.0f, 2500.0f);
 
 			CreateFlyingInstanceFlyTarget(rIndexFlyData.dwCRC,
-											D3DXVECTOR3(posStart.x, posStart.y, posStart.z+200),
-											D3DXVECTOR3(posStart.x + fxRand, posStart.y + fyRand, posStart.z + fzRand),
+											Vector3(posStart.x, posStart.y, posStart.z+200),
+											Vector3(posStart.x + fxRand, posStart.y + fyRand, posStart.z + fzRand),
 											false);
 			break;
 		}
 		case INDEX_FLY_TYPE_AUTO_FIRE:
 		{
 			CreateFlyingInstanceFlyTarget(rIndexFlyData.dwCRC,
-											D3DXVECTOR3(posStart.x, posStart.y, posStart.z+100.0f),
+											Vector3(posStart.x, posStart.y, posStart.z+100.0f),
 											pEndActor,
 											false);
 			break;
@@ -209,7 +209,7 @@ void CFlyingManager::CreateIndexedFly(DWORD dwIndex, CActorInstance * pStartActo
 	}
 }
 
-CFlyingInstance * CFlyingManager::CreateIndexedFlyingInstanceFlyTarget(const DWORD dwIndex, const D3DXVECTOR3 & v3StartPosition, const CFlyTarget & cr_FlyTarget)
+CFlyingInstance * CFlyingManager::CreateIndexedFlyingInstanceFlyTarget(const DWORD dwIndex, const Vector3 & v3StartPosition, const CFlyTarget & cr_FlyTarget)
 {
 	if (!m_kMap_dwIndexFlyData.contains(dwIndex))
 	{
@@ -218,6 +218,6 @@ CFlyingInstance * CFlyingManager::CreateIndexedFlyingInstanceFlyTarget(const DWO
 	}
 
 	const TIndexFlyData& rIndexFlyData = m_kMap_dwIndexFlyData[dwIndex];
-	return CreateFlyingInstanceFlyTarget(rIndexFlyData.dwCRC, D3DXVECTOR3(v3StartPosition.x, v3StartPosition.y, v3StartPosition.z), cr_FlyTarget, true);
+	return CreateFlyingInstanceFlyTarget(rIndexFlyData.dwCRC, Vector3(v3StartPosition.x, v3StartPosition.y, v3StartPosition.z), cr_FlyTarget, true);
 }
 

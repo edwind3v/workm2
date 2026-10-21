@@ -25,13 +25,13 @@
 #ifndef _lineintersect_utils_h
 #define _lineintersect_utils_h
 
-void IntersectLineSegments(const D3DXVECTOR3 & A1,
-                           const D3DXVECTOR3 & A2,
-                           const D3DXVECTOR3 & B1,
-                           const D3DXVECTOR3 & B2,
+void IntersectLineSegments(const Vector3 & A1,
+                           const Vector3 & A2,
+                           const Vector3 & B1,
+                           const Vector3 & B2,
                            //bool infinite_lines, /*float epsilon,*/
-						   D3DXVECTOR3 & OutA,
-						   D3DXVECTOR3 & OutB);
+						   Vector3 & OutA,
+						   Vector3 & OutB);
 
 void IntersectLineSegments(const float A1x, const float A1y, const float A1z,
                            const float A2x, const float A2y, const float A2z,

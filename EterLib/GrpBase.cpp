@@ -3,16 +3,19 @@
 #include "../eterBase/Timer.h"
 #include "GrpBase.h"
 #include "Camera.h"
-#include "StateManager.h"
+#include "ShaderInit.h"
+#include "ShaderManager.h"
 
-void PixelPositionToD3DXVECTOR3(const D3DXVECTOR3& c_rkPPosSrc, D3DXVECTOR3* pv3Dst)
+#include "../EterBase/StepTimer.h"
+
+void PixelPositionToVector3(const Vector3& c_rkPPosSrc, Vector3* pv3Dst)
 {
 	pv3Dst->x=+c_rkPPosSrc.x;
 	pv3Dst->y=-c_rkPPosSrc.y;
 	pv3Dst->z=+c_rkPPosSrc.z;
 }
 
-void D3DXVECTOR3ToPixelPosition(const D3DXVECTOR3& c_rv3Src, D3DXVECTOR3* pv3Dst)
+void Vector3ToPixelPosition(const Vector3& c_rv3Src, Vector3* pv3Dst)
 {
 	pv3Dst->x=+c_rv3Src.x;
 	pv3Dst->y=-c_rv3Src.y;
@@ -27,42 +30,86 @@ D3D_CDisplayModeAutoDetector				CGraphicBase::ms_kD3DDetector;
 HWND CGraphicBase::ms_hWnd;
 HDC CGraphicBase::ms_hDC;
 
-LPDIRECT3D9EX			CGraphicBase::ms_lpd3d = nullptr;
-LPDIRECT3DDEVICE9EX		CGraphicBase::ms_lpd3dDevice = nullptr;
-ID3DXMatrixStack *		CGraphicBase::ms_lpd3dMatStack = nullptr;
-D3DPRESENT_PARAMETERS	CGraphicBase::ms_d3dPresentParameter;
-D3DVIEWPORT9			CGraphicBase::ms_Viewport;
+// DX11 Core Objects
+bool CGraphicBase::ms_bWorldFrameResolved = false;
+ID3D11Device*			CGraphicBase::ms_pDevice = nullptr;
+ID3D11DeviceContext*	CGraphicBase::ms_pContext = nullptr;
+IDXGISwapChain*			CGraphicBase::ms_pSwapChain = nullptr;
+IDXGIFactory*			CGraphicBase::ms_pDXGIFactory = nullptr;
+ID3D11RenderTargetView*	CGraphicBase::ms_pRenderTargetView = nullptr;
+ID3D11DepthStencilView*	CGraphicBase::ms_pDepthStencilView = nullptr;
+ID3D11Texture2D*		CGraphicBase::ms_pDepthStencilBuffer = nullptr;
+D3D_FEATURE_LEVEL		CGraphicBase::ms_FeatureLevel = D3D_FEATURE_LEVEL_11_0;
 
-HRESULT					CGraphicBase::ms_hLastResult = 0;
+#ifdef ENABLE_MSAA
+ID3D11Texture2D*		CGraphicBase::ms_pMSAARenderTarget = nullptr;
+ID3D11RenderTargetView*	CGraphicBase::ms_pMSAARenderTargetView = nullptr;
+ID3D11Texture2D*		CGraphicBase::ms_pMSAADepthStencilBuffer = nullptr;
+ID3D11DepthStencilView*	CGraphicBase::ms_pMSAADepthStencilView = nullptr;
+UINT					CGraphicBase::ms_uMSAASampleCount = 1;
+#endif
+
+#ifdef ENABLE_SSAO
+ID3D11ShaderResourceView*	CGraphicBase::ms_pDepthStencilSRV = nullptr;
+ID3D11DepthStencilView*		CGraphicBase::ms_pDepthStencilViewReadOnly = nullptr;
+#ifdef ENABLE_MSAA
+ID3D11ShaderResourceView*	CGraphicBase::ms_pMSAADepthStencilSRV = nullptr;
+#endif
+ID3D11Texture2D*			CGraphicBase::ms_pResolvedDepthTex = nullptr;
+ID3D11RenderTargetView*		CGraphicBase::ms_pResolvedDepthRTV = nullptr;
+ID3D11ShaderResourceView*	CGraphicBase::ms_pResolvedDepthSRV = nullptr;
+ID3D11Texture2D*			CGraphicBase::ms_pSSAO_RT = nullptr;
+ID3D11RenderTargetView*		CGraphicBase::ms_pSSAO_RTV = nullptr;
+ID3D11ShaderResourceView*	CGraphicBase::ms_pSSAO_SRV = nullptr;
+ID3D11Texture2D*			CGraphicBase::ms_pSSAOBlur_RT = nullptr;
+ID3D11RenderTargetView*		CGraphicBase::ms_pSSAOBlur_RTV = nullptr;
+ID3D11ShaderResourceView*	CGraphicBase::ms_pSSAOBlur_SRV = nullptr;
+bool						CGraphicBase::ms_bSSAOEnabled = true;
+#endif
+
+#ifdef ENABLE_BLOOM
+ID3D11Texture2D*			CGraphicBase::ms_pSceneTexture = nullptr;
+ID3D11RenderTargetView*		CGraphicBase::ms_pSceneTextureRTV = nullptr;
+ID3D11ShaderResourceView*	CGraphicBase::ms_pSceneTextureSRV = nullptr;
+ID3D11Texture2D*			CGraphicBase::ms_pBloomRTA = nullptr;
+ID3D11RenderTargetView*		CGraphicBase::ms_pBloomRTA_RTV = nullptr;
+ID3D11ShaderResourceView*	CGraphicBase::ms_pBloomRTA_SRV = nullptr;
+ID3D11Texture2D*			CGraphicBase::ms_pBloomRTB = nullptr;
+ID3D11RenderTargetView*		CGraphicBase::ms_pBloomRTB_RTV = nullptr;
+ID3D11ShaderResourceView*	CGraphicBase::ms_pBloomRTB_SRV = nullptr;
+bool						CGraphicBase::ms_bBloomEnabled = true;
+#ifdef ENABLE_GODRAYS
+ID3D11Texture2D*			CGraphicBase::ms_pGodRaysRT = nullptr;
+ID3D11RenderTargetView*		CGraphicBase::ms_pGodRaysRTV = nullptr;
+ID3D11ShaderResourceView*	CGraphicBase::ms_pGodRaysSRV = nullptr;
+#endif
+
+#endif
+
+CMatrixStack*			CGraphicBase::ms_pMatrixStack = nullptr;
+D3D11_VIEWPORT			CGraphicBase::ms_Viewport = {};
+
+HRESULT					CGraphicBase::ms_hLastResult = S_OK;
 
 int						CGraphicBase::ms_iWidth;
 int						CGraphicBase::ms_iHeight;
 
-DWORD					CGraphicBase::ms_faceCount = 0;
+Matrix					CGraphicBase::ms_matIdentity;
 
-D3DCAPS9				CGraphicBase::ms_d3dCaps;
+Matrix					CGraphicBase::ms_matView;
+Matrix					CGraphicBase::ms_matProj;
+Matrix					CGraphicBase::ms_matInverseView;
+Matrix					CGraphicBase::ms_matInverseViewYAxis;
 
-DWORD					CGraphicBase::ms_dwD3DBehavior = 0;
+Matrix					CGraphicBase::ms_matWorld;
+Matrix					CGraphicBase::ms_matWorldView;
 
-DWORD					CGraphicBase::ms_pntVS = 0;
-DWORD					CGraphicBase::ms_pnt2VS = 0;
+Matrix					CGraphicBase::ms_matScreen0;
+Matrix					CGraphicBase::ms_matScreen1;
+Matrix					CGraphicBase::ms_matScreen2;
 
-D3DXMATRIX				CGraphicBase::ms_matIdentity;
-
-D3DXMATRIX				CGraphicBase::ms_matView;
-D3DXMATRIX				CGraphicBase::ms_matProj;
-D3DXMATRIX				CGraphicBase::ms_matInverseView;
-D3DXMATRIX				CGraphicBase::ms_matInverseViewYAxis;
-
-D3DXMATRIX				CGraphicBase::ms_matWorld;
-D3DXMATRIX				CGraphicBase::ms_matWorldView;
-
-D3DXMATRIX				CGraphicBase::ms_matScreen0;
-D3DXMATRIX				CGraphicBase::ms_matScreen1;
-D3DXMATRIX				CGraphicBase::ms_matScreen2;
-
-D3DXVECTOR3				CGraphicBase::ms_vtPickRayOrig;
-D3DXVECTOR3				CGraphicBase::ms_vtPickRayDir;
+Vector3					CGraphicBase::ms_vtPickRayOrig;
+Vector3					CGraphicBase::ms_vtPickRayDir;
 
 float					CGraphicBase::ms_fFieldOfView;
 float					CGraphicBase::ms_fNearY;
@@ -72,36 +119,35 @@ float					CGraphicBase::ms_fAspect;
 DWORD					CGraphicBase::ms_dwWavingEndTime;
 int						CGraphicBase::ms_iWavingPower;
 DWORD					CGraphicBase::ms_dwFlashingEndTime;
-D3DXCOLOR				CGraphicBase::ms_FlashingColor;
+Color					CGraphicBase::ms_FlashingColor;
 
 CRay					CGraphicBase::ms_Ray;
 bool					CGraphicBase::ms_bSupportDXT = true;
 bool					CGraphicBase::ms_isLowTextureMemory = false;
 bool					CGraphicBase::ms_isHighTextureMemory = false;
-
-/*
-std::vector<TIndex>		CGraphicBase::ms_lineIdxVector;
-std::vector<TIndex>		CGraphicBase::ms_lineTriIdxVector;
-std::vector<TIndex>		CGraphicBase::ms_lineRectIdxVector;
-std::vector<TIndex>		CGraphicBase::ms_lineCubeIdxVector;
-
-std::vector<TIndex>		CGraphicBase::ms_fillTriIdxVector;
-std::vector<TIndex>		CGraphicBase::ms_fillRectIdxVector;
-std::vector<TIndex>		CGraphicBase::ms_fillCubeIdxVector;
-*/
-
-LPD3DXMESH				CGraphicBase::ms_lpSphereMesh = nullptr;
-LPD3DXMESH				CGraphicBase::ms_lpCylinderMesh = nullptr;
+DWORD					CGraphicBase::ms_faceCount = 0;
 
 #ifdef ENABLE_FIX_MOBS_LAG
-IDirect3DVertexBuffer9* CGraphicBase::m_smallPdtVertexBuffer = nullptr;
-IDirect3DVertexBuffer9* CGraphicBase::m_largePdtVertexBuffer = nullptr;
+ID3D11Buffer* CGraphicBase::m_tinyPdtVertexBuffer = nullptr;
+ID3D11Buffer* CGraphicBase::m_smallPdtVertexBuffer = nullptr;
+ID3D11Buffer* CGraphicBase::m_mediumPdtVertexBuffer = nullptr;
+ID3D11Buffer* CGraphicBase::m_largePdtVertexBuffer = nullptr;
+ID3D11Buffer* CGraphicBase::m_xlargePdtVertexBuffer = nullptr;
 #else
-LPDIRECT3DVERTEXBUFFER9	CGraphicBase::ms_alpd3dPDTVB[PDT_VERTEXBUFFER_NUM];
-LPDIRECT3DVERTEXBUFFER9	CGraphicBase::ms_alpd3dTextLinePDTVB = nullptr;
+ID3D11Buffer*	CGraphicBase::ms_alpd3dPDTVB[PDT_VERTEXBUFFER_NUM] = {};
 #endif
 
-LPDIRECT3DINDEXBUFFER9	CGraphicBase::ms_alpd3dDefIB[DEFAULT_IB_NUM];
+ID3D11Buffer*	CGraphicBase::ms_alpd3dDefIB[DEFAULT_IB_NUM] = {};
+
+ID3D11DeviceContext* CGraphicBase::GetActiveContext()
+{
+	return ms_pContext;
+}
+
+CMatrixStack* CGraphicBase::GetActiveMatrixStack()
+{
+	return ms_pMatrixStack;
+}
 
 bool CGraphicBase::IsLowTextureMemory()
 {
@@ -113,29 +159,16 @@ bool CGraphicBase::IsHighTextureMemory()
 	return ms_isHighTextureMemory;
 }
 
-bool CGraphicBase::IsFastTNL()
-{
-	if (ms_dwD3DBehavior & D3DCREATE_HARDWARE_VERTEXPROCESSING ||
-		ms_dwD3DBehavior & D3DCREATE_MIXED_VERTEXPROCESSING)
-	{
-		if (ms_d3dCaps.VertexShaderVersion>D3DVS_VERSION(1,0))
-			return true;
-	}
-	return false;
-}
-
 bool CGraphicBase::IsTLVertexClipping()
 {
-	if (ms_d3dCaps.PrimitiveMiscCaps & D3DPMISCCAPS_CLIPTLVERTS)
-		return true;
-
-	return false;
+	// DX11 always clips transformed vertices
+	return true;
 }
 
 void CGraphicBase::GetBackBufferSize(UINT* puWidth, UINT* puHeight)
 {
-	*puWidth=ms_d3dPresentParameter.BackBufferWidth;
-	*puHeight=ms_d3dPresentParameter.BackBufferHeight;
+	*puWidth = static_cast<UINT>(ms_iWidth);
+	*puHeight = static_cast<UINT>(ms_iHeight);
 }
 
 void CGraphicBase::SetDefaultIndexBuffer(UINT eDefIB)
@@ -143,7 +176,7 @@ void CGraphicBase::SetDefaultIndexBuffer(UINT eDefIB)
 	if (eDefIB>=DEFAULT_IB_NUM)
 		return;
 
-	STATEMANAGER.SetIndices(ms_alpd3dDefIB[eDefIB], 0);
+	SHADERMANAGER.SetIndexBuffer(ms_alpd3dDefIB[eDefIB]);
 }
 
 bool CGraphicBase::SetPDTStream(SPDTVertex* pVertices, UINT uVtxCount)
@@ -152,182 +185,194 @@ bool CGraphicBase::SetPDTStream(SPDTVertex* pVertices, UINT uVtxCount)
 }
 
 #ifdef ENABLE_FIX_MOBS_LAG
+ID3D11Buffer* CGraphicBase::GetPdtVertexBufferForSize(UINT uVtxCount)
+{
+	// Select optimal buffer tier based on vertex count
+	if (uVtxCount <= TINY_PDT_VERTEX_BUFFER_SIZE)
+		return m_tinyPdtVertexBuffer;
+	else if (uVtxCount <= SMALL_PDT_VERTEX_BUFFER_SIZE)
+		return m_smallPdtVertexBuffer;
+	else if (uVtxCount <= MEDIUM_PDT_VERTEX_BUFFER_SIZE)
+		return m_mediumPdtVertexBuffer;
+	else if (uVtxCount <= LARGE_PDT_VERTEX_BUFFER_SIZE)
+		return m_largePdtVertexBuffer;
+	else if (uVtxCount <= XLARGE_PDT_VERTEX_BUFFER_SIZE)
+		return m_xlargePdtVertexBuffer;
+
+	return nullptr; // Exceeds all buffer sizes
+}
+
 bool CGraphicBase::SetPDTStream(SPDTVertexRaw* pSrcVertices, UINT uVtxCount)
 {
-	if (!pSrcVertices || !uVtxCount)
+	if (!uVtxCount || !GetActiveContext())
 		return false;
 
-	assert(uVtxCount <= LARGE_PDT_VERTEX_BUFFER_SIZE);
-	if (uVtxCount > LARGE_PDT_VERTEX_BUFFER_SIZE)
-		return false;
+	ID3D11Buffer* pVertexBuffer = GetPdtVertexBufferForSize(uVtxCount);
 
-	IDirect3DVertexBuffer9* vertexBuffer = uVtxCount <= SMALL_PDT_VERTEX_BUFFER_SIZE
-		? GetSmallPdtVertexBuffer() : GetLargePdtVertexBuffer();
-	if (!vertexBuffer)
+	if (!pVertexBuffer)
 	{
-		STATEMANAGER.SetStreamSource(0, nullptr, 0);
+		// Vertex count exceeds all buffers - fallback warning
+		assert(uVtxCount <= XLARGE_PDT_VERTEX_BUFFER_SIZE && "Vertex count exceeds maximum buffer size");
 		return false;
 	}
 
-	static_assert(sizeof(SPDTVertexRaw) == sizeof(TPDTVertex), "PDT vertex layouts must match");
-	TPDTVertex* destination;
-	const UINT bytes = sizeof(TPDTVertex) * uVtxCount;
-	if (FAILED(vertexBuffer->Lock(0, bytes, reinterpret_cast<void**>(&destination), D3DLOCK_DISCARD)))
+	D3D11_MAPPED_SUBRESOURCE mappedResource;
+	if (FAILED(GetActiveContext()->Map(pVertexBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource)))
 	{
-		STATEMANAGER.SetStreamSource(0, nullptr, 0);
 		return false;
 	}
 
-	memcpy(destination, pSrcVertices, bytes);
-	if (FAILED(vertexBuffer->Unlock()))
+	memcpy(mappedResource.pData, pSrcVertices, sizeof(TPDTVertex) * uVtxCount);
+	GetActiveContext()->Unmap(pVertexBuffer, 0);
+	SHADERMANAGER.SetVertexBuffer(0, pVertexBuffer, sizeof(TPDTVertex));
+
+	EShaderType currentShader = SHADERMANAGER.GetCurrentShader();
+	if (currentShader != SHADER_SKY && currentShader != SHADER_WATER &&
+		currentShader != SHADER_TERRAIN && currentShader != SHADER_MESH)
 	{
-		STATEMANAGER.SetStreamSource(0, nullptr, 0);
-		return false;
+		SHADERMANAGER.SetInputLayout(INPUT_LAYOUT_PDT);
 	}
-	STATEMANAGER.SetStreamSource(0, vertexBuffer, sizeof(TPDTVertex));
+
 	return true;
 }
 #else
 bool CGraphicBase::SetPDTStream(SPDTVertexRaw* pSrcVertices, UINT uVtxCount)
 {
-	if (!uVtxCount)
+	if (!uVtxCount || !GetActiveContext())
 		return false;
 
-	static DWORD s_dwVBPos=0;
+	static DWORD s_dwVBPos = 0;
 
-	if (s_dwVBPos>=PDT_VERTEXBUFFER_NUM)
-		s_dwVBPos=0;
+	if (s_dwVBPos >= PDT_VERTEXBUFFER_NUM)
+		s_dwVBPos = 0;
 
-	IDirect3DVertexBuffer9* plpd3dFillRectVB=ms_alpd3dPDTVB[s_dwVBPos];
+	ID3D11Buffer* pVertexBuffer = ms_alpd3dPDTVB[s_dwVBPos];
 	++s_dwVBPos;
 
-	assert(PDT_VERTEX_NUM>=uVtxCount);
+	if (!pVertexBuffer)
+		return false;
+
+	assert(PDT_VERTEX_NUM >= uVtxCount);
 	if (uVtxCount >= PDT_VERTEX_NUM)
 		return false;
 
-	TPDTVertex* pDstVertices;
-	if (FAILED(
-		plpd3dFillRectVB->Lock(0, sizeof(TPDTVertex)*uVtxCount, (void**)&pDstVertices, D3DLOCK_DISCARD)
-	))
+	D3D11_MAPPED_SUBRESOURCE mappedResource;
+	if (FAILED(GetActiveContext()->Map(pVertexBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource)))
 	{
-		STATEMANAGER.SetStreamSource(0, nullptr, 0);
 		return false;
 	}
 
-	memcpy(pDstVertices, pSrcVertices, sizeof(TPDTVertex)*uVtxCount);
+	memcpy(mappedResource.pData, pSrcVertices, sizeof(TPDTVertex) * uVtxCount);
+	GetActiveContext()->Unmap(pVertexBuffer, 0);
 
-	plpd3dFillRectVB->Unlock();
+	SHADERMANAGER.SetVertexBuffer(0, pVertexBuffer, sizeof(TPDTVertex));
 
-	STATEMANAGER.SetStreamSource(0, plpd3dFillRectVB, sizeof(TPDTVertex));
-
-	return true;
-}
-
-bool CGraphicBase::SetPDTTextLineStream(SPDTVertexRaw* pSrcVertices, UINT uVtxCount)
-{
-	if (!uVtxCount)
-		return false;
-
-	if (uVtxCount >= PDT_TEXTLINE_VERTEX_NUM)
-		return false;
-
-	TPDTVertex* pDstVertices;
-	if (FAILED(
-		ms_alpd3dTextLinePDTVB->Lock(0, sizeof(TPDTVertex)*uVtxCount, (void**)&pDstVertices, D3DLOCK_DISCARD)
-	))
+	EShaderType currentShader = SHADERMANAGER.GetCurrentShader();
+	if (currentShader != SHADER_SKY && currentShader != SHADER_WATER &&
+		currentShader != SHADER_TERRAIN && currentShader != SHADER_MESH)
 	{
-		STATEMANAGER.SetStreamSource(0, nullptr, 0);
-		return false;
+		SHADERMANAGER.SetInputLayout(INPUT_LAYOUT_PDT);
 	}
 
-	memcpy(pDstVertices, pSrcVertices, sizeof(TPDTVertex)*uVtxCount);
-
-	ms_alpd3dTextLinePDTVB->Unlock();
-
-	STATEMANAGER.SetStreamSource(0, ms_alpd3dTextLinePDTVB, sizeof(TPDTVertex));
-
 	return true;
 }
-
 #endif
 
 DWORD CGraphicBase::GetAvailableTextureMemory()
 {
-	assert(ms_lpd3dDevice!=nullptr && "CGraphicBase::GetAvailableTextureMemory - D3DDevice is EMPTY");
+	if (!ms_pDevice)
+		return 0;
 
-	static DWORD s_dwNextUpdateTime=0;
-	static DWORD s_dwTexMemSize=0;//ms_lpd3dDevice->GetAvailableTextureMem();
+	static DWORD s_dwNextUpdateTime = 0;
+	static DWORD s_dwTexMemSize = 0;
 
-	const DWORD dwCurTime=ELTimer_GetMSec();
-	if (s_dwNextUpdateTime<dwCurTime)
+	DWORD dwCurTime = ELTimer_GetMSec();
+	if (s_dwNextUpdateTime < dwCurTime)
 	{
-		s_dwNextUpdateTime=dwCurTime+5000;
-		s_dwTexMemSize=ms_lpd3dDevice->GetAvailableTextureMem();
+		s_dwNextUpdateTime = dwCurTime + 5000;
+
+		// Get DXGI device and adapter
+		IDXGIDevice* pDXGIDevice = nullptr;
+		if (SUCCEEDED(ms_pDevice->QueryInterface(__uuidof(IDXGIDevice), (void**)&pDXGIDevice)))
+		{
+			IDXGIAdapter* pAdapter = nullptr;
+			if (SUCCEEDED(pDXGIDevice->GetAdapter(&pAdapter)))
+			{
+				DXGI_ADAPTER_DESC adapterDesc;
+				if (SUCCEEDED(pAdapter->GetDesc(&adapterDesc)))
+				{
+					SIZE_T totalMem = adapterDesc.DedicatedVideoMemory;
+					s_dwTexMemSize = static_cast<DWORD>(min(totalMem, (SIZE_T)MAXDWORD));
+				}
+				pAdapter->Release();
+			}
+			pDXGIDevice->Release();
+		}
 	}
 
 	return s_dwTexMemSize;
 }
 
-const D3DXMATRIX& CGraphicBase::GetViewMatrix()
+const Matrix& CGraphicBase::GetViewMatrix()
 {
 	return ms_matView;
 }
 
-const D3DXMATRIX & CGraphicBase::GetIdentityMatrix()
+const Matrix& CGraphicBase::GetIdentityMatrix()
 {
 	return ms_matIdentity;
 }
 
 void CGraphicBase::SetEyeCamera(float xEye, float yEye, float zEye,
 								float xCenter, float yCenter, float zCenter,
-								float xUp, float yUp, float zUp) const
+								float xUp, float yUp, float zUp)
 {
-	const D3DXVECTOR3 vectorEye(xEye, yEye, zEye);
-	const D3DXVECTOR3 vectorCenter(xCenter, yCenter, zCenter);
-	const D3DXVECTOR3 vectorUp(xUp, yUp, zUp);
+	CCamera* pCamera = CCameraManager::Instance().GetCurrentCamera();
+	if (!pCamera)
+		return;
+
+	Vector3 vectorEye(xEye, yEye, zEye);
+	Vector3 vectorCenter(xCenter, yCenter, zCenter);
+	Vector3 vectorUp(xUp, yUp, zUp);
 
 //	CCameraManager::Instance().SetCurrentCamera(CCameraManager::DEFAULT_PERSPECTIVE_CAMERA);
-	CCameraManager::Instance().GetCurrentCamera()->SetViewParams(vectorEye, vectorCenter, vectorUp);
+	pCamera->SetViewParams(vectorEye, vectorCenter, vectorUp);
 	UpdateViewMatrix();
 }
 
-void CGraphicBase::SetSimpleCamera(float x, float y, float z, float pitch, float roll) const
+void CGraphicBase::SetSimpleCamera(float x, float y, float z, float pitch, float roll)
 {
 	CCamera * pCamera = CCameraManager::Instance().GetCurrentCamera();
-	const D3DXVECTOR3 vectorEye(x, y, z);
+	Vector3 vectorEye(x, y, z);
 
-	pCamera->SetViewParams(D3DXVECTOR3(0.0f, y, 0.0f), D3DXVECTOR3(0.0f, 0.0f, 0.0f), D3DXVECTOR3(0.0f, 0.0f, 1.0f));
+	pCamera->SetViewParams(Vector3(0.0f, y, 0.0f), Vector3(0.0f, 0.0f, 0.0f), Vector3(0.0f, 0.0f, 1.0f));
 	pCamera->RotateEyeAroundTarget(pitch, roll);
 	pCamera->Move(vectorEye);
 
 	UpdateViewMatrix();
 
-	// This is levites's virtual(?) code which you should not trust.
-	ms_lpd3dDevice->GetTransform(D3DTS_WORLD, &ms_matWorld);
-	D3DXMatrixMultiply(&ms_matWorldView, &ms_matWorld, &ms_matView);
+	SHADERMANAGER.GetMatrix(MATRIX_WORLD, &ms_matWorld);
+	MatrixMultiply(&ms_matWorldView, &ms_matWorld, &ms_matView);
 }
 
-void CGraphicBase::SetAroundCamera(float distance, float pitch, float roll, float lookAtZ) const
+void CGraphicBase::SetAroundCamera(float distance, float pitch, float roll, float lookAtZ)
 {
 	CCamera * pCamera = CCameraManager::Instance().GetCurrentCamera();
-	pCamera->SetViewParams(D3DXVECTOR3(0.0f, -distance, 0.0f), D3DXVECTOR3(0.0f, 0.0f, 0.0f), D3DXVECTOR3(0.0f, 0.0f, 1.0f));
+	pCamera->SetViewParams(Vector3(0.0f, -distance, 0.0f), Vector3(0.0f, 0.0f, 0.0f), Vector3(0.0f, 0.0f, 1.0f));
 	pCamera->RotateEyeAroundTarget(pitch, roll);
-	D3DXVECTOR3 v3Target = pCamera->GetTarget();
+	Vector3 v3Target = pCamera->GetTarget();
 	v3Target.z = lookAtZ;
 	pCamera->SetTarget(v3Target);
-// 	pCamera->Move(v3Target);
 
 	UpdateViewMatrix();
 
-	// This is levites's virtual(?) code which you should not trust.
-	ms_lpd3dDevice->GetTransform(D3DTS_WORLD, &ms_matWorld);
-	D3DXMatrixMultiply(&ms_matWorldView, &ms_matWorld, &ms_matView);
+	SHADERMANAGER.GetMatrix(MATRIX_WORLD, &ms_matWorld);
+	MatrixMultiply(&ms_matWorldView, &ms_matWorld, &ms_matView);
 }
 
-void CGraphicBase::SetPositionCamera(float fx, float fy, float fz, float distance, float pitch, float roll) const
+void CGraphicBase::SetPositionCamera(float fx, float fy, float fz, float distance, float pitch, float roll)
 {
-	// I wanna downward this code to the game control level. - [levites]
-	if (ms_dwWavingEndTime > CTimer::Instance().GetCurrentMillisecond())
+	if (ms_dwWavingEndTime > DX::StepTimer::instance().GetTotalMillieSeconds())
 	{
 		if (ms_iWavingPower>0)
 		{
@@ -341,36 +386,35 @@ void CGraphicBase::SetPositionCamera(float fx, float fy, float fz, float distanc
 	if (!pCamera)
 		return;
 
-	pCamera->SetViewParams(D3DXVECTOR3(0.0f, -distance, 0.0f), D3DXVECTOR3(0.0f, 0.0f, 0.0f), D3DXVECTOR3(0.0f, 0.0f, 1.0f));
+	pCamera->SetViewParams(Vector3(0.0f, -distance, 0.0f), Vector3(0.0f, 0.0f, 0.0f), Vector3(0.0f, 0.0f, 1.0f));
 	pitch = fMIN(80.0f, fMAX(-80.0f, pitch) );
 //	Tracef("SetPosition Camera : %f, %f\n", pitch, roll);
 	pCamera->RotateEyeAroundTarget(pitch, roll);
-	pCamera->Move(D3DXVECTOR3(fx, fy, fz));
+	pCamera->Move(Vector3(fx, fy, fz));
 
 	UpdateViewMatrix();
 
-	// This is levites's virtual(?) code which you should not trust.
-	STATEMANAGER.GetTransform(D3DTS_WORLD, &ms_matWorld);
-	D3DXMatrixMultiply(&ms_matWorldView, &ms_matWorld, &ms_matView);
+	SHADERMANAGER.GetMatrix(MATRIX_WORLD, &ms_matWorld);
+	MatrixMultiply(&ms_matWorldView, &ms_matWorld, &ms_matView);
 }
 
-void CGraphicBase::SetOrtho2D(float hres, float vres, float zres) const
+void CGraphicBase::SetOrtho2D(float hres, float vres, float zres)
 {
 	//CCameraManager::Instance().SetCurrentCamera(CCameraManager::DEFAULT_ORTHO_CAMERA);
-	D3DXMatrixOrthoOffCenterRH(&ms_matProj, 0, hres, vres, 0, 0, zres);
+	MatrixOrthoOffCenterRH(&ms_matProj, 0, hres, vres, 0, 0, zres);
 	//UpdatePipeLineMatrix();
 	UpdateProjMatrix();
 }
 
-void CGraphicBase::SetOrtho3D(float hres, float vres, float zmin, float zmax) const
+void CGraphicBase::SetOrtho3D(float hres, float vres, float zmin, float zmax)
 {
 	//CCameraManager::Instance().SetCurrentCamera(CCameraManager::DEFAULT_PERSPECTIVE_CAMERA);
-	D3DXMatrixOrthoRH(&ms_matProj, hres, vres, zmin, zmax);
+	MatrixOrthoRH(&ms_matProj, hres, vres, zmin, zmax);
 	//UpdatePipeLineMatrix();
 	UpdateProjMatrix();
 }
 
-void CGraphicBase::SetPerspective(float fov, float aspect, float nearz, float farz) const
+void CGraphicBase::SetPerspective(float fov, float aspect, float nearz, float farz)
 {
 	ms_fFieldOfView = fov;
 
@@ -383,77 +427,91 @@ void CGraphicBase::SetPerspective(float fov, float aspect, float nearz, float fa
 	ms_fFarY = farz;
 
 	//CCameraManager::Instance().SetCurrentCamera(CCameraManager::DEFAULT_PERSPECTIVE_CAMERA);
-	D3DXMatrixPerspectiveFovRH(&ms_matProj, D3DXToRadian(fov), ms_fAspect, nearz, farz);
+	MatrixPerspectiveFovRH(&ms_matProj, ToRadian(fov), ms_fAspect, nearz, farz);
 	//UpdatePipeLineMatrix();
 	UpdateProjMatrix();
 }
 
-void CGraphicBase::UpdateProjMatrix() const
+void CGraphicBase::UpdateProjMatrix()
 {
-	STATEMANAGER.SetTransform(D3DTS_PROJECTION, &ms_matProj);
+	SHADERMANAGER.SetMatrix(MATRIX_PROJECTION, &ms_matProj);
 }
 
-void CGraphicBase::UpdateViewMatrix() const
+void CGraphicBase::UpdateViewMatrix()
 {
-	const CCamera* pkCamera=CCameraManager::Instance().GetCurrentCamera();
+	CCamera* pkCamera=CCameraManager::Instance().GetCurrentCamera();
 	if (!pkCamera)
 		return;
 
 	ms_matView = pkCamera->GetViewMatrix();
-	STATEMANAGER.SetTransform(D3DTS_VIEW, &ms_matView);
+	SHADERMANAGER.SetMatrix(MATRIX_VIEW, &ms_matView);
 
-	D3DXMatrixInverse(&ms_matInverseView, nullptr, &ms_matView);
+	MatrixInverse(&ms_matInverseView, NULL, &ms_matView);
 	ms_matInverseViewYAxis._11 = ms_matInverseView._11;
 	ms_matInverseViewYAxis._12 = ms_matInverseView._12;
 	ms_matInverseViewYAxis._21 = ms_matInverseView._21;
 	ms_matInverseViewYAxis._22 = ms_matInverseView._22;
 }
 
-void CGraphicBase::UpdatePipeLineMatrix() const
+void CGraphicBase::UpdatePipeLineMatrix()
 {
 	UpdateProjMatrix();
 	UpdateViewMatrix();
 }
 
-void CGraphicBase::SetViewport(DWORD dwX, DWORD dwY, DWORD dwWidth, DWORD dwHeight, float fMinZ, float fMaxZ) const
+void CGraphicBase::SetViewport(DWORD dwX, DWORD dwY, DWORD dwWidth, DWORD dwHeight, float fMinZ, float fMaxZ)
 {
-	ms_Viewport.X = dwX;
-	ms_Viewport.Y = dwY;
-	ms_Viewport.Width = dwWidth;
-	ms_Viewport.Height = dwHeight;
-	ms_Viewport.MinZ = fMinZ;
-	ms_Viewport.MaxZ = fMaxZ;
+	ms_Viewport.TopLeftX = static_cast<FLOAT>(dwX);
+	ms_Viewport.TopLeftY = static_cast<FLOAT>(dwY);
+	ms_Viewport.Width = static_cast<FLOAT>(dwWidth);
+	ms_Viewport.Height = static_cast<FLOAT>(dwHeight);
+	ms_Viewport.MinDepth = fMinZ;
+	ms_Viewport.MaxDepth = fMaxZ;
 }
 
-void CGraphicBase::GetTargetPosition(float * px, float * py, float * pz) const
+void CGraphicBase::GetTargetPosition(float * px, float * py, float * pz)
 {
-	*px = CCameraManager::Instance().GetCurrentCamera()->GetTarget().x;
-	*py = CCameraManager::Instance().GetCurrentCamera()->GetTarget().y;
-	*pz = CCameraManager::Instance().GetCurrentCamera()->GetTarget().z;
+	CCamera* pCamera = CCameraManager::Instance().GetCurrentCamera();
+	if (!pCamera)
+	{
+		*px = *py = *pz = 0.0f;
+		return;
+	}
+	*px = pCamera->GetTarget().x;
+	*py = pCamera->GetTarget().y;
+	*pz = pCamera->GetTarget().z;
 }
 
-void CGraphicBase::GetCameraPosition(float * px, float * py, float * pz) const
+void CGraphicBase::GetCameraPosition(float * px, float * py, float * pz)
 {
-	*px = CCameraManager::Instance().GetCurrentCamera()->GetEye().x;
-	*py = CCameraManager::Instance().GetCurrentCamera()->GetEye().y;
-	*pz = CCameraManager::Instance().GetCurrentCamera()->GetEye().z;
+	CCamera* pCamera = CCameraManager::Instance().GetCurrentCamera();
+	if (!pCamera)
+	{
+		*px = *py = *pz = 0.0f;
+		return;
+	}
+	*px = pCamera->GetEye().x;
+	*py = pCamera->GetEye().y;
+	*pz = pCamera->GetEye().z;
 }
 
-void CGraphicBase::GetMatrix(D3DXMATRIX* pRetMatrix) const
+void CGraphicBase::GetMatrix(Matrix* pRetMatrix) const
 {
-	assert(ms_lpd3dMatStack != nullptr);
-	*pRetMatrix = *ms_lpd3dMatStack->GetTop();
+	CMatrixStack* pStack = GetActiveMatrixStack();
+	assert(pStack != NULL);
+	*pRetMatrix = *pStack->GetTop();
 }
 
-const D3DXMATRIX* CGraphicBase::GetMatrixPointer() const
+const Matrix* CGraphicBase::GetMatrixPointer() const
 {
-	assert(ms_lpd3dMatStack!=nullptr);
-	return ms_lpd3dMatStack->GetTop();
+	CMatrixStack* pStack = GetActiveMatrixStack();
+	assert(pStack != NULL);
+	return pStack->GetTop();
 }
 
-void CGraphicBase::GetSphereMatrix(D3DXMATRIX * pMatrix, float fValue) const
+void CGraphicBase::GetSphereMatrix(Matrix* pMatrix, float fValue)
 {
-	D3DXMatrixIdentity(pMatrix);
+	MatrixIdentity(pMatrix);
 	pMatrix->_11 = fValue * ms_matWorldView._11;
 	pMatrix->_21 = fValue * ms_matWorldView._21;
 	pMatrix->_31 = fValue * ms_matWorldView._31;
@@ -464,66 +522,66 @@ void CGraphicBase::GetSphereMatrix(D3DXMATRIX * pMatrix, float fValue) const
 	pMatrix->_42 = -fValue;
 }
 
-float CGraphicBase::GetFOV() const
+float CGraphicBase::GetFOV()
 {
 	return ms_fFieldOfView;
 }
 
-void CGraphicBase::PushMatrix() const
+void CGraphicBase::PushMatrix()
 {
-	ms_lpd3dMatStack->Push();
+	GetActiveMatrixStack()->Push();
 }
 
-void CGraphicBase::Scale(float x, float y, float z) const
+void CGraphicBase::Scale(float x, float y, float z)
 {
-	ms_lpd3dMatStack->Scale(x, y, z);
+	GetActiveMatrixStack()->Scale(x, y, z);
 }
 
-void CGraphicBase::Rotate(float degree, float x, float y, float z) const
+void CGraphicBase::Rotate(float degree, float x, float y, float z)
 {
-	const D3DXVECTOR3 vec(x, y, z);
-	ms_lpd3dMatStack->RotateAxis(&vec, D3DXToRadian(degree));
+	Vector3 vec(x, y, z);
+	GetActiveMatrixStack()->RotateAxis(&vec, ToRadian(degree));
 }
 
-void CGraphicBase::RotateLocal(float degree, float x, float y, float z) const
+void CGraphicBase::RotateLocal(float degree, float x, float y, float z)
 {
-	const D3DXVECTOR3 vec(x, y, z);
-	ms_lpd3dMatStack->RotateAxisLocal(&vec, D3DXToRadian(degree));
+	Vector3 vec(x, y, z);
+	GetActiveMatrixStack()->RotateAxisLocal(&vec, ToRadian(degree));
 }
 
-void CGraphicBase::MultMatrix( const D3DXMATRIX* pMat) const
+void CGraphicBase::MultMatrix(const Matrix* pMat)
 {
-	ms_lpd3dMatStack->MultMatrix(pMat);
+	GetActiveMatrixStack()->MultMatrix(pMat);
 }
 
-void CGraphicBase::MultMatrixLocal( const D3DXMATRIX* pMat) const
+void CGraphicBase::MultMatrixLocal(const Matrix* pMat)
 {
-	ms_lpd3dMatStack->MultMatrixLocal(pMat);
+	GetActiveMatrixStack()->MultMatrixLocal(pMat);
 }
 
-void CGraphicBase::RotateYawPitchRollLocal(float fYaw, float fPitch, float fRoll) const
+void CGraphicBase::RotateYawPitchRollLocal(float fYaw, float fPitch, float fRoll)
 {
-	ms_lpd3dMatStack->RotateYawPitchRollLocal(D3DXToRadian(fYaw), D3DXToRadian(fPitch), D3DXToRadian(fRoll));
+	GetActiveMatrixStack()->RotateYawPitchRollLocal(ToRadian(fYaw), ToRadian(fPitch), ToRadian(fRoll));
 }
 
-void CGraphicBase::Translate(float x, float y, float z) const
+void CGraphicBase::Translate(float x, float y, float z)
 {
-	ms_lpd3dMatStack->Translate(x, y, z);
+	GetActiveMatrixStack()->Translate(x, y, z);
 }
 
-void CGraphicBase::LoadMatrix(const D3DXMATRIX& c_rSrcMatrix) const
+void CGraphicBase::LoadMatrix(const Matrix& c_rSrcMatrix)
 {
-	ms_lpd3dMatStack->LoadMatrix(&c_rSrcMatrix);
+	GetActiveMatrixStack()->LoadMatrix(&c_rSrcMatrix);
 }
 
-void CGraphicBase::PopMatrix() const
+void CGraphicBase::PopMatrix()
 {
-	ms_lpd3dMatStack->Pop();
+	GetActiveMatrixStack()->Pop();
 }
 
-DWORD CGraphicBase::GetColor(float r, float g, float b, float a) const
+DWORD CGraphicBase::GetColor(float r, float g, float b, float a)
 {
-	const BYTE argb[4] =
+	BYTE argb[4] =
 	{
 		(BYTE) (255.0f * b),
 		(BYTE) (255.0f * g),
@@ -534,37 +592,37 @@ DWORD CGraphicBase::GetColor(float r, float g, float b, float a) const
 	return *((DWORD *) argb);
 }
 
-void CGraphicBase::InitScreenEffect() const
+void CGraphicBase::InitScreenEffect()
 {
 	ms_dwWavingEndTime = 0;
 	ms_dwFlashingEndTime = 0;
 	ms_iWavingPower = 0;
-	ms_FlashingColor = D3DXCOLOR(0.0f, 0.0f, 0.0f, 0.0f);
+	ms_FlashingColor = Color(0.0f, 0.0f, 0.0f, 0.0f);
 }
 
-void CGraphicBase::SetScreenEffectWaving(float fDuringTime, int iPower) const
+void CGraphicBase::SetScreenEffectWaving(float fDuringTime, int iPower)
 {
-	ms_dwWavingEndTime = CTimer::Instance().GetCurrentMillisecond() + long(fDuringTime * 1000.0f);
+	ms_dwWavingEndTime = DX::StepTimer::instance().GetTotalMillieSeconds() + long(fDuringTime * 1000.0f);
 	ms_iWavingPower = iPower;
 }
 
-void CGraphicBase::SetScreenEffectFlashing(float fDuringTime, const D3DXCOLOR & c_rColor) const
+void CGraphicBase::SetScreenEffectFlashing(float fDuringTime, const Color& c_rColor)
 {
-	ms_dwFlashingEndTime = CTimer::Instance().GetCurrentMillisecond() + long(fDuringTime * 1000.0f);
+	ms_dwFlashingEndTime = DX::StepTimer::instance().GetTotalMillieSeconds() + long(fDuringTime * 1000.0f);
 	ms_FlashingColor = c_rColor;
 }
 
-DWORD CGraphicBase::GetFaceCount() const
+DWORD CGraphicBase::GetFaceCount()
 {
 	return ms_faceCount;
 }
 
-void CGraphicBase::ResetFaceCount() const
+void CGraphicBase::ResetFaceCount()
 {
 	ms_faceCount = 0;
 }
 
-HRESULT CGraphicBase::GetLastResult() const
+HRESULT CGraphicBase::GetLastResult()
 {
 	return ms_hLastResult;
 }
@@ -577,3 +635,37 @@ CGraphicBase::~CGraphicBase()
 {
 }
 
+
+
+ID3D11ShaderResourceView* CGraphicBase::ResolveAndGetDepthSRV()
+{
+#ifdef ENABLE_SSAO
+#ifdef ENABLE_MSAA
+	if (ms_uMSAASampleCount > 1)
+	{
+		if (!ms_pMSAADepthStencilSRV || !ms_pResolvedDepthRTV)
+			return NULL;
+		// The MSAA depth buffer is still bound as the DSV at this point in the frame. Binding it
+		// as an SRV too makes D3D silently drop one of them, so the resolve reads nothing and the
+		// consumer gets garbage depth. Release the DSV first, then restore it for the rest of the frame.
+		ID3D11DeviceContext* pCtx = SHADERMANAGER.GetActiveContext();
+		ID3D11RenderTargetView* pRTV = GetRenderTargetView();
+		if (pCtx && pRTV)
+			pCtx->OMSetRenderTargets(1, &pRTV, NULL);
+
+		const D3D11_VIEWPORT& vp = GetViewport();
+		SHADERMANAGER.RenderDepthResolve(ms_pMSAADepthStencilSRV, ms_pResolvedDepthRTV,
+		                                 (UINT)vp.Width, (UINT)vp.Height);
+
+		if (pCtx && pRTV)
+			pCtx->OMSetRenderTargets(1, &pRTV, GetDepthStencilView());
+		return ms_pResolvedDepthSRV;
+	}
+#endif
+	return ms_pDepthStencilSRV;
+#else
+	return NULL;
+#endif
+}
+
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

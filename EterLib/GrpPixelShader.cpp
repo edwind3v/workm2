@@ -1,7 +1,7 @@
 #include "StdAfx.h"
 #include "GrpPixelShader.h"
-#include "GrpD3DXBuffer.h"
-#include "StateManager.h"
+#include <d3dcompiler.h>
+#include <fstream>
 
 CPixelShader::CPixelShader()
 {
@@ -15,37 +15,180 @@ CPixelShader::~CPixelShader()
 
 void CPixelShader::Initialize()
 {
-	m_handle=0;
+	m_pShader = nullptr;
 }
 
 void CPixelShader::Destroy()
 {
-	if (m_handle)
+	if (m_pShader)
 	{
-		m_handle=0;
+		m_pShader->Release();
+		m_pShader = nullptr;
 	}
 }
 
-bool CPixelShader::CreateFromDiskFile(const char* c_szFileName)
+bool CPixelShader::CreateFromDiskFile(const char* c_szFileName, const char* szEntryPoint)
 {
 	Destroy();
 
-	LPD3DXBUFFER lpd3dxShaderBuffer;
-	LPD3DXBUFFER lpd3dxErrorBuffer;
-
-	if (FAILED(
-		D3DXAssembleShaderFromFileA(c_szFileName, 0, nullptr, 0, &lpd3dxShaderBuffer, &lpd3dxErrorBuffer)
-	))
+	if (!ms_pDevice || !c_szFileName)
 		return false;
 
-	if (FAILED(ms_lpd3dDevice->CreatePixelShader((const DWORD*)lpd3dxShaderBuffer->GetBufferPointer(), &m_handle)))
-		return false;
+	// Convert filename to wide string
+	int len = MultiByteToWideChar(CP_ACP, 0, c_szFileName, -1, nullptr, 0);
+	std::wstring wFileName(len, L'\0');
+	MultiByteToWideChar(CP_ACP, 0, c_szFileName, -1, &wFileName[0], len);
 
-	return true;
+	ID3DBlob* pShaderBlob = nullptr;
+	ID3DBlob* pErrorBlob = nullptr;
+
+	UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
+#ifdef _DEBUG
+	flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+#else
+	flags |= D3DCOMPILE_OPTIMIZATION_LEVEL3;
+#endif
+
+	HRESULT hr = D3DCompileFromFile(
+		wFileName.c_str(),
+		nullptr,                          // No defines
+		D3D_COMPILE_STANDARD_FILE_INCLUDE,
+		szEntryPoint,
+		"ps_5_0",
+		flags,
+		0,
+		&pShaderBlob,
+		&pErrorBlob
+	);
+
+	if (FAILED(hr))
+	{
+		if (pErrorBlob)
+		{
+			pErrorBlob->Release();
+		}
+		return false;
+	}
+
+	if (pErrorBlob)
+		pErrorBlob->Release();
+
+	// Create shader
+	hr = ms_pDevice->CreatePixelShader(
+		pShaderBlob->GetBufferPointer(),
+		pShaderBlob->GetBufferSize(),
+		nullptr,
+		&m_pShader
+	);
+
+	pShaderBlob->Release();
+
+	return SUCCEEDED(hr);
 }
 
-void CPixelShader::Set() const
+bool CPixelShader::CreateFromBytecodeFile(const char* c_szFileName)
 {
-	STATEMANAGER.SetPixelShader(m_handle);
+	Destroy();
+
+	if (!ms_pDevice || !c_szFileName)
+		return false;
+
+	// Read file
+	std::ifstream file(c_szFileName, std::ios::binary | std::ios::ate);
+	if (!file.is_open())
+		return false;
+
+	std::streamsize size = file.tellg();
+	file.seekg(0, std::ios::beg);
+
+	std::vector<BYTE> bytecode(static_cast<size_t>(size));
+	if (!file.read(reinterpret_cast<char*>(bytecode.data()), size))
+		return false;
+
+	return CreateFromBytecode(bytecode.data(), bytecode.size());
 }
 
+bool CPixelShader::CreateFromMemory(const char* szCode, SIZE_T codeLength, const char* szEntryPoint, const char* szName)
+{
+	Destroy();
+
+	if (!ms_pDevice || !szCode || codeLength == 0)
+		return false;
+
+	ID3DBlob* pShaderBlob = nullptr;
+	ID3DBlob* pErrorBlob = nullptr;
+
+	UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
+#ifdef _DEBUG
+	flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+#else
+	flags |= D3DCOMPILE_OPTIMIZATION_LEVEL3;
+#endif
+
+	HRESULT hr = D3DCompile(
+		szCode,
+		codeLength,
+		szName,
+		nullptr,
+		D3D_COMPILE_STANDARD_FILE_INCLUDE,
+		szEntryPoint,
+		"ps_5_0",
+		flags,
+		0,
+		&pShaderBlob,
+		&pErrorBlob
+	);
+
+	if (FAILED(hr))
+	{
+		if (pErrorBlob)
+			pErrorBlob->Release();
+		return false;
+	}
+
+	if (pErrorBlob)
+		pErrorBlob->Release();
+
+	// Create shader
+	hr = ms_pDevice->CreatePixelShader(
+		pShaderBlob->GetBufferPointer(),
+		pShaderBlob->GetBufferSize(),
+		nullptr,
+		&m_pShader
+	);
+
+	pShaderBlob->Release();
+
+	return SUCCEEDED(hr);
+}
+
+bool CPixelShader::CreateFromBytecode(const void* pBytecode, SIZE_T bytecodeLength)
+{
+	if (!ms_pDevice || !pBytecode || bytecodeLength == 0)
+		return false;
+
+	HRESULT hr = ms_pDevice->CreatePixelShader(
+		pBytecode,
+		bytecodeLength,
+		nullptr,
+		&m_pShader
+	);
+
+	return SUCCEEDED(hr);
+}
+
+void CPixelShader::Set()
+{
+	if (ms_pContext && m_pShader)
+	{
+		ms_pContext->PSSetShader(m_pShader, nullptr, 0);
+	}
+}
+
+void CPixelShader::Unbind()
+{
+	if (ms_pContext)
+	{
+		ms_pContext->PSSetShader(nullptr, nullptr, 0);
+	}
+}

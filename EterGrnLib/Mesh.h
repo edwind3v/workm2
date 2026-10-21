@@ -1,7 +1,6 @@
 #pragma once
 
 #include "Material.h"
-#include "../eterLib/GrpBase.h"
 
 extern granny_data_type_definition GrannyPNT3322VertexType[5];
 
@@ -16,6 +15,7 @@ struct granny_pnt3322_vertex
 class CGrannyMesh
 {
 	public:
+		granny_mesh_binding* GetDefaultMeshBinding() const { return m_pgrnMeshBindingTemp; }
 		enum EType
 		{
 			TYPE_RIGID,
@@ -37,22 +37,15 @@ class CGrannyMesh
 
 		bool					IsEmpty() const;
 		bool					CreateFromGrannyMeshPointer(granny_skeleton* pgrnSkeleton, granny_mesh* pgrnMesh, int vtxBasePos, int idxBasePos, CGrannyMaterialPalette& rkMtrlPal);
-		void					LoadIndices(void* dstBaseIndices) const;
-		// Opt-in CPU copy retained when the original index buffer is created.
-		// The later Granny mesh pointer is not guaranteed to retain live topology.
-		const std::vector<WORD>& GetDX11PreviewIndices() const;
-		// Same source vertices uploaded to the DX9Ex rigid vertex buffer at
-		// model load. Avoid copying possibly stale Granny vertices during play.
-		const std::vector<TPNTVertex>& GetDX11PreviewRigidVertices() const;
- 		void					LoadPNTVertices(void* dstBaseVertices) const;
-		void					NEW_LoadVertices(void* dstBaseVertices) const;
+		void					LoadIndices(void* dstBaseIndices);
+ 		void					LoadPNTVertices(void* dstBaseVertices);
+		void					LoadSkinnedVertices(void* dstBaseVertices);  // Load vertices for GPU skinning (with blend weights/indices)
+		void					LoadSkinnedVerticesWithBinding(void* dstBaseVertices, granny_mesh_binding* pBinding, int& maxBoneIndexOut);
+		void					NEW_LoadVertices(void* dstBaseVertices);
 		void					Destroy();
 
 		void					SetPNT2Mesh();
 
-		void					DeformPNTVertices(void* dstBaseVertices, D3DXMATRIX* boneMatrices, granny_mesh_binding* pgrnMeshBinding) const;
-		bool					CanDeformPNTVertices() const;
-		granny_mesh_binding* GetDefaultMeshBinding() const { return m_pgrnMeshBindingTemp; }
 		bool					IsTwoSide() const;
 
 		int						GetVertexCount() const;
@@ -69,11 +62,12 @@ class CGrannyMesh
 
 		int						GetVertexBasePosition() const;
 		int						GetIndexBasePosition() const;
+		int						GetMaxBoneIndex() const { return m_maxBoneIndex; }
 
 		const granny_mesh *					GetGrannyMeshPointer() const;
 		const CGrannyMesh::TTriGroupNode *	GetTriGroupNodeList(CGrannyMaterial::EType eMtrlType) const;
 
-		void					RebuildTriGroupNodeList() const;
+		void					RebuildTriGroupNodeList();
 		void					ReloadMaterials();
 
 	protected:
@@ -91,8 +85,6 @@ class CGrannyMesh
 		granny_mesh_binding *	m_pgrnMeshBindingTemp;
 		// END_OF_WORK
 
-		granny_mesh_deformer *	m_pgrnMeshDeformer;
-
 		// Granny Material Data
 		std::vector<DWORD>		m_mtrlIndexVector;
 
@@ -102,14 +94,13 @@ class CGrannyMesh
 
 		int						m_vtxBasePos;
 		int						m_idxBasePos;
-		mutable std::vector<WORD>	m_dx11PreviewIndices;
-		mutable std::vector<TPNTVertex> m_dx11PreviewRigidVertices;
 
-		bool					m_canDeformPNTVertex;
 		bool					m_isTwoSide;
+
+		int						m_maxBoneIndex;
 	private:
 		bool						m_bHaveBlendThing;
 	public:
-		bool						HaveBlendThing() const { return m_bHaveBlendThing; }
+		bool						HaveBlendThing() { return m_bHaveBlendThing; }
 };
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

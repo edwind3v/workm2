@@ -13,7 +13,7 @@ class CEffectElementBase
 
 		BOOL LoadScript(CTextFileLoader & rTextFileLoader);
 
-		void GetPosition(float fTime, D3DXVECTOR3 & rPosition);
+		void GetPosition(float fTime, Vector3 & rPosition);
 		float GetStartTime() const;
 /*
 		bool isVisible(float fTime);

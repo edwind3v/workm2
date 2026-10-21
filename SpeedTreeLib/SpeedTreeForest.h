@@ -33,7 +33,6 @@
 //	Include Files
 #include <SpeedTreeRT.h>
 #include "SpeedTreeWrapper.h"
-#include "../eterBase/Singleton.h"
 
 #include <vector>
 #include <map>
@@ -52,7 +51,7 @@
 ///////////////////////////////////////////////////////////////////////
 //	class CSpeedTreeForest declaration
 
-class CSpeedTreeForest : public CSingleton<CSpeedTreeForest>
+class CSpeedTreeForest
 {
 	public:
 		typedef std::map<DWORD, CSpeedTreeWrapper *> TTreeMap;
@@ -68,7 +67,7 @@ class CSpeedTreeForest : public CSingleton<CSpeedTreeForest>
 		void						DeleteMainTree(DWORD dwCRC);
 
 		CSpeedTreeWrapper *			CreateInstance(float x, float y, float z, DWORD dwTreeCRC, const char * c_pszTreeName);
-		void						DeleteInstance(CSpeedTreeWrapper * pTree) const;
+		void						DeleteInstance(CSpeedTreeWrapper * pTree);
 
 		//void						SetLodLimits(void);
 
@@ -85,13 +84,11 @@ class CSpeedTreeForest : public CSingleton<CSpeedTreeForest>
 		// wind management
 		float						GetWindStrength(void) const					{ return m_fWindStrength; }
 		void						SetWindStrength(float fStrength);
-		void						SetupWindMatrices(float fTimeInSecs) const;
+		void						SetupWindMatrices(float fTimeInSecs);
 
 		// overridden by specific graphics API
-		virtual	void				UploadWindMatrix(unsigned int uiLocation, const float* pMatrix) const = 0;
-		virtual void 				Render(unsigned long ulRenderBitVector = Forest_RenderAll) = 0;
-		virtual bool 				SetRenderingDevice() = 0;
-		virtual	void 				UpdateCompundMatrix(const D3DXVECTOR3& c_rEyeVec, const D3DXMATRIX& c_rmatView, const D3DXMATRIX& c_rmatProj) = 0;
+		virtual	void				UploadWindMatrix(int nIndex, const float* pMatrix) const = 0;
+		virtual void				Render(unsigned long ulRenderBitVector) = 0;
 
 	protected:
 		TTreeMap					m_pMainTreeMap;
@@ -107,4 +104,4 @@ class CSpeedTreeForest : public CSingleton<CSpeedTreeForest>
 
 		float						m_fAccumTime;
 };
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

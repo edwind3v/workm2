@@ -136,3 +136,94 @@
 // ### New System Defines - Extended Version ###
 //////////////////////////////////////////////////////////////////////////
 
+
+// Native DX11 backend; entity visibility and animation cadence are preserved.
+#define ENABLE_DIRECTX11
+// ### DIRECTX11 Configuration ###
+#define ENABLE_MSAA
+#define MSAA_DEFAULT_SAMPLE_COUNT 4
+
+#define ENABLE_BLOOM
+#define BLOOM_DEFAULT_THRESHOLD 0.8f
+#define BLOOM_DEFAULT_INTENSITY 1.0f
+
+#define ENABLE_GODRAYS
+
+#define ENABLE_SSAO
+
+
+// Celestial Body (sun/moon disk rendered on skybox)
+#define ENABLE_CELESTIAL_BODY
+
+#define ENABLE_HEIGHT_FOG
+
+
+// D3D11 Feature Level - minimum required
+// Maximum constants for shader system
+#define MAX_LIGHTS 8
+
+// ### DIRECTX11 Configuration ###
+
+#define ENABLE_FRUSTUM_CULLING
+
+#define ENABLE_CHAR_RENDER_LIMIT
+#define CHAR_RENDER_LIMIT_DEFAULT       0        // Max characters rendered (0 = no limit)
+
+// Effect Limit - Limit total active effect instances
+#define ENABLE_EFFECT_LIMIT
+#define EFFECT_LIMIT_DEFAULT            0      // Max effects total (0 = no limit)
+#define EFFECT_LIMIT_DISTANCE_DEFAULT   3000.0f  // Skip far effects when at limit
+
+
+// Optional: #define ENABLE_UPDATE_CULLING
+#define UPDATE_CULLING_DISTANCE_FAR     15000.0f  // Very far: skip most updates
+#define UPDATE_CULLING_DISTANCE_MID     8000.0f   // Mid range: reduce update frequency
+#define UPDATE_CULLING_FRAME_SKIP_FAR   8         // Update every N frames when far
+#define UPDATE_CULLING_FRAME_SKIP_MID   4         // Update every N frames when mid
+
+// Optional: #define ENABLE_DEFORM_CULLING
+
+// Optional: #define ENABLE_ANIMATION_LOD
+
+#define ENABLE_SHADOW_RENDER_LIMIT
+#define SHADOW_RENDER_LIMIT_DEFAULT     0       // Max shadow casters (0 = no limit)
+#define ANIMATION_LOD_DISTANCE_HIGH     3000.0f   // Full quality animations
+#define ANIMATION_LOD_DISTANCE_MID      8000.0f   // Reduced quality
+#define ANIMATION_LOD_SKIP_FRAMES_MID   2         // Update every N frames at mid distance
+#define ANIMATION_LOD_SKIP_FRAMES_FAR   4         // Update every N frames at far distance
+
+#define ENABLE_RENDER_MODE_GROUPING
+
+
+// ### RENDERING OPTIMIZATIONS ###
+//////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////
+// ### SHADOW CAMERA CONFIGURATION ###
+
+#define SHADOW_PROJECTION_SIZE          2550.0f
+
+#define SHADOW_LIGHT_OFFSET             1250.0f
+
+// Shadow projection near plane (minimum render distance)
+#define SHADOW_NEAR_PLANE               1.0f
+
+#define SHADOW_FAR_PLANE                15000.0f
+
+#define SHADOW_LIGHT_DIR_X              1.732f
+#define SHADOW_LIGHT_DIR_Z              (2.0f * 1.732f)
+
+// ### SHADOW CAMERA CONFIGURATION ###
+//////////////////////////////////////////////////////////////////////////
+
+
+// Shadow map coverage sizes (world units)
+#define SHADOW_BIG_MAP_SIZE             5000.0f
+#define SHADOW_LOCAL_MAP_SIZE           600.0f
+
+#define SHADOW_OPACITY_DEFAULT          80.0f
+
+// ### DUAL SHADOW MAP CONFIGURATION ###
+//////////////////////////////////////////////////////////////////////////
+
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

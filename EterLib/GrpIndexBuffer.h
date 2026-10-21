@@ -1,41 +1,65 @@
 #pragma once
 
+/*
+ * GrpIndexBuffer.h
+ * DX11 Index Buffer Implementation
+ */
+
 #include "GrpBase.h"
 
 class CGraphicIndexBuffer : public CGraphicBase
 {
-	public:
-		CGraphicIndexBuffer();
-		virtual ~CGraphicIndexBuffer();
+public:
+	CGraphicIndexBuffer();
+	virtual ~CGraphicIndexBuffer();
 
-		void Destroy();
-		bool Create(int idxCount, D3DFORMAT d3dFmt);
-		bool Create(int faceCount, TFace* faces);
+	void Destroy();
 
-		bool CreateDeviceObjects();
-		void DestroyDeviceObjects();
+	bool Create(int idxCount, DXGI_FORMAT format = DXGI_FORMAT_R16_UINT, D3D11_USAGE usage = D3D11_USAGE_DEFAULT, const void* pInitData = nullptr);
 
-		bool Copy(int bufSize, const void* srcIndices) const;
+	// Create from face data (16-bit indices)
+	bool Create(int faceCount, TFace* faces);
 
-		bool Lock(void** pretIndices) const;
-		void Unlock() const;
+	bool CreateDeviceObjects();
+	void DestroyDeviceObjects();
 
-		bool Lock(void** pretIndices);
-		void Unlock();
+	// Copy data to buffer (for DEFAULT usage buffers)
+	bool Copy(int bufSize, const void* srcIndices);
 
-		void SetIndices(int startIndex=0) const;
+	// Map/Unmap for dynamic buffers
+	bool Map(void** ppData, D3D11_MAP mapType = D3D11_MAP_WRITE_DISCARD);
+	void Unmap();
 
-		LPDIRECT3DINDEXBUFFER9 GetD3DIndexBuffer() const;
+	// Const versions for compatibility
+	bool Map(void** ppData, D3D11_MAP mapType = D3D11_MAP_WRITE_DISCARD) const;
+	void Unmap() const;
 
-		int GetIndexCount() const {return m_iidxCount;}
+	// Bind buffer to input assembler
+	void Bind(UINT offset = 0) const;
 
-	protected:
-		void Initialize();
+	// Legacy SetIndexBuffer wrapper
+	void SetIndexBuffer(int startIndex = 0) const;
 
-	protected:
-		LPDIRECT3DINDEXBUFFER9	m_lpd3dIdxBuf;
-		DWORD					m_dwBufferSize;
-		D3DFORMAT				m_d3dFmt;
-		int						m_iidxCount;
+	// Accessors
+	int GetIndexCount() const { return m_idxCount; }
+	DWORD GetBufferSize() const { return m_dwBufferSize; }
+	ID3D11Buffer* GetBuffer() const { return m_pBuffer; }
+	ID3D11Buffer* GetD3DIndexBuffer() const { return m_pBuffer; }  // Legacy alias
+	DXGI_FORMAT GetFormat() const { return m_Format; }
+	bool Is32Bit() const { return m_Format == DXGI_FORMAT_R32_UINT; }
+	bool IsEmpty() const { return m_pBuffer == nullptr; }
+	bool IsDynamic() const { return m_Usage == D3D11_USAGE_DYNAMIC; }
+
+protected:
+	void Initialize();
+
+protected:
+	ID3D11Buffer*	m_pBuffer;
+	DWORD			m_dwBufferSize;
+	DXGI_FORMAT		m_Format;
+	D3D11_USAGE		m_Usage;
+	int				m_idxCount;
+
+	// Mutable for const Map/Unmap
+	mutable bool	m_bMapped;
 };
-

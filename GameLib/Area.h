@@ -1,4 +1,5 @@
 #pragma once
+#include <unordered_map>
 
 #include "../SpeedTreeLib/SpeedTreeWrapper.h"
 #include "../eterGrnLib/ThingInstance.h"
@@ -21,7 +22,7 @@ class CArea
 			PITCH_STEP_AMOUNT = YAW_STEP_AMOUNT,
 		};
 
-		typedef D3DXVECTOR3 TObjectPosition;
+		typedef Vector3 TObjectPosition;
 
 		///////////////////////////////////////////////////////////////////////////////////
 		// Object Static Data
@@ -206,7 +207,7 @@ class CArea
 
 		bool			Load(const char * c_szPathName);
 		static void BeginPreparationFrame();
-		bool PrepareObjects(D3DXVECTOR3& player);
+		bool PrepareObjects(Vector3& player);
 		bool ClearStep(unsigned maxObjects);
 		bool IsRetiring() const { return m_retiring; }
 
@@ -224,13 +225,18 @@ class CArea
 		//////////////////////////////////////////////////////////////////////////
 
 #ifdef ENABLE_AREA_OPTIMIZATION
-		bool			Update(D3DXVECTOR3& v3Player);
+		bool			Update(Vector3& v3Player);
 #else
 		void			Update();
 #endif
 		void			UpdateAroundAmbience(float fX, float fY, float fZ);
 
 		void			Render();
+		void RenderVTFBatched();
+		void RenderToShadowMap();
+		void RenderToShadowMapVTF();
+		void RenderDungeonVTFBatched();
+		void RenderDungeonShadowVTFBatched();
 		void			RenderEffect();
 		void			RenderCollision() const;
 		void			RenderAmbience();
@@ -264,8 +270,8 @@ class CArea
 
 		void			__UpdateAniThingList();
 #ifdef ENABLE_AREA_OPTIMIZATION
-		bool			__UpdateLoadedObjectInstances(D3DXVECTOR3& v3Player);
-		void			__UpdateEffectList(D3DXVECTOR3& v3Player);
+		bool			__UpdateLoadedObjectInstances(Vector3& v3Player);
+		void			__UpdateEffectList(Vector3& v3Player);
 		float			GetMaxLoadingDistanceSqr() const;
 #else
 		void			__UpdateEffectList();
@@ -299,6 +305,7 @@ class CArea
 		TAmbienceInstanceVector			m_AmbienceCloneInstanceVector;
 		TGraphicThingInstanceCRCMap		m_GraphicThingInstanceCRCMap;
 		TCRCWithNumberVector			m_kRenderedThingInstanceCRCWithNumberVector;
+		std::unordered_map<DWORD, DWORD> m_kRenderedCRCCountMap;
 		TThingInstanceVector			m_kRenderedGrapphicThingInstanceVector;
 
 		bool m_retiring = false;

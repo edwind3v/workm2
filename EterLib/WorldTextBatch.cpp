@@ -1,6 +1,6 @@
 #include "StdAfx.h"
 #include "GrpTextInstance.h"
-#include "StateManager.h"
+#include "ShaderManager.h"
 #include "TextPerformance.h"
 
 #ifdef ENABLE_FIX_MOBS_LAG
@@ -51,20 +51,19 @@ namespace
     struct SDraw { CGraphicImageTexture* texture; unsigned first, count; };
     struct SGPUFrame
     {
-        IDirect3DQuery9* start = nullptr;
-        IDirect3DQuery9* end = nullptr;
-        IDirect3DQuery9* frequency = nullptr;
-        IDirect3DQuery9* disjoint = nullptr;
+        ID3D11Query* start = nullptr;
+        ID3D11Query* end = nullptr;
+        ID3D11Query* disjoint = nullptr;
         bool pending = false;
     };
     struct STextStream
     {
-        IDirect3DDevice9Ex* device = nullptr; // Lifetime belongs to CGraphicDevice.
-        IDirect3DVertexBuffer9* vertices = nullptr;
-        IDirect3DIndexBuffer9* indices = nullptr;
+        ID3D11Device* device = nullptr; // Lifetime belongs to CGraphicDevice.
+        ID3D11Buffer* vertices = nullptr;
+        ID3D11Buffer* indices = nullptr;
         unsigned capacity = MaxQuads, cursor = 0, quads = 0, draws = 0;
         bool active = false, viewportValid = false;
-        D3DVIEWPORT9 viewport{};
+        D3D11_VIEWPORT viewport{};
         std::array<SPDTVertexRaw, MaxQuads * 4> cpuVertices{};
         std::array<WORD, MaxQuads * 6> cpuIndices{};
         std::array<SDraw, MaxQuads> commands{};
@@ -78,19 +77,19 @@ namespace
 
     void PollGPU()
     {
+        auto* context = CGraphicBase::GetContext();
+        if (!context) return;
         for (auto& frame : Stream().gpuFrames)
         {
             if (!frame.pending) continue;
-            UINT64 begin = 0, end = 0, frequency = 0;
-            BOOL disjoint = TRUE;
-            // No FLUSH flag and no waiting: profiling must not serialize frames.
-            if (frame.end->GetData(&end, sizeof(end), 0) != S_OK ||
-                frame.start->GetData(&begin, sizeof(begin), 0) != S_OK ||
-                frame.frequency->GetData(&frequency, sizeof(frequency), 0) != S_OK ||
-                frame.disjoint->GetData(&disjoint, sizeof(disjoint), 0) != S_OK) continue;
+            UINT64 begin = 0, end = 0;
+            D3D11_QUERY_DATA_TIMESTAMP_DISJOINT timing{};
+            if (context->GetData(frame.end, &end, sizeof(end), D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK ||
+                context->GetData(frame.start, &begin, sizeof(begin), D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK ||
+                context->GetData(frame.disjoint, &timing, sizeof(timing), D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK) continue;
             frame.pending = false;
-            if (!disjoint && frequency && end >= begin)
-                CTextPerformance::Get().GPU(1000000.0 * static_cast<double>(end - begin) / frequency);
+            if (!timing.Disjoint && timing.Frequency && end >= begin)
+                CTextPerformance::Get().GPU(1000000.0 * static_cast<double>(end - begin) / timing.Frequency);
         }
     }
 
@@ -99,70 +98,56 @@ namespace
         auto& stream = Stream();
         if (!stream.quads) return;
         auto& profile = CTextPerformance::Get();
-        const DWORD fog = STATEMANAGER.GetRenderState(D3DRS_FOGENABLE);
-        const DWORD lighting = STATEMANAGER.GetRenderState(D3DRS_LIGHTING);
-        STATEMANAGER.SaveRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-        STATEMANAGER.SaveRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
-        STATEMANAGER.SetRenderState(D3DRS_FOGENABLE, FALSE);
-        STATEMANAGER.SetRenderState(D3DRS_LIGHTING, FALSE);
-        STATEMANAGER.SetFVF(TPDTVertex::kFVF);
-        STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-        STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
-        STATEMANAGER.SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
-        STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
-        STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
-        STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
-
+        auto* context = CGraphicBase::GetContext();
+        if (!context || !SHADERMANAGER.IsInitialized()) { stream.quads = stream.draws = 0; return; }
+        SHADERMANAGER.PushState();
+        SHADERMANAGER.BeginUI();
+        SHADERMANAGER.SetTwoTextureBlend(false);
+        SHADERMANAGER.SetAlphaTestEnabled(false);
+        SHADERMANAGER.SetFogEnabled(false);
+        SHADERMANAGER.SetLightingEnabled(false);
+        SHADERMANAGER.SetPipelineState(PSTATE_BLENDENABLE, TRUE);
+        SHADERMANAGER.SetPipelineState(PSTATE_SRCBLEND, BLEND_SRCALPHA);
+        SHADERMANAGER.SetPipelineState(PSTATE_DESTBLEND, BLEND_INVSRCALPHA);
+        SHADERMANAGER.SetDiffuseColor(1, 1, 1, 1);
+        SHADERMANAGER.SetInputLayout(INPUT_LAYOUT_PDT);
         bool uploaded = false;
         if (stream.vertices && stream.indices)
         {
             if (stream.cursor + stream.quads > stream.capacity) stream.cursor = 0;
-            void* destination = nullptr;
+            D3D11_MAPPED_SUBRESOURCE mapped{};
             profile.Add(CTextPerformance::Locks);
             const UINT bytes = stream.quads * 4 * sizeof(SPDTVertexRaw);
-            if (SUCCEEDED(stream.vertices->Lock(stream.cursor * 4 * sizeof(SPDTVertexRaw), bytes,
-                &destination, stream.cursor ? D3DLOCK_NOOVERWRITE : D3DLOCK_DISCARD)))
+            if (SUCCEEDED(context->Map(stream.vertices, 0, stream.cursor ? D3D11_MAP_WRITE_NO_OVERWRITE : D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
             {
-                std::memcpy(destination, stream.cpuVertices.data(), bytes);
-                uploaded = SUCCEEDED(stream.vertices->Unlock());
-                if (uploaded) profile.Add(CTextPerformance::UploadBytes, bytes);
+                std::memcpy(static_cast<BYTE*>(mapped.pData) + stream.cursor * 4 * sizeof(SPDTVertexRaw), stream.cpuVertices.data(), bytes);
+                context->Unmap(stream.vertices, 0);
+                uploaded = true;
+                profile.Add(CTextPerformance::UploadBytes, bytes);
             }
-            if (!uploaded)
-            {
-                stream.cursor = 0;
-                profile.Add(CTextPerformance::StreamFailures);
-            }
+            if (!uploaded) { stream.cursor = 0; profile.Add(CTextPerformance::StreamFailures); }
         }
         if (uploaded)
         {
-            STATEMANAGER.SetStreamSource(0, stream.vertices, sizeof(SPDTVertexRaw));
-            STATEMANAGER.SetIndices(stream.indices, 0);
+            SHADERMANAGER.SetVertexBuffer(0, stream.vertices, sizeof(SPDTVertexRaw));
+            SHADERMANAGER.SetIndexBuffer(stream.indices, DXGI_FORMAT_R16_UINT);
         }
         for (unsigned i = 0; i < stream.draws; ++i)
         {
             const auto& command = stream.commands[i];
-            STATEMANAGER.SetTexture(0, command.texture->GetD3DTexture());
-            HRESULT result;
+            SHADERMANAGER.SetShaderResource(0, command.texture->GetSRV());
             if (uploaded)
-                result = STATEMANAGER.DrawIndexedPrimitive(D3DPT_TRIANGLELIST, command.first * 4,
-                    command.count * 4, command.first * 6, command.count * 2, stream.cursor * 4);
+                SHADERMANAGER.DrawIndexed(TOPOLOGY_TRIANGLELIST, command.first * 4, command.count * 4, command.first * 6, command.count * 2, stream.cursor * 4);
             else
             {
-                // Resource pressure must not suppress names. Use bounded CPU data.
                 profile.Add(CTextPerformance::FallbackDraws);
-                result = STATEMANAGER.DrawIndexedPrimitiveUP(D3DPT_TRIANGLELIST, 0,
-                    command.count * 4, command.count * 2, stream.cpuIndices.data(), D3DFMT_INDEX16,
-                    &stream.cpuVertices[command.first * 4], sizeof(SPDTVertexRaw));
+                SHADERMANAGER.DrawIndexedDynamic(TOPOLOGY_TRIANGLELIST, 0, command.count * 4, command.count * 2, stream.cpuIndices.data(), DXGI_FORMAT_R16_UINT, &stream.cpuVertices[command.first * 4], sizeof(SPDTVertexRaw));
             }
             profile.Add(CTextPerformance::Draws);
-            if (FAILED(result)) profile.Add(CTextPerformance::StreamFailures);
         }
         if (uploaded) stream.cursor += stream.quads;
         stream.quads = stream.draws = 0;
-        STATEMANAGER.RestoreRenderState(D3DRS_SRCBLEND);
-        STATEMANAGER.RestoreRenderState(D3DRS_DESTBLEND);
-        STATEMANAGER.SetRenderState(D3DRS_FOGENABLE, fog);
-        STATEMANAGER.SetRenderState(D3DRS_LIGHTING, lighting);
+        SHADERMANAGER.PopState();
     }
 
     void AppendQuad(CGraphicImageTexture* texture, float left, float top, float right, float bottom,
@@ -183,7 +168,7 @@ namespace
     }
 }
 
-void CGraphicTextInstance::CreateWorldTextDeviceObjects(IDirect3DDevice9Ex* device)
+void CGraphicTextInstance::CreateWorldTextDeviceObjects(ID3D11Device* device)
 {
     auto& stream = Stream();
     stream.device = device;
@@ -194,41 +179,26 @@ void CGraphicTextInstance::CreateWorldTextDeviceObjects(IDirect3DDevice9Ex* devi
         indices[3] = i * 4 + 2; indices[4] = i * 4 + 1; indices[5] = i * 4 + 3;
     }
     if (!device || (stream.vertices && stream.indices)) return;
-    D3DCAPS9 caps{};
-    device->GetDeviceCaps(&caps);
     for (unsigned capacity = MaxQuads; capacity >= 256; capacity /= 2)
     {
-        if (capacity * 4 - 1 > caps.MaxVertexIndex || capacity * 2 > caps.MaxPrimitiveCount) continue;
-        HRESULT result = device->CreateVertexBuffer(capacity * 4 * sizeof(SPDTVertexRaw),
-            D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, TPDTVertex::kFVF, D3DPOOL_DEFAULT, &stream.vertices, nullptr);
-        if (SUCCEEDED(result)) result = device->CreateIndexBuffer(capacity * 6 * sizeof(WORD),
-            D3DUSAGE_WRITEONLY, D3DFMT_INDEX16, D3DPOOL_DEFAULT, &stream.indices, nullptr);
-        if (SUCCEEDED(result))
-        {
-            void* indices = nullptr;
-            result = stream.indices->Lock(0, 0, &indices, 0);
-            if (SUCCEEDED(result))
-            {
-                std::memcpy(indices, stream.cpuIndices.data(), capacity * 6 * sizeof(WORD));
-                result = stream.indices->Unlock();
-            }
-        }
+        D3D11_BUFFER_DESC vb{};
+        vb.ByteWidth = capacity * 4 * sizeof(SPDTVertexRaw);
+        vb.Usage = D3D11_USAGE_DYNAMIC; vb.BindFlags = D3D11_BIND_VERTEX_BUFFER; vb.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        HRESULT result = device->CreateBuffer(&vb, nullptr, &stream.vertices);
+        D3D11_BUFFER_DESC ib{};
+        ib.ByteWidth = capacity * 6 * sizeof(WORD); ib.Usage = D3D11_USAGE_IMMUTABLE; ib.BindFlags = D3D11_BIND_INDEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA initial{}; initial.pSysMem = stream.cpuIndices.data();
+        if (SUCCEEDED(result)) result = device->CreateBuffer(&ib, &initial, &stream.indices);
         if (SUCCEEDED(result)) { stream.capacity = capacity; break; }
         Release(stream.vertices); Release(stream.indices);
     }
     if (CTextPerformance::Get().Enabled())
-    {
         for (auto& frame : stream.gpuFrames)
         {
-            if (FAILED(device->CreateQuery(D3DQUERYTYPE_TIMESTAMP, &frame.start)) ||
-                FAILED(device->CreateQuery(D3DQUERYTYPE_TIMESTAMP, &frame.end)) ||
-                FAILED(device->CreateQuery(D3DQUERYTYPE_TIMESTAMPFREQ, &frame.frequency)) ||
-                FAILED(device->CreateQuery(D3DQUERYTYPE_TIMESTAMPDISJOINT, &frame.disjoint)))
-            {
-                Release(frame.start); Release(frame.end); Release(frame.frequency); Release(frame.disjoint);
-            }
+            D3D11_QUERY_DESC stamp{D3D11_QUERY_TIMESTAMP, 0}, timing{D3D11_QUERY_TIMESTAMP_DISJOINT, 0};
+            if (FAILED(device->CreateQuery(&stamp, &frame.start)) || FAILED(device->CreateQuery(&stamp, &frame.end)) || FAILED(device->CreateQuery(&timing, &frame.disjoint)))
+            { Release(frame.start); Release(frame.end); Release(frame.disjoint); }
         }
-    }
 }
 
 void CGraphicTextInstance::DestroyWorldTextDeviceObjects()
@@ -242,7 +212,7 @@ void CGraphicTextInstance::DestroyWorldTextDeviceObjects()
     Release(stream.vertices); Release(stream.indices);
     for (auto& frame : stream.gpuFrames)
     {
-        Release(frame.start); Release(frame.end); Release(frame.frequency); Release(frame.disjoint);
+        Release(frame.start); Release(frame.end); Release(frame.disjoint);
         frame.pending = false;
     }
     stream.device = nullptr;
@@ -253,18 +223,19 @@ void CGraphicTextInstance::BeginWorldTextBatch()
     auto& stream = Stream();
     DrawQueuedText();
     stream.active = true;
-    stream.viewportValid = stream.device && SUCCEEDED(stream.device->GetViewport(&stream.viewport));
-    if (CTextPerformance::Get().Enabled())
+    auto* context = CGraphicBase::GetContext();
+    UINT count = 1;
+    if (context) context->RSGetViewports(&count, &stream.viewport);
+    stream.viewportValid = context && count == 1;
+    if (CTextPerformance::Get().Enabled() && context)
     {
         PollGPU();
         for (unsigned i = 0; i < stream.gpuFrames.size(); ++i)
         {
             auto& frame = stream.gpuFrames[i];
             if (!frame.start || frame.pending) continue;
-            if (SUCCEEDED(frame.disjoint->Issue(D3DISSUE_BEGIN)) &&
-                SUCCEEDED(frame.frequency->Issue(D3DISSUE_END)) && SUCCEEDED(frame.start->Issue(D3DISSUE_END)))
-                stream.gpuActive = static_cast<int>(i);
-            break;
+            context->Begin(frame.disjoint); context->End(frame.start);
+            stream.gpuActive = static_cast<int>(i); break;
         }
     }
 }
@@ -281,9 +252,8 @@ void CGraphicTextInstance::EndWorldTextBatch()
     if (stream.gpuActive >= 0)
     {
         auto& frame = stream.gpuFrames[stream.gpuActive];
-        const HRESULT end = frame.end->Issue(D3DISSUE_END);
-        const HRESULT disjoint = frame.disjoint->Issue(D3DISSUE_END);
-        frame.pending = SUCCEEDED(end) && SUCCEEDED(disjoint);
+        auto* context = CGraphicBase::GetContext();
+        if (context) { context->End(frame.end); context->End(frame.disjoint); frame.pending = true; }
         stream.gpuActive = -1;
     }
 }
@@ -353,8 +323,8 @@ bool CGraphicTextInstance::QueueWorldText(CGraphicFontTexture* font, RECT* clip)
                 auto* texture = font->GetTexture(info->index);
                 if (texture && info->width > 0 && info->height > 0)
                 {
-                    SCachedTextGeometry::SGlyph glyph = { x - 0.5f, y - 0.5f,
-                        x - 0.5f + info->width, y - 0.5f + info->height,
+                    SCachedTextGeometry::SGlyph glyph = { x, y,
+                        x + info->width, y + info->height,
                         info->left, info->top, info->right, info->bottom, texture, i };
                     geometry->glyphs.push_back(glyph);
                     geometry->left = std::min<float>(geometry->left, glyph.left);
@@ -386,15 +356,16 @@ bool CGraphicTextInstance::QueueWorldText(CGraphicFontTexture* font, RECT* clip)
     }
     else profile.Add(CTextPerformance::CacheHits);
 
+    const float originX = floorf(m_v3Position.x + 0.5f), originY = floorf(m_v3Position.y + 0.5f);
     const auto& geometry = *m_cachedGeometry;
     if (geometry.glyphs.empty()) return true;
     const float padding = m_isOutline ? 1.0f : 0.0f;
     // Visibility policy and picking lists are untouched; only wholly offscreen pixels are skipped.
     if (stream.viewportValid &&
-        (m_v3Position.x + geometry.right + padding < stream.viewport.X ||
-         m_v3Position.y + geometry.bottom + padding < stream.viewport.Y ||
-         m_v3Position.x + geometry.left - padding > stream.viewport.X + stream.viewport.Width ||
-         m_v3Position.y + geometry.top - padding > stream.viewport.Y + stream.viewport.Height))
+        (m_v3Position.x + geometry.right + padding < stream.viewport.TopLeftX ||
+         m_v3Position.y + geometry.bottom + padding < stream.viewport.TopLeftY ||
+         m_v3Position.x + geometry.left - padding > stream.viewport.TopLeftX + stream.viewport.Width ||
+         m_v3Position.y + geometry.top - padding > stream.viewport.TopLeftY + stream.viewport.Height))
     {
         profile.Add(CTextPerformance::Offscreen);
         return true;
@@ -404,14 +375,14 @@ bool CGraphicTextInstance::QueueWorldText(CGraphicFontTexture* font, RECT* clip)
         static const float offsets[4][2] = { {-1, 0}, {1, 0}, {0, -1}, {0, 1} };
         for (const auto& glyph : geometry.glyphs)
             for (const auto& offset : offsets)
-                AppendQuad(glyph.texture, m_v3Position.x + glyph.left + offset[0],
-                    m_v3Position.y + glyph.top + offset[1], m_v3Position.x + glyph.right + offset[0],
-                    m_v3Position.y + glyph.bottom + offset[1], m_v3Position.z, m_dwOutLineColor,
+                AppendQuad(glyph.texture, originX + glyph.left + offset[0],
+                    originY + glyph.top + offset[1], originX + glyph.right + offset[0],
+                    originY + glyph.bottom + offset[1], m_v3Position.z, m_dwOutLineColor,
                     glyph.u0, glyph.v0, glyph.u1, glyph.v1);
     }
     for (const auto& glyph : geometry.glyphs)
-        AppendQuad(glyph.texture, m_v3Position.x + glyph.left, m_v3Position.y + glyph.top,
-            m_v3Position.x + glyph.right, m_v3Position.y + glyph.bottom, m_v3Position.z,
+        AppendQuad(glyph.texture, originX + glyph.left, originY + glyph.top,
+            originX + glyph.right, originY + glyph.bottom, m_v3Position.z,
             m_dwColorInfoVector[glyph.colorIndex], glyph.u0, glyph.v0, glyph.u1, glyph.v1);
     return true;
 }

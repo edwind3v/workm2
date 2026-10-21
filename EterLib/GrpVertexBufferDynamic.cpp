@@ -1,30 +1,44 @@
 #include "StdAfx.h"
 #include "GrpVertexBufferDynamic.h"
 
-bool CDynamicVertexBuffer::Create(int vtxCount, int fvf)
+bool CDynamicVertexBuffer::Create(int vtxCount, EInputLayoutType layoutType)
 {
-	if (m_lpd3dVB)
+	// Reuse existing buffer if compatible
+	if (m_pBuffer)
 	{
-		if (m_fvf == fvf)
-		{
-			if (m_vtxCount >= vtxCount)
-				return true;
-		}
+		if (m_cachedLayoutType == layoutType && m_cachedVtxCount >= vtxCount)
+			return true;
 	}
 
-	m_vtxCount = vtxCount;
-	m_fvf = fvf;
+	m_cachedVtxCount = vtxCount;
+	m_cachedLayoutType = layoutType;
+	m_cachedStride = ::GetVertexStride(layoutType);  // Use global function
 
-	return CGraphicVertexBuffer::Create(m_vtxCount, m_fvf, D3DUSAGE_DYNAMIC, D3DPOOL_SYSTEMMEM);
+	return CGraphicVertexBuffer::Create(vtxCount, layoutType, D3D11_USAGE_DYNAMIC);
+}
+
+bool CDynamicVertexBuffer::Create(int vtxCount, UINT stride)
+{
+	// Reuse existing buffer if compatible
+	if (m_pBuffer)
+	{
+		if (m_cachedStride == stride && m_cachedVtxCount >= vtxCount)
+			return true;
+	}
+
+	m_cachedVtxCount = vtxCount;
+	m_cachedStride = stride;
+
+	return CGraphicVertexBuffer::Create(vtxCount, stride, D3D11_USAGE_DYNAMIC);
 }
 
 CDynamicVertexBuffer::CDynamicVertexBuffer()
 {
-	m_vtxCount = 0;
-	m_fvf = 0;
+	m_cachedVtxCount = 0;
+	m_cachedLayoutType = INPUT_LAYOUT_PDT;
+	m_cachedStride = 0;
 }
 
 CDynamicVertexBuffer::~CDynamicVertexBuffer()
 {
 }
-

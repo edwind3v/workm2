@@ -8,10 +8,11 @@ class CDynamicVertexBuffer : public CGraphicVertexBuffer
 		CDynamicVertexBuffer();
 		virtual ~CDynamicVertexBuffer();
 
-		bool Create(int vtxCount, int fvf);
+		bool Create(int vtxCount, EInputLayoutType layoutType);
+		bool Create(int vtxCount, UINT stride);
 
 	protected:
-		int m_vtxCount;
-		int m_fvf;
+		int m_cachedVtxCount;
+		EInputLayoutType m_cachedLayoutType;
+		UINT m_cachedStride;
 };
-

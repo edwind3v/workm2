@@ -4,7 +4,8 @@
 
 #include "../eterBase/Random.h"
 #include "../eterLib/Camera.h"
-#include "../eterLib/StateManager.h"
+#include "../eterLib/ShaderManager.h"
+#include "../eterLib/ShaderInit.h"
 
 CDynamicPool<CParticleInstance> CParticleInstance::ms_kPool;
 
@@ -29,43 +30,10 @@ void CParticleInstance::DeleteThis()
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-//CDynamicPool<CRayParticleInstance> CRayParticleInstance::ms_kPool;
-
-/*void CRayParticleInstance::DestroySystem()
-{
-	ms_kPool.Destroy();
-}
-
-CRayParticleInstance* CRayParticleInstance::New()
-{
-	return ms_kPool.Alloc();
-}
-
-void CRayParticleInstance::DeleteThis()
-{
-#ifdef RAY_TO_AFTERIMAGE
-	m_PositionList.clear();
-#else
-	m_bStart = false;
-#endif
-	ms_kPool.Free(this);
-}
-*/
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 float CParticleInstance::GetRadiusApproximation() const
 {
 	return m_v2HalfSize.y*m_v2Scale.y + m_v2HalfSize.x*m_v2Scale.x;
 }
-/*
-D3DXVECTOR3 CBaseParticleInstance::GetCenterApproximation()
-{
-	return D3DXVECTOR3(
-		m_v3Position.x + mc_pmatLocal._41,
-		m_v3Position.y + mc_pmatLocal._42,
-		m_v3Position.z + mc_pmatLocal._43
-		);
-}*/
 
 BOOL CParticleInstance::Update(float fElapsedTime, float fAngle)
 {
@@ -73,7 +41,7 @@ BOOL CParticleInstance::Update(float fElapsedTime, float fAngle)
 	if (m_fLastLifeTime < 0.0f)
 		return FALSE;
 
-	const float fLifePercentage = (m_fLifeTime - m_fLastLifeTime) / m_fLifeTime;
+	float fLifePercentage = (m_fLifeTime - m_fLastLifeTime) / m_fLifeTime;
 
 	m_pDecorator->Excute(CDecoratorData(fLifePercentage,fElapsedTime,this));
 
@@ -85,75 +53,67 @@ BOOL CParticleInstance::Update(float fElapsedTime, float fAngle)
 		if (m_pParticleProperty->m_bAttachFlag)
 		{
 			float fCos, fSin;
-			fAngle = D3DXToRadian(fAngle);
+			fAngle = ToRadian(fAngle);
 			fCos = cos(fAngle);
 			fSin = sin(fAngle);
 
-			const float rx = m_v3Position.x - m_v3StartPosition.x;
-			const float ry = m_v3Position.y - m_v3StartPosition.y;
+			float rx = m_v3Position.x - m_v3StartPosition.x;
+			float ry = m_v3Position.y - m_v3StartPosition.y;
 
 			m_v3Position.x =   fCos * rx + fSin * ry + m_v3StartPosition.x;
 			m_v3Position.y = - fSin * rx + fCos * ry + m_v3StartPosition.y;
 		}
 		else
 		{
-			D3DXQUATERNION q,qc;
-			D3DXQuaternionRotationAxis(&q,&m_pParticleProperty->m_v3ZAxis,D3DXToRadian(fAngle));
-			D3DXQuaternionConjugate(&qc,&q);
+			float fRad = ToRadian(fAngle);
+			float fCosAngle = cosf(fRad);
+			float fSinAngle = sinf(fRad);
+			float fOneMinusCos = 1.0f - fCosAngle;
 
-			D3DXQUATERNION qr(
-				m_v3Position.x-m_v3StartPosition.x,
-				m_v3Position.y-m_v3StartPosition.y,
-				m_v3Position.z-m_v3StartPosition.z,
-				0.0f);
-			D3DXQuaternionMultiply(&qr,&q,&qr);
-			D3DXQuaternionMultiply(&qr,&qr,&qc);
+			// Vector to rotate: v = position - start
+			Vector3 v(
+				m_v3Position.x - m_v3StartPosition.x,
+				m_v3Position.y - m_v3StartPosition.y,
+				m_v3Position.z - m_v3StartPosition.z);
 
-			m_v3Position.x = qr.x;
-			m_v3Position.y = qr.y;
-			m_v3Position.z = qr.z;
+			const Vector3& k = m_pParticleProperty->m_v3ZAxis;
 
-			m_v3Position += m_v3StartPosition;
+			// k × v (cross product)
+			Vector3 kCrossV;
+			Vec3Cross(&kCrossV, &k, &v);
+
+			// k · v (dot product)
+			float kDotV = Vec3Dot(&k, &v);
+
+			// Apply Rodrigues' formula
+			m_v3Position.x = v.x * fCosAngle + kCrossV.x * fSinAngle + k.x * kDotV * fOneMinusCos + m_v3StartPosition.x;
+			m_v3Position.y = v.y * fCosAngle + kCrossV.y * fSinAngle + k.y * kDotV * fOneMinusCos + m_v3StartPosition.y;
+			m_v3Position.z = v.z * fCosAngle + kCrossV.z * fSinAngle + k.z * kDotV * fOneMinusCos + m_v3StartPosition.z;
 		}
 	}
 
 	return TRUE;
 }
 
-DWORD CParticleInstance::GetColor() const
+void CParticleInstance::Transform(const Matrix * c_matLocal)
 {
-#ifdef WORLD_EDITOR
-    return static_cast<DWORD>(m_Color);
-#else
-    return static_cast<DWORD>(m_dcColor);
-#endif
-}
-
-void CParticleInstance::Transform(const D3DXMATRIX * c_matLocal, bool setColorState)
-{
-#ifdef WORLD_EDITOR
-	if (setColorState) STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, m_Color);
-#else
-	if (setColorState) STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, m_dcColor);
-#endif
-
 	/////
 
-	D3DXVECTOR3 v3Up;
-	D3DXVECTOR3 v3Cross;
+	Vector3 v3Up;
+	Vector3 v3Cross;
 
 	if (!m_pParticleProperty->m_bStretchFlag)
 	{
-		const CCamera * pCurrentCamera = CCameraManager::Instance().GetCurrentCamera();
-		const D3DXVECTOR3 & c_rv3Up = pCurrentCamera->GetUp();
-		const D3DXVECTOR3 & c_rv3Cross = pCurrentCamera->GetCross();
+		CCamera * pCurrentCamera = CCameraManager::Instance().GetCurrentCamera();
+		const Vector3 & c_rv3Up = pCurrentCamera->GetUp();
+		const Vector3 & c_rv3Cross = pCurrentCamera->GetCross();
 
-		D3DXVECTOR3 v3Rotation;
+		Vector3 v3Rotation;
 
 		switch(m_pParticleProperty->m_byBillboardType) {
 		case BILLBOARD_TYPE_LIE:
 			{
-				const float fCos = cosf(D3DXToRadian(m_fRotation)), fSin = sinf(D3DXToRadian(m_fRotation));
+				float fCos = cosf(ToRadian(m_fRotation)), fSin = sinf(ToRadian(m_fRotation));
 				v3Up.x = fCos;
 				v3Up.y = -fSin;
 				v3Up.z = 0;
@@ -167,28 +127,23 @@ void CParticleInstance::Transform(const D3DXMATRIX * c_matLocal, bool setColorSt
 			// using setting with y, and local rotation at render
 		case BILLBOARD_TYPE_Y:
 			{
-				v3Up = D3DXVECTOR3(0.0f,0.0f,1.0f);
-				//v3Up = D3DXVECTOR3(cosf(D3DXToRadian(m_fRotation)),0.0f,-sinf(D3DXToRadian(m_fRotation)));
-				const D3DXVECTOR3 & c_rv3View = pCurrentCamera->GetView();
+				v3Up = Vector3(0.0f,0.0f,1.0f);
+				const Vector3 & c_rv3View = pCurrentCamera->GetView();
 				if (v3Up.x * c_rv3View.y - v3Up.y * c_rv3View.x<0)
 					v3Up*=-1;
-				const auto val = D3DXVECTOR3(c_rv3View.x,c_rv3View.y,0);
-				D3DXVec3Cross(&v3Cross, &v3Up, &val);
-				D3DXVec3Normalize(&v3Cross, &v3Cross);
+				auto val = Vector3(c_rv3View.x,c_rv3View.y,0);
+				Vec3Cross(&v3Cross, &v3Up, &val);
+				Vec3Normalize(&v3Cross, &v3Cross);
 
 				if (m_fRotation)
 				{
-					const float fCos = -sinf(D3DXToRadian(m_fRotation)); // + 90
-					const float fSin = cosf(D3DXToRadian(m_fRotation));
+					float fCos = -sinf(ToRadian(m_fRotation)); // + 90
+					float fSin = cosf(ToRadian(m_fRotation));
 
-					const D3DXVECTOR3 v3Temp = v3Up * fCos - v3Cross * fSin;
+					Vector3 v3Temp = v3Up * fCos - v3Cross * fSin;
 					v3Cross = v3Cross * fCos + v3Up * fSin;
 					v3Up = v3Temp;
 				}
-
-				//D3DXVECTOR3 v3Rotation;
-				//D3DXVec3Cross(&v3Rotation, &v3Up, &v3Cross);
-
 			}
 			break;
 		case BILLBOARD_TYPE_ALL:
@@ -201,35 +156,35 @@ void CParticleInstance::Transform(const D3DXMATRIX * c_matLocal, bool setColorSt
 				}
 				else
 				{
-					const D3DXVECTOR3 & c_rv3View = pCurrentCamera->GetView();
-					D3DXQUATERNION q,qc;
-					D3DXQuaternionRotationAxis(&q, &c_rv3View, D3DXToRadian(m_fRotation));
-					D3DXQuaternionConjugate(&qc, &q);
+					const Vector3 & c_rv3View = pCurrentCamera->GetView();
+					float fRad = ToRadian(m_fRotation);
+					float fCosAngle = cosf(fRad);
+					float fSinAngle = sinf(fRad);
+					float fOneMinusCos = 1.0f - fCosAngle;
 
+					// Rotate -c_rv3Cross to get v3Up
 					{
-						D3DXQUATERNION qr(-c_rv3Cross.x, -c_rv3Cross.y, -c_rv3Cross.z, 0);
-						D3DXQuaternionMultiply(&qr,&qc,&qr);
-						D3DXQuaternionMultiply(&qr,&qr,&q);
-						v3Up.x = qr.x;
-						v3Up.y = qr.y;
-						v3Up.z = qr.z;
-					}
-					{
-						D3DXQUATERNION qr(c_rv3Up.x, c_rv3Up.y, c_rv3Up.z, 0);
-						D3DXQuaternionMultiply(&qr,&qc,&qr);
-						D3DXQuaternionMultiply(&qr,&qr,&q);
-						v3Cross.x = qr.x;
-						v3Cross.y = qr.y;
-						v3Cross.z = qr.z;
+						Vector3 v(-c_rv3Cross.x, -c_rv3Cross.y, -c_rv3Cross.z);
+						Vector3 kCrossV;
+						Vec3Cross(&kCrossV, &c_rv3View, &v);
+						float kDotV = Vec3Dot(&c_rv3View, &v);
+
+						v3Up.x = v.x * fCosAngle + kCrossV.x * fSinAngle + c_rv3View.x * kDotV * fOneMinusCos;
+						v3Up.y = v.y * fCosAngle + kCrossV.y * fSinAngle + c_rv3View.y * kDotV * fOneMinusCos;
+						v3Up.z = v.z * fCosAngle + kCrossV.z * fSinAngle + c_rv3View.z * kDotV * fOneMinusCos;
 					}
 
+					// Rotate c_rv3Up to get v3Cross
+					{
+						Vector3 kCrossV;
+						Vec3Cross(&kCrossV, &c_rv3View, &c_rv3Up);
+						float kDotV = Vec3Dot(&c_rv3View, &c_rv3Up);
+
+						v3Cross.x = c_rv3Up.x * fCosAngle + kCrossV.x * fSinAngle + c_rv3View.x * kDotV * fOneMinusCos;
+						v3Cross.y = c_rv3Up.y * fCosAngle + kCrossV.y * fSinAngle + c_rv3View.y * kDotV * fOneMinusCos;
+						v3Cross.z = c_rv3Up.z * fCosAngle + kCrossV.z * fSinAngle + c_rv3View.z * kDotV * fOneMinusCos;
+					}
 				}
-				//D3DXMATRIX matRotation;
-
-				//D3DXMatrixRotationAxis(&matRotation, &c_rv3View, D3DXToRadian(m_fRotation));
-
-				//D3DXVec3TransformCoord(&v3Up, &(-c_rv3Cross), &matRotation);
-				//D3DXVec3TransformCoord(&v3Cross, &c_rv3Up, &matRotation);
 			}
 			break;
 		}
@@ -241,22 +196,21 @@ void CParticleInstance::Transform(const D3DXMATRIX * c_matLocal, bool setColorSt
 
 		if (c_matLocal)
 		{
-			//if (!m_pParticleProperty->m_bAttachFlag)
-				D3DXVec3TransformNormal(&v3Up, &v3Up, c_matLocal);
+			Vec3TransformNormal(&v3Up, &v3Up, c_matLocal);
 		}
 
-		const float length = D3DXVec3Length(&v3Up);
+		float length = Vec3Length(&v3Up);
 		if (length == 0.0f)
 		{
-			v3Up = D3DXVECTOR3(0.0f,0.0f,1.0f);
+			v3Up = Vector3(0.0f,0.0f,1.0f);
 		}
 		else
 			v3Up *=(1+log(1+length))/length;
 
-		const CCamera * pCurrentCamera = CCameraManager::Instance().GetCurrentCamera();
-		const D3DXVECTOR3 & c_rv3View = pCurrentCamera->GetView();
-		D3DXVec3Cross(&v3Cross, &v3Up, &c_rv3View);
-		D3DXVec3Normalize(&v3Cross, &v3Cross);
+		CCamera * pCurrentCamera = CCameraManager::Instance().GetCurrentCamera();
+		const Vector3 & c_rv3View = pCurrentCamera->GetView();
+		Vec3Cross(&v3Cross, &v3Up, &c_rv3View);
+		Vec3Normalize(&v3Cross, &v3Cross);
 
 	}
 
@@ -265,8 +219,8 @@ void CParticleInstance::Transform(const D3DXMATRIX * c_matLocal, bool setColorSt
 
 	if (c_matLocal && m_pParticleProperty->m_bAttachFlag)
 	{
-		D3DXVECTOR3 v3Position;
-		D3DXVec3TransformCoord(&v3Position, &m_v3Position, c_matLocal);
+		Vector3 v3Position;
+		Vec3TransformCoord(&v3Position, &m_v3Position, c_matLocal);
 		m_ParticleMesh[0].position = v3Position - v3Up + v3Cross;
 		m_ParticleMesh[1].position = v3Position - v3Up - v3Cross;
 		m_ParticleMesh[2].position = v3Position + v3Up + v3Cross;
@@ -281,31 +235,25 @@ void CParticleInstance::Transform(const D3DXMATRIX * c_matLocal, bool setColorSt
 	}
 }
 
-void CParticleInstance::Transform(const D3DXMATRIX * c_matLocal, const float c_fZRotation, bool setColorState)
+void CParticleInstance::Transform(const Matrix * c_matLocal, const float c_fZRotation)
 {
-#ifdef WORLD_EDITOR
-	if (setColorState) STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, m_Color);
-#else
-	if (setColorState) STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, (DWORD)m_dcColor);
-#endif
-
 	/////
 
-	D3DXVECTOR3 v3Up;
-	D3DXVECTOR3 v3Cross;
+	Vector3 v3Up;
+	Vector3 v3Cross;
 
 	if (!m_pParticleProperty->m_bStretchFlag)
 	{
 		CCamera * pCurrentCamera = CCameraManager::Instance().GetCurrentCamera();
-		const D3DXVECTOR3 & c_rv3Up = pCurrentCamera->GetUp();
-		const D3DXVECTOR3 & c_rv3Cross = pCurrentCamera->GetCross();
+		const Vector3 & c_rv3Up = pCurrentCamera->GetUp();
+		const Vector3 & c_rv3Cross = pCurrentCamera->GetCross();
 
-		D3DXVECTOR3 v3Rotation;
+		Vector3 v3Rotation;
 
 		switch(m_pParticleProperty->m_byBillboardType) {
 		case BILLBOARD_TYPE_LIE:
 			{
-				float fCos = cosf(D3DXToRadian(m_fRotation)), fSin = sinf(D3DXToRadian(m_fRotation));
+				float fCos = cosf(ToRadian(m_fRotation)), fSin = sinf(ToRadian(m_fRotation));
 				v3Up.x = fCos;
 				v3Up.y = -fSin;
 				v3Up.z = 0;
@@ -320,28 +268,23 @@ void CParticleInstance::Transform(const D3DXMATRIX * c_matLocal, const float c_f
 			// using setting with y, and local rotation at render
 		case BILLBOARD_TYPE_Y:
 			{
-				v3Up = D3DXVECTOR3(0.0f,0.0f,1.0f);
-				//v3Up = D3DXVECTOR3(cosf(D3DXToRadian(m_fRotation)),0.0f,-sinf(D3DXToRadian(m_fRotation)));
-				const D3DXVECTOR3 & c_rv3View = pCurrentCamera->GetView();
+				v3Up = Vector3(0.0f,0.0f,1.0f);
+				const Vector3 & c_rv3View = pCurrentCamera->GetView();
 				if (v3Up.x * c_rv3View.y - v3Up.y * c_rv3View.x<0)
 					v3Up*=-1;
-				auto val = D3DXVECTOR3(c_rv3View.x,c_rv3View.y,0);
-				D3DXVec3Cross(&v3Cross, &v3Up, &val);
-				D3DXVec3Normalize(&v3Cross, &v3Cross);
+				auto val = Vector3(c_rv3View.x,c_rv3View.y,0);
+				Vec3Cross(&v3Cross, &v3Up, &val);
+				Vec3Normalize(&v3Cross, &v3Cross);
 
 				if (m_fRotation)
 				{
-					float fCos = -sinf(D3DXToRadian(m_fRotation)); // + 90
-					float fSin = cosf(D3DXToRadian(m_fRotation));
+					float fCos = -sinf(ToRadian(m_fRotation)); // + 90
+					float fSin = cosf(ToRadian(m_fRotation));
 
-					D3DXVECTOR3 v3Temp = v3Up * fCos - v3Cross * fSin;
+					Vector3 v3Temp = v3Up * fCos - v3Cross * fSin;
 					v3Cross = v3Cross * fCos + v3Up * fSin;
 					v3Up = v3Temp;
 				}
-
-				//D3DXVECTOR3 v3Rotation;
-				//D3DXVec3Cross(&v3Rotation, &v3Up, &v3Cross);
-
 			}
 			break;
 		case BILLBOARD_TYPE_ALL:
@@ -354,13 +297,13 @@ void CParticleInstance::Transform(const D3DXMATRIX * c_matLocal, const float c_f
 				}
 				else
 				{
-					const D3DXVECTOR3 & c_rv3View = pCurrentCamera->GetView();
-					D3DXMATRIX matRotation;
+					const Vector3 & c_rv3View = pCurrentCamera->GetView();
+					Matrix matRotation;
 
-					D3DXMatrixRotationAxis(&matRotation, &c_rv3View, D3DXToRadian(m_fRotation));
+					MatrixRotationAxis(&matRotation, &c_rv3View, ToRadian(m_fRotation));
 					auto val = (-c_rv3Cross);
-					D3DXVec3TransformCoord(&v3Up, &val, &matRotation);
-					D3DXVec3TransformCoord(&v3Cross, &c_rv3Up, &matRotation);
+					Vec3TransformCoord(&v3Up, &val, &matRotation);
+					Vec3TransformCoord(&v3Cross, &c_rv3Up, &matRotation);
 				}
 			}
 			break;
@@ -372,24 +315,21 @@ void CParticleInstance::Transform(const D3DXMATRIX * c_matLocal, const float c_f
 
 		if (c_matLocal)
 		{
-			//if (!m_pParticleProperty->m_bAttachFlag)
-				D3DXVec3TransformNormal(&v3Up, &v3Up, c_matLocal);
+			Vec3TransformNormal(&v3Up, &v3Up, c_matLocal);
 		}
 
-		float length = D3DXVec3Length(&v3Up);
+		float length = Vec3Length(&v3Up);
 		if (length == 0.0f)
 		{
-			v3Up = D3DXVECTOR3(0.0f,0.0f,1.0f);
+			v3Up = Vector3(0.0f,0.0f,1.0f);
 		}
 		else
 			v3Up *=(1+log(1+length))/length;
-		//D3DXVec3Normalize(&v3Up,&v3Up);
-		//v3Up *= 1+log(1+length);
 
 		CCamera * pCurrentCamera = CCameraManager::Instance().GetCurrentCamera();
-		const D3DXVECTOR3 & c_rv3View = pCurrentCamera->GetView();
-		D3DXVec3Cross(&v3Cross, &v3Up, &c_rv3View);
-		D3DXVec3Normalize(&v3Cross, &v3Cross);
+		const Vector3 & c_rv3View = pCurrentCamera->GetView();
+		Vec3Cross(&v3Cross, &v3Up, &c_rv3View);
+		Vec3Normalize(&v3Cross, &v3Cross);
 
 	}
 
@@ -415,8 +355,8 @@ void CParticleInstance::Transform(const D3DXMATRIX * c_matLocal, const float c_f
 
 	if (c_matLocal && m_pParticleProperty->m_bAttachFlag)
 	{
-		D3DXVECTOR3 v3Position;
-		D3DXVec3TransformCoord(&v3Position, &m_v3Position, c_matLocal);
+		Vector3 v3Position;
+		Vec3TransformCoord(&v3Position, &m_v3Position, c_matLocal);
 		m_ParticleMesh[0].position = v3Position - v3Up + v3Cross;
 		m_ParticleMesh[1].position = v3Position - v3Up - v3Cross;
 		m_ParticleMesh[2].position = v3Position + v3Up + v3Cross;
@@ -441,25 +381,24 @@ void CParticleInstance::Destroy()
 
 void CParticleInstance::__Initialize()
 {
-	//*
-	m_pDecorator= nullptr;
+	m_pDecorator=NULL;
 
-	m_v3Position = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
+	m_v3Position = Vector3(0.0f, 0.0f, 0.0f);
 	m_v3LastPosition = m_v3Position;
-	m_v3Velocity = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
+	m_v3Velocity = Vector3(0.0f, 0.0f, 0.0f);
 
-	m_v2Scale = D3DXVECTOR2(1.0f, 1.0f);
+	m_v2Scale = Vector2(1.0f, 1.0f);
 #ifdef WORLD_EDITOR
-	m_Color = D3DXCOLOR(1.0f, 1.0f, 1.0f, 1.0f);
+	m_Color = Color(1.0f, 1.0f, 1.0f, 1.0f);
 #else
 	m_dcColor.m_dwColor = 0xffffffff;
 #endif
 
 	m_byFrameIndex = 0;
-	m_ParticleMesh[0].texCoord = D3DXVECTOR2(0.0f, 1.0f);
-	m_ParticleMesh[1].texCoord = D3DXVECTOR2(0.0f, 0.0f);
-	m_ParticleMesh[2].texCoord = D3DXVECTOR2(1.0f, 1.0f);
-	m_ParticleMesh[3].texCoord = D3DXVECTOR2(1.0f, 0.0f);
+	m_ParticleMesh[0].texCoord = Vector2(0.0f, 1.0f);
+	m_ParticleMesh[1].texCoord = Vector2(0.0f, 0.0f);
+	m_ParticleMesh[2].texCoord = Vector2(1.0f, 1.0f);
+	m_ParticleMesh[3].texCoord = Vector2(1.0f, 0.0f);
 }
 
 CParticleInstance::CParticleInstance()
@@ -472,43 +411,18 @@ CParticleInstance::~CParticleInstance()
 	Destroy();
 }
 
-/*CRayParticleInstance::CRayParticleInstance()
+DWORD CParticleInstance::GetColor() const
 {
-#ifdef RAY_TO_AFTERIMAGE
-	int i;
-	for(i=0;i<RAY_VERTEX_COUNT*2;i+=2)
-	{
-		m_ParticleMesh[i].texCoord = D3DXVECTOR2(i+0.0f, 1.0f);
-		m_ParticleMesh[i+1].texCoord = D3DXVECTOR2(i+1.0f, 0.0f);
-	}
+#ifdef WORLD_EDITOR
+	return m_Color;
 #else
-	m_ParticleMesh[0].texCoord = D3DXVECTOR2(0.0f, 1.0f);
-	m_ParticleMesh[1].texCoord = D3DXVECTOR2(0.0f, 0.0f);
-	m_ParticleMesh[2].texCoord = D3DXVECTOR2(0.5f, 1.0f);
-	m_ParticleMesh[3].texCoord = D3DXVECTOR2(0.5f, 0.0f);
-	m_ParticleMesh[4].texCoord = D3DXVECTOR2(1.0f, 1.0f);
-	m_ParticleMesh[5].texCoord = D3DXVECTOR2(1.0f, 0.0f);
-
-	m_bStart = false;
+	return m_dcColor.m_dwColor;
 #endif
 }
-
-CRayParticleInstance::~CRayParticleInstance()
-{
-}*/
 
 TPTVertex * CParticleInstance::GetParticleMeshPointer()
 {
 	return m_ParticleMesh;
 }
 
-/*TPTVertex * CRayParticleInstance::GetParticleMeshPointer()
-{
-	return m_ParticleMesh;
-}
-
-void CRayParticleInstance::Transform(const D3DXMATRIX * c_matLocal, const float c_fZRotation)
-{
-	assert(false && "NOT_REACHED");
-}*/
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

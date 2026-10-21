@@ -22,14 +22,14 @@ void CGraphicObjectInstance::Clear()
 	m_v3Position.x = m_v3Position.y = m_v3Position.z = 0.0f;
 	m_v3Scale.x = m_v3Scale.y = m_v3Scale.z = 1.0f;
 	m_fYaw = m_fPitch = m_fRoll = 0.0f;
-	D3DXMatrixIdentity(&m_worldMatrix);
+	MatrixIdentity(&m_worldMatrix);
 
 #ifdef ENABLE_ACCE_COSTUME_SYSTEM
 	m_v3ScaleAcce.x = m_v3ScaleAcce.y = m_v3ScaleAcce.z = 0.0f;
 	m_bAttachedAcceRace = 0;
-	D3DXMatrixIdentity(&m_matAbsoluteTrans);
-	D3DXMatrixIdentity(&m_matScale);
-	D3DXMatrixIdentity(&m_matScaleWorld);
+	MatrixIdentity(&m_matAbsoluteTrans);
+	MatrixIdentity(&m_matScale);
+	MatrixIdentity(&m_matScaleWorld);
 #endif
 
 	ZeroMemory(m_abyPortalID, sizeof(m_abyPortalID));
@@ -112,7 +112,7 @@ void CGraphicObjectInstance::SetScaleWorld(float x, float y, float z)
 	m_v3Scale.x = x;
 	m_v3Scale.y = y;
 	m_v3Scale.z = z;
-	D3DXMatrixScaling(&m_matScaleWorld, x, y, z);
+	MatrixScaling(&m_matScaleWorld, x, y, z);
 }
 
 void CGraphicObjectInstance::SetAcceScale(float x, float y, float z)
@@ -122,19 +122,19 @@ void CGraphicObjectInstance::SetAcceScale(float x, float y, float z)
 	m_v3ScaleAcce.z = z;
 }
 
-void CGraphicObjectInstance::SetAcceScale(const D3DXVECTOR3& rv3Scale, BYTE bRace)
+void CGraphicObjectInstance::SetAcceScale(const Vector3& rv3Scale, BYTE bRace)
 {
 	m_v3ScaleAcce = rv3Scale;
 	m_bAttachedAcceRace = bRace;
 }
 #endif
 
-const D3DXVECTOR3 & CGraphicObjectInstance::GetPosition() const
+const Vector3 & CGraphicObjectInstance::GetPosition() const
 {
 	return m_v3Position;
 }
 
-const D3DXVECTOR3 & CGraphicObjectInstance::GetScale() const
+const Vector3 & CGraphicObjectInstance::GetScale() const
 {
 	return m_v3Scale;
 }
@@ -159,17 +159,17 @@ float CGraphicObjectInstance::GetRoll() const
 	return m_fRoll;
 }
 
-D3DXMATRIX & CGraphicObjectInstance::GetTransform()
+Matrix & CGraphicObjectInstance::GetTransform()
 {
 	return m_worldMatrix;
 }
 
-void CGraphicObjectInstance::SetRotationQuaternion(const D3DXQUATERNION &q)
+void CGraphicObjectInstance::SetRotationQuaternion(const Quaternion &q)
 {
-	D3DXMatrixRotationQuaternion(&m_mRotation, &q);
+	MatrixRotationQuaternion(&m_mRotation, &q);
 }
 
-void CGraphicObjectInstance::SetRotationMatrix(const D3DXMATRIX & m)
+void CGraphicObjectInstance::SetRotationMatrix(const Matrix & m)
 {
 	m_mRotation = m;
 }
@@ -180,7 +180,7 @@ void CGraphicObjectInstance::SetRotation(float fRotation)
 	m_fPitch = 0;
 	m_fRoll = fRotation;
 
-	D3DXMatrixRotationZ(&m_mRotation, D3DXToRadian(fRotation));
+	MatrixRotationZ(&m_mRotation, ToRadian(fRotation));
 }
 
 void CGraphicObjectInstance::SetRotation(float fYaw, float fPitch, float fRoll)
@@ -190,7 +190,7 @@ void CGraphicObjectInstance::SetRotation(float fYaw, float fPitch, float fRoll)
 	m_fPitch = fPitch;
 	m_fRoll = fRoll;
 
-	D3DXMatrixRotationYawPitchRoll(&m_mRotation, D3DXToRadian(fYaw), D3DXToRadian(fPitch), D3DXToRadian(fRoll));
+	MatrixRotationYawPitchRoll(&m_mRotation, ToRadian(fYaw), ToRadian(fPitch), ToRadian(fRoll));
 }
 
 void CGraphicObjectInstance::SetPosition(float x, float y, float z)
@@ -200,7 +200,7 @@ void CGraphicObjectInstance::SetPosition(float x, float y, float z)
 	m_v3Position.z = z;
 }
 
-void CGraphicObjectInstance::SetPosition(const D3DXVECTOR3& rv3Pos)
+void CGraphicObjectInstance::SetPosition(const Vector3& rv3Pos)
 {
 	m_v3Position = rv3Pos;
 }
@@ -247,14 +247,14 @@ void CGraphicObjectInstance::ReleaseAlwaysHidden()
 
 //////////////////////////////////////////////////////////////////////////
 
-D3DXVECTOR4 & CGraphicObjectInstance::GetWTBBoxVertex(const unsigned char & c_rucNumTBBoxVertex)
+Vector4 & CGraphicObjectInstance::GetWTBBoxVertex(const unsigned char & c_rucNumTBBoxVertex)
 {
 	return m_v4TBBox[c_rucNumTBBoxVertex];
 }
 
 bool CGraphicObjectInstance::isIntersect(const CRay & c_rRay, float * pu, float * pv, float * pt) const
 {
-	D3DXVECTOR3 v3Start, v3Dir;
+	Vector3 v3Start, v3Dir;
 	float fRayRange;
 	c_rRay.GetStartPoint(&v3Start);
 	c_rRay.GetDirection(&v3Dir, &fRayRange);
@@ -323,14 +323,14 @@ void CGraphicObjectInstance::Initialize()
 	m_v3Scale.x = m_v3Scale.y = m_v3Scale.z = 1.0f;
 	m_fYaw = m_fPitch = m_fRoll = 0.0f;
 
-	D3DXMatrixIdentity(&m_worldMatrix);
-	D3DXMatrixIdentity(&m_mRotation);
+	MatrixIdentity(&m_worldMatrix);
+	MatrixIdentity(&m_mRotation);
 
 #ifdef ENABLE_ACCE_COSTUME_SYSTEM
 	m_v3ScaleAcce.x = m_v3ScaleAcce.y = m_v3ScaleAcce.z = 0.0f;
-	D3DXMatrixIdentity(&m_matAbsoluteTrans);
-	D3DXMatrixIdentity(&m_matScale);
-	D3DXMatrixIdentity(&m_matScaleWorld);
+	MatrixIdentity(&m_matAbsoluteTrans);
+	MatrixIdentity(&m_matScale);
+	MatrixIdentity(&m_matScaleWorld);
 #endif
 
 	OnInitialize();
@@ -363,7 +363,7 @@ void CGraphicObjectInstance::RegisterBoundingSphere()
 	m_CullingHandle = CCullingManager::Instance().Register(this);
 }
 
-void CGraphicObjectInstance::AddCollision(const CStaticCollisionData * pscd, const D3DXMATRIX* pMat)
+void CGraphicObjectInstance::AddCollision(const CStaticCollisionData * pscd, const Matrix* pMat)
 {
 	m_StaticCollisionInstanceVector.push_back(CBaseCollisionInstance::BuildCollisionInstance(pscd, pMat));
 }
@@ -402,7 +402,7 @@ bool CGraphicObjectInstance::MovementCollisionDynamicSphere(const CDynamicSphere
 	return false;
 }
 
-D3DXVECTOR3 CGraphicObjectInstance::GetCollisionMovementAdjust(const CDynamicSphereInstance & s) const
+Vector3 CGraphicObjectInstance::GetCollisionMovementAdjust(const CDynamicSphereInstance & s) const
 {
 	CCollisionInstanceVector::const_iterator it;
 	for(it = m_StaticCollisionInstanceVector.begin();it!=m_StaticCollisionInstanceVector.end();++it)
@@ -411,7 +411,7 @@ D3DXVECTOR3 CGraphicObjectInstance::GetCollisionMovementAdjust(const CDynamicSph
 			return (*it)->GetCollisionMovementAdjust(s);
 	}
 
-	return D3DXVECTOR3(0.0f,0.0f,0.0f);
+	return Vector3(0.0f,0.0f,0.0f);
 }
 
 void CGraphicObjectInstance::UpdateCollisionData(const CStaticCollisionDataVector * pscdVector)

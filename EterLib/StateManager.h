@@ -1,373 +1,367 @@
-/******************************************************************************
+#pragma once
 
-  Copyright (C) 1999, 2000 NVIDIA Corporation
+/*
+ * StateManager.h
+ * DirectX 11 State Management System
+ *
+ * This class manages native DX11 state objects:
+ *   - Blend states (alpha blending)
+ *   - Rasterizer states (culling, fill mode)
+ *   - Depth-stencil states
+ *   - Sampler states (texture filtering)
+ *   - Transform matrices (stored for shader constant buffers)
+ *   - Buffer binding (vertex/index buffers)
+ *
+ * LIGHTING & MATERIAL:
+ * All lighting/material/texture-factor APIs forward directly to ShaderManager
+ * which manages the CBLighting constant buffer for native DX11 multi-light rendering.
+ * For new code, call SHADERMANAGER directly:
+ *   - SHADERMANAGER.SetLight(index, DX11Light) - up to 16 lights
+ *   - SHADERMANAGER.EnableLight(index, bool)
+ *   - SHADERMANAGER.SetGlobalAmbient(r,g,b,a)
+ *   - SHADERMANAGER.SetDiffuseColor/SetEmissiveColor/SetSpecularColor
+ *   - SHADERMANAGER.SetParticleColor(dwColor)
+ */
 
-  This file is provided without support, instruction, or implied warranty of any
-  kind.  NVIDIA makes no guarantee of its fitness for a particular purpose and is
-  not liable under any circumstances for any damages or loss whatsoever arising
-  from the use or inability to use this file or items derived from it.
-
-    Comments:
-
-      A simple class to manage rendering state.  Created as a singleton.
-	  Create it as a static global, or with new.  It doesn't matter as long as it is created
-	  before you use the CStateManager::GetSingleton() API to get a reference to it.
-
-	  Call it with STATEMANAGER.SetRenderState(...)
-	  Call it with STATEMANAGER.SetTextureStageState(...), etc.
-
-	  Call the 'Save' versions of the function if you want to deviate from the current state.
-	  Call the 'Restore' version to retrieve the last Save.
-
-	  There are two levels of caching:
-	  - All Sets/Saves/Restores are tracked for redundancy.  This reduces the size of the batch to
-	  be flushed
-	  - The flush function is called before rendering, and only copies state that is
-	  different from the current chip state.
-
-  If you get an assert it is probably because an API call failed.
-
-  See NVLink for a good example of how this class is used.
-
-  Don't be afraid of the vector being used to track the flush batch.  It will grow as big as
-  it needs to be and then stop, so it shouldn't be reallocated.
-
-  The state manager holds a reference to the d3d device.
-
-  - cmaughan@nvidia.com
-
-******************************************************************************/
-
-#ifndef __CSTATEMANAGER_H
-#define __CSTATEMANAGER_H
-
-#include <d3d9.h>
-#include <d3dx9.h>
-
+#include <d3d11.h>
+#include <DirectXMath.h>
 #include <vector>
+#include <map>
 
 #include "../eterBase/Singleton.h"
+#include "StateObjectCache.h"
+#include "GrpStateEnum.h"
+#include "GrpMathType.h"
+#include "GrpDetector.h"
+#include "GrpBase.h"
 
-#define CHECK_D3DAPI(a)		\
-{							\
-	HRESULT hr = (a);		\
-							\
-	if (hr != S_OK)			\
-		assert(!#a);		\
-}
+using namespace DirectX;
 
-static constexpr DWORD STATEMANAGER_MAX_RENDERSTATES = 256;
-static constexpr DWORD STATEMANAGER_MAX_TEXTURESTATES = 128;
-static constexpr DWORD STATEMANAGER_MAX_SAMPLERSTATES = 128;
-static constexpr DWORD STATEMANAGER_MAX_STAGES = 8;
-static constexpr DWORD STATEMANAGER_MAX_VCONSTANTS = 96;
-static constexpr DWORD STATEMANAGER_MAX_PCONSTANTS = 8;
-static constexpr DWORD STATEMANAGER_MAX_TRANSFORMSTATES = 300;	// World1 lives way up there...
-static constexpr DWORD STATEMANAGER_MAX_STREAMS = 16;
+static const DWORD STATEMANAGER_MAX_STAGES = 8;
+static const DWORD STATEMANAGER_MAX_VCONSTANTS = 256;
+static const DWORD STATEMANAGER_MAX_PCONSTANTS = 32;
+static const DWORD STATEMANAGER_MAX_TRANSFORMSTATES = 300;
+static const DWORD STATEMANAGER_MAX_STREAMS = 16;
+static const DWORD STATEMANAGER_MAX_LIGHTS = 16;  // Expanded from 8 for multi-light support
 
+// Forward declarations
+class CStateObjectCache;
+struct TLight;
+struct TGraphicMaterial;
+
+// Stream data for vertex buffer binding
 class CStreamData
 {
-	public:
-		CStreamData(LPDIRECT3DVERTEXBUFFER9 pStreamData = nullptr, UINT Stride = 0) : m_lpStreamData(pStreamData), m_Stride(Stride)
-		{
-		}
+public:
+	CStreamData(ID3D11Buffer* pStreamData = nullptr, UINT Stride = 0, UINT Offset = 0)
+		: m_pStreamData(pStreamData), m_Stride(Stride), m_Offset(Offset)
+	{
+	}
 
-		bool operator == (const CStreamData& rhs) const
-		{
-			return ((m_lpStreamData == rhs.m_lpStreamData) && (m_Stride == rhs.m_Stride));
-		}
+	bool operator == (const CStreamData& rhs) const
+	{
+		return (m_pStreamData == rhs.m_pStreamData) &&
+			(m_Stride == rhs.m_Stride) &&
+			(m_Offset == rhs.m_Offset);
+	}
 
-		LPDIRECT3DVERTEXBUFFER9	m_lpStreamData;
-		UINT					m_Stride;
+	ID3D11Buffer*	m_pStreamData;
+	UINT			m_Stride;
+	UINT			m_Offset;
 };
 
+// Index data for index buffer binding
 class CIndexData
 {
-	public:
-		CIndexData(LPDIRECT3DINDEXBUFFER9 pIndexData = nullptr, UINT BaseVertexIndex = 0)
-			: m_lpIndexData(pIndexData),
-		m_BaseVertexIndex(BaseVertexIndex)
-		{
-		}
+public:
+	CIndexData(ID3D11Buffer* pIndexData = nullptr, DXGI_FORMAT Format = DXGI_FORMAT_R16_UINT, UINT Offset = 0)
+		: m_pIndexData(pIndexData), m_Format(Format), m_Offset(Offset)
+	{
+	}
 
-		bool operator == (const CIndexData& rhs) const
-		{
-			return ((m_lpIndexData == rhs.m_lpIndexData) && (m_BaseVertexIndex == rhs.m_BaseVertexIndex));
-		}
+	bool operator == (const CIndexData& rhs) const
+	{
+		return (m_pIndexData == rhs.m_pIndexData) &&
+			(m_Format == rhs.m_Format) &&
+			(m_Offset == rhs.m_Offset);
+	}
 
-		LPDIRECT3DINDEXBUFFER9	m_lpIndexData;
-		UINT					m_BaseVertexIndex;
+	ID3D11Buffer*	m_pIndexData;
+	DXGI_FORMAT		m_Format;
+	UINT			m_Offset;
 };
 
-// State types managed by the class
-typedef enum eStateType
+struct SDX11PendingState
 {
-	STATE_MATERIAL = 0,
-	STATE_RENDER,
-	STATE_TEXTURE,
-	STATE_TEXTURESTAGE,
-	STATE_VSHADER,
-	STATE_PSHADER,
-	STATE_TRANSFORM,
-	STATE_VCONSTANT,
-	STATE_PCONSTANT,
-	STATE_STREAM,
-	STATE_INDEX
-} eStateType;
+	// Blend state components
+	bool	bAlphaBlendEnable;
+	D3D11_BLEND		srcBlend;
+	D3D11_BLEND		destBlend;
+	D3D11_BLEND_OP	blendOp;
+	D3D11_BLEND		srcBlendAlpha;
+	D3D11_BLEND		destBlendAlpha;
+	D3D11_BLEND_OP	blendOpAlpha;
+	UINT8			colorWriteMask;
 
-class CStateID
-{
-	public:
-		CStateID(eStateType Type, DWORD dwValue0 = 0, DWORD dwValue1 = 0)
-			: m_Type(Type),
-		m_dwValue0(dwValue0),
-		m_dwValue1(dwValue1)
+	// Rasterizer state components
+	D3D11_FILL_MODE fillMode;
+	D3D11_CULL_MODE cullMode;
+	bool			bScissorEnable;
+	bool			bMultisampleEnable;
+	bool			bAntialiasedLineEnable;
+	INT				depthBias;
+	float			depthBiasClamp;
+	float			slopeScaledDepthBias;
+	bool			bDepthClipEnable;
+
+	// Depth stencil state components
+	bool			bDepthEnable;
+	bool			bDepthWriteEnable;
+	D3D11_COMPARISON_FUNC depthFunc;
+	bool			bStencilEnable;
+	UINT8			stencilReadMask;
+	UINT8			stencilWriteMask;
+
+	// Sampler state per stage
+	D3D11_FILTER			samplerFilter[STATEMANAGER_MAX_STAGES];
+	D3D11_TEXTURE_ADDRESS_MODE	addressU[STATEMANAGER_MAX_STAGES];
+	D3D11_TEXTURE_ADDRESS_MODE	addressV[STATEMANAGER_MAX_STAGES];
+	D3D11_TEXTURE_ADDRESS_MODE	addressW[STATEMANAGER_MAX_STAGES];
+	UINT					maxAnisotropy[STATEMANAGER_MAX_STAGES];
+	bool					bMipmapDisabled[STATEMANAGER_MAX_STAGES];  // FILTER_NONE for mipfilter
+
+	void SetDefaults()
+	{
+		bAlphaBlendEnable = false;
+		srcBlend = D3D11_BLEND_SRC_ALPHA;
+		destBlend = D3D11_BLEND_INV_SRC_ALPHA;
+		blendOp = D3D11_BLEND_OP_ADD;
+		srcBlendAlpha = D3D11_BLEND_ONE;
+		destBlendAlpha = D3D11_BLEND_ZERO;
+		blendOpAlpha = D3D11_BLEND_OP_ADD;
+		colorWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+
+		fillMode = D3D11_FILL_SOLID;
+		cullMode = D3D11_CULL_BACK;
+		bScissorEnable = false;
+		bMultisampleEnable = false;
+		bAntialiasedLineEnable = false;
+		depthBias = 0;
+		depthBiasClamp = 0.0f;
+		slopeScaledDepthBias = 0.0f;
+		bDepthClipEnable = true;
+
+		bDepthEnable = true;
+		bDepthWriteEnable = true;
+		depthFunc = D3D11_COMPARISON_LESS_EQUAL;
+		bStencilEnable = false;
+		stencilReadMask = 0xFF;
+		stencilWriteMask = 0xFF;
+
+		for (int i = 0; i < STATEMANAGER_MAX_STAGES; ++i)
 		{
+			samplerFilter[i] = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+			addressU[i] = D3D11_TEXTURE_ADDRESS_WRAP;
+			addressV[i] = D3D11_TEXTURE_ADDRESS_WRAP;
+			addressW[i] = D3D11_TEXTURE_ADDRESS_WRAP;
+			maxAnisotropy[i] = 16;
+			bMipmapDisabled[i] = false;
 		}
-
-		CStateID(eStateType Type, DWORD dwStage, D3DTEXTURESTAGESTATETYPE StageType)
-			: m_Type(Type),
-		m_dwStage(dwStage),
-		m_TextureStageStateType(StageType)
-		{
-		}
-
-		CStateID(eStateType Type, D3DRENDERSTATETYPE RenderType)
-			: m_Type(Type),
-		m_RenderStateType(RenderType)
-		{
-		}
-
-		eStateType m_Type;
-
-		union
-		{
-			DWORD					m_dwValue0;
-			DWORD					m_dwStage;
-			D3DRENDERSTATETYPE		m_RenderStateType;
-			D3DTRANSFORMSTATETYPE	m_TransformStateType;
-		};
-
-		union
-		{
-			DWORD						m_dwValue1;
-			D3DTEXTURESTAGESTATETYPE	m_TextureStageStateType;
-		};
+	}
 };
 
-typedef std::vector<CStateID> TStateID;
-
-class CStateManagerState
+struct SD3D11Material
 {
-	public:
-		CStateManagerState()
-		{
-		}
-
-		void ResetState()
-		{
-			DWORD i, y;
-
-			for (i = 0; i < STATEMANAGER_MAX_RENDERSTATES; i++)
-				m_RenderStates[i] = 0x7FFFFFFF;
-
-			for (i = 0; i < STATEMANAGER_MAX_STAGES; i++)
-				for (y = 0; y < STATEMANAGER_MAX_TEXTURESTATES; y++)
-					m_TextureStates[i][y] = 0x7FFFFFFF;
-			for (i = 0; i < STATEMANAGER_MAX_STAGES; i++)
-				for (y = 0; y < STATEMANAGER_MAX_SAMPLERSTATES; y++)
-					m_SamplerStates[i][y] = 0x7FFFFFFF;
-
-			for (i = 0; i < STATEMANAGER_MAX_STREAMS; i++)
-				m_StreamData[i] = CStreamData();
-
-			m_IndexData = CIndexData();
-
-			for (i = 0; i < STATEMANAGER_MAX_STAGES; i++)
-				m_Textures[i] = nullptr;
-
-			// Matrices and constants are not cached, just restored.  It's silly to check all the
-			// data elements (by which time the driver could have been sent them).
-			for (i = 0; i < STATEMANAGER_MAX_TRANSFORMSTATES; i++)
-				D3DXMatrixIdentity(&m_Matrices[i]);
-
-			for (i = 0; i < STATEMANAGER_MAX_VCONSTANTS; i++)
-				m_VertexShaderConstants[i] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
-
-			for (i = 0; i < STATEMANAGER_MAX_PCONSTANTS; i++)
-				m_PixelShaderConstants[i] = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
-
-			m_dwFVF = D3DFVF_XYZ;
-			m_dwPixelShader = 0;
-			m_dwVertexShader = 0;
-
-			ZeroMemory(&m_Matrices, sizeof(D3DXMATRIX) * STATEMANAGER_MAX_TRANSFORMSTATES);
-		}
-
-		// Renderstates
-		DWORD					m_RenderStates[STATEMANAGER_MAX_RENDERSTATES];
-
-		// Texture stage states
-		DWORD					m_TextureStates[STATEMANAGER_MAX_STAGES][STATEMANAGER_MAX_TEXTURESTATES];
-
-		// Texture sampler states
-		DWORD 					m_SamplerStates[STATEMANAGER_MAX_STAGES][STATEMANAGER_MAX_SAMPLERSTATES];
-		// Vertex shader constants
-		D3DXVECTOR4				m_VertexShaderConstants[STATEMANAGER_MAX_VCONSTANTS];
-
-		// Pixel shader constants
-		D3DXVECTOR4				m_PixelShaderConstants[STATEMANAGER_MAX_PCONSTANTS];
-
-		// Textures
-		LPDIRECT3DBASETEXTURE9	m_Textures[STATEMANAGER_MAX_STAGES];
-
-		// Shaders
-		LPDIRECT3DVERTEXSHADER9 m_dwVertexShader;
-		LPDIRECT3DVERTEXDECLARATION9 m_dwVertexDeclaration;
-		LPDIRECT3DPIXELSHADER9 m_dwPixelShader;
-
-		DWORD					m_dwFVF;
-
-		D3DXMATRIX				m_Matrices[STATEMANAGER_MAX_TRANSFORMSTATES];
-
-		D3DMATERIAL9			m_D3DMaterial;
-
-		CStreamData				m_StreamData[STATEMANAGER_MAX_STREAMS];
-		CIndexData				m_IndexData;
+	XMFLOAT4 Diffuse;
+	XMFLOAT4 Ambient;
+	XMFLOAT4 Specular;
+	XMFLOAT4 Emissive;
+	float Power;
+	float _pad[3];
 };
 
 class CStateManager : public CSingleton<CStateManager>
 {
-	public:
-		CStateManager(LPDIRECT3DDEVICE9 lpDevice);
-		virtual ~CStateManager();
+public:
+	CStateManager(ID3D11Device* pDevice, ID3D11DeviceContext* pContext);
+	virtual ~CStateManager();
 
-		void	SetDefaultState();
-        void InvalidateShaderConstants();
-		void	Restore();
+	void	SetDefaultState();
+	void	Restore();
 
-		bool	BeginScene();
-		void	EndScene();
+	// Material (forwards to ShaderManager - consider using SHADERMANAGER directly for new code)
+	void	SaveMaterial();
+	void	SaveMaterial(const TGraphicMaterial* pMaterial);
+	void	RestoreMaterial();
+	void	SetMaterial(const TGraphicMaterial* pMaterial);
+	void	GetMaterial(TGraphicMaterial* pMaterial);
 
-		// Material
-		void	SaveMaterial();
-		void	SaveMaterial(const D3DMATERIAL9 * pMaterial);
-		void	RestoreMaterial();
-		void	SetMaterial(const D3DMATERIAL9 * pMaterial);
-		void	GetMaterial(D3DMATERIAL9 * pMaterial) const;
+	// Lights (forwards to ShaderManager - consider using SHADERMANAGER directly for new code)
+	void	SetLight(DWORD index, const TLight* pLight);
+	void	GetLight(DWORD index, TLight* pLight);
+	void	LightEnable(DWORD index, BOOL bEnable);
 
-		void	SetLight(DWORD index, CONST D3DLIGHT9* pLight) const;
-		void	GetLight(DWORD index, D3DLIGHT9* pLight) const;
 
-		// Renderstates
-		void	SaveRenderState(D3DRENDERSTATETYPE Type, DWORD dwValue);
-		void	RestoreRenderState(D3DRENDERSTATETYPE Type);
-		void	SetRenderState(D3DRENDERSTATETYPE Type, DWORD Value);
-		void	GetRenderState(D3DRENDERSTATETYPE Type, DWORD * pdwValue) const;
+	// Fog control (forwards to SHADERMANAGER.SetFog)
+	void	SetFogEnabled(bool bEnable);
+	void	SetFogParams(float fStart, float fEnd, DWORD dwColor);
+	void	SetFogColor(DWORD dwColor);
+	bool	GetFogEnabled() const { return m_bFogEnabled; }
 
-		// Textures
-		void	SaveTexture(DWORD dwStage, LPDIRECT3DBASETEXTURE9 pTexture);
-		void	RestoreTexture(DWORD dwStage);
-		void	SetTexture(DWORD dwStage, LPDIRECT3DBASETEXTURE9 pTexture);
-		void	GetTexture(DWORD dwStage, LPDIRECT3DBASETEXTURE9 * ppTexture) const;
+	void	SetAlphaTestEnabled(bool bEnable);
+	void	SetAlphaTestRef(float fRef);  // 0.0 - 1.0
+	void	SetAlphaTestRefByte(DWORD dwRef);  // 0 - 255
+	bool	GetAlphaTestEnabled() const { return m_bAlphaTestEnabled; }
+	float	GetAlphaTestRef() const { return m_fAlphaRef; }
 
-		// Texture stage states
-		void	SaveTextureStageState(DWORD dwStage, D3DTEXTURESTAGESTATETYPE Type, DWORD dwValue);
-		void	RestoreTextureStageState(DWORD dwStage, D3DTEXTURESTAGESTATETYPE Type);
-		void	SetTextureStageState(DWORD dwStage, D3DTEXTURESTAGESTATETYPE Type, DWORD dwValue);
-		void	GetTextureStageState(DWORD dwStage, D3DTEXTURESTAGESTATETYPE Type, DWORD * pdwValue) const;
-		void 	SaveSamplerState(DWORD dwStage, D3DSAMPLERSTATETYPE Type, DWORD dwValue);
-		void 	RestoreSamplerState(DWORD dwStage, D3DSAMPLERSTATETYPE Type);
-		void 	SetSamplerState(DWORD dwStage, D3DSAMPLERSTATETYPE Type, DWORD dwValue);
-		void 	GetSamplerState(DWORD dwStage, D3DSAMPLERSTATETYPE Type, DWORD* pdwValue);
-		void	SetBestFiltering(DWORD dwStage); // if possible set anisotropy filtering, or use trilinear
+	void	SetLightingEnabled(bool bEnable);
+	bool	GetLightingEnabled() const { return m_bLightingEnabled; }
 
-		// Vertex Shader
-		void	SaveVertexShader(LPDIRECT3DVERTEXSHADER9 dwShader);
-		void	RestoreVertexShader();
-		void	SetVertexShader(LPDIRECT3DVERTEXSHADER9 dwShader);
-		void	GetVertexShader(LPDIRECT3DVERTEXSHADER9 * pdwShader) const;
+	void	SetParticleColor(DWORD dwColor);
+	DWORD	GetParticleColor() const { return m_dwParticleColor; }
 
-		// Vertex Declaration
-		void	SaveVertexDeclaration(LPDIRECT3DVERTEXDECLARATION9 dwShader);
-		void	RestoreVertexDeclaration();
-		void	SetVertexDeclaration(LPDIRECT3DVERTEXDECLARATION9 dwShader);
-		void	GetVertexDeclaration(LPDIRECT3DVERTEXDECLARATION9* pdwShader);
+	// Render states (mapped to DX11 state objects ONLY)
+	void	SavePipelineState(EPipelineState Type, DWORD dwValue);
+	void	RestorePipelineState(EPipelineState Type);
+	void	SetPipelineState(EPipelineState Type, DWORD Value);
+	void	GetPipelineState(EPipelineState Type, DWORD* pdwValue);
+	DWORD	GetPipelineState(EPipelineState Type);
 
-		// Pixel Shader
-		void	SavePixelShader(LPDIRECT3DPIXELSHADER9 dwShader);
-		void	RestorePixelShader();
-		void	SetPixelShader(LPDIRECT3DPIXELSHADER9 dwShader);
-		void	GetPixelShader(LPDIRECT3DPIXELSHADER9 * pdwShader) const;
+	// Textures
+	void	SaveTexture(DWORD dwStage, ID3D11ShaderResourceView* pTexture);
+	void	RestoreTexture(DWORD dwStage);
+	void	SetShaderResource(DWORD dwStage, ID3D11ShaderResourceView* pTexture);
+	void	GetTexture(DWORD dwStage, ID3D11ShaderResourceView** ppTexture);
 
-		// FVF
-		void	SaveFVF(DWORD dwFVF);
-		void	RestoreFVF();
-		void	SetFVF(DWORD dwFVF);
-		void	GetFVF(DWORD* dwFVF);
+	// Sampler states
+	void	SaveSamplerState(DWORD dwStage, ESamplerState Type, DWORD dwValue);
+	void	RestoreSamplerState(DWORD dwStage, ESamplerState Type);
+	void	SetSamplerState(DWORD dwStage, ESamplerState Type, DWORD dwValue);
+	void	GetSamplerState(DWORD dwStage, ESamplerState Type, DWORD* pdwValue);
 
-		// *** These states are cached, but not protected from multiple sends of the same value.
-		// Transform
-		void SaveTransform(D3DTRANSFORMSTATETYPE Transform, const D3DMATRIX* pMatrix);
-		void RestoreTransform(D3DTRANSFORMSTATETYPE Transform);
+	void	SetBestFiltering(DWORD dwStage);
 
-		// Don't cache-check the transform.  To much to do
-		void SetTransform(D3DTRANSFORMSTATETYPE Type, const D3DMATRIX* pMatrix);
-		void GetTransform(D3DTRANSFORMSTATETYPE Type, D3DMATRIX * pMatrix) const;
+	// Shaders
+	void	VSSetShader(ID3D11VertexShader* pShader);
+	void	PSSetShader(ID3D11PixelShader* pShader);
+	void	SetInputLayout(ID3D11InputLayout* pLayout);
+	void	SaveVertexShader();
+	void	RestoreVertexShader();
+	void	SavePixelShader();
+	void	RestorePixelShader();
 
-		// SetVertexShaderConstant
-		void SaveVertexShaderConstant(DWORD dwRegister, CONST void* pConstantData, DWORD dwConstantCount);
-		void RestoreVertexShaderConstant(DWORD dwRegister, DWORD dwConstantCount);
-		void SetVertexShaderConstant(DWORD dwRegister, CONST void* pConstantData, DWORD dwConstantCount);
+	// Input Layout (Native DX11)
+	void	SetInputLayout(EInputLayoutType type);
+	EInputLayoutType GetInputLayout() const;
+	void	SaveInputLayout();
+	void	SaveInputLayout(EInputLayoutType type);  // Save current and set new
+	void	RestoreInputLayout();
 
-		// SetPixelShaderConstant
-		void SavePixelShaderConstant(DWORD dwRegister, CONST void* pConstantData, DWORD dwConstantCount);
-		void RestorePixelShaderConstant(DWORD dwRegister, DWORD dwConstantCount);
-		void SetPixelShaderConstant(DWORD dwRegister, CONST void* pConstantData, DWORD dwConstantCount);
+	// Transform (stored for shader constant buffers)
+	void	SaveTransform(EMatrixSlot Transform, const Matrix* pMatrix);
+	void	RestoreTransform(EMatrixSlot Transform);
+	void	SetMatrix(EMatrixSlot Type, const Matrix* pMatrix);
+	void	GetMatrix(EMatrixSlot Type, Matrix* pMatrix);
 
-		void SaveStreamSource(UINT StreamNumber, LPDIRECT3DVERTEXBUFFER9 pStreamData, UINT Stride);
-		void RestoreStreamSource(UINT StreamNumber);
-		void SetStreamSource(UINT StreamNumber, LPDIRECT3DVERTEXBUFFER9 pStreamData, UINT Stride);
+	// Stream/Index binding
+	void	SaveStreamSource(UINT StreamNumber, ID3D11Buffer* pStreamData, UINT Stride);
+	void	RestoreStreamSource(UINT StreamNumber);
+	void	SetVertexBuffer(UINT StreamNumber, ID3D11Buffer* pStreamData, UINT Stride, UINT Offset = 0);
 
-		void SaveIndices(LPDIRECT3DINDEXBUFFER9 pIndexData, UINT BaseVertexIndex);
-		void RestoreIndices();
-		void SetIndices(LPDIRECT3DINDEXBUFFER9 pIndexData,UINT BaseVertexIndex);
+	void	SaveIndices(ID3D11Buffer* pIndexData);
+	void	RestoreIndices();
+	void	SetIndexBuffer(ID3D11Buffer* pIndexData, DXGI_FORMAT Format = DXGI_FORMAT_R16_UINT, UINT Offset = 0);
 
-		HRESULT DrawPrimitive(D3DPRIMITIVETYPE PrimitiveType, UINT StartVertex, UINT PrimitiveCount) const;
-		HRESULT DrawPrimitiveUP(D3DPRIMITIVETYPE PrimitiveType, UINT PrimitiveCount, const void * pVertexStreamZeroData, UINT VertexStreamZeroStride);
-		HRESULT DrawIndexedPrimitive(D3DPRIMITIVETYPE PrimitiveType, UINT minIndex, UINT NumVertices, UINT startIndex, UINT primCount, INT baseVertexIndex) const;
-		HRESULT DrawIndexedPrimitiveUP(D3DPRIMITIVETYPE PrimitiveType, UINT MinVertexIndex, UINT NumVertexIndices, UINT PrimitiveCount, CONST void * pIndexData, D3DFORMAT IndexDataFormat, CONST void * pVertexStreamZeroData, UINT VertexStreamZeroStride);
+	// Drawing
+	HRESULT Draw(EPrimitiveTopology PrimitiveType, UINT StartVertex, UINT PrimitiveCount);
+	HRESULT DrawDynamic(EPrimitiveTopology PrimitiveType, UINT PrimitiveCount, const void* pVertexStreamZeroData, UINT VertexStreamZeroStride);
+	HRESULT DrawIndexed(EPrimitiveTopology PrimitiveType, UINT minIndex, UINT NumVertices, UINT startIndex, UINT primCount, INT baseVertexIndex = 0);
+	HRESULT DrawIndexedDynamic(EPrimitiveTopology PrimitiveType, UINT MinVertexIndex, UINT NumVertexIndices, UINT PrimitiveCount, const void* pIndexData, DXGI_FORMAT IndexDataFormat, const void* pVertexStreamZeroData, UINT VertexStreamZeroStride);
 
-		// Codes For Debug
-		DWORD GetRenderState(D3DRENDERSTATETYPE Type) const;
+	// Commit pending state changes to hardware
+	void	CommitState();
 
-	private:
-		void SetDevice(LPDIRECT3DDEVICE9 lpDevice);
+	// Accessors
+	ID3D11Device* GetDevice() const { return m_pDevice; }
+	ID3D11DeviceContext* GetContext() const { return m_pContext; }
 
-	private:
-		bool m_vertexConstantsValid[STATEMANAGER_MAX_VCONSTANTS]{};
-        bool m_pixelConstantsValid[STATEMANAGER_MAX_PCONSTANTS]{};
-        CStateManagerState	m_ChipState;
-		CStateManagerState	m_CurrentState;
-		CStateManagerState	m_CopyState;
-		TStateID			m_DirtyStates;
-		bool				m_bForce;
-		bool				m_bScene;
-		DWORD				m_dwBestMinFilter;
-        DWORD m_mipFilterCaps = 0;
-		DWORD				m_dwBestMagFilter;
-		LPDIRECT3DDEVICE9	m_lpD3DDev;
+private:
+	void SetDevice(ID3D11Device* pDevice, ID3D11DeviceContext* pContext);
+	void UpdateBlendState();
+	void UpdateRasterizerState();
+	void UpdateDepthStencilState();
+	void UpdateSamplerStates();
+	void EnsureShadersBound();
+	D3D11_PRIMITIVE_TOPOLOGY ConvertPrimitiveType(EPrimitiveTopology type);
+	UINT GetPrimitiveVertexCount(EPrimitiveTopology type, UINT primitiveCount);
 
-#ifdef _DEBUG
-		// Saving Flag
-		BOOL				m_bRenderStateSavingFlag[STATEMANAGER_MAX_RENDERSTATES];
-		BOOL				m_bTextureStageStateSavingFlag[STATEMANAGER_MAX_STAGES][STATEMANAGER_MAX_TEXTURESTATES];
-		BOOL				m_bSamplerStateSavingFlag[STATEMANAGER_MAX_STAGES][STATEMANAGER_MAX_SAMPLERSTATES];
-		BOOL				m_bTransformSavingFlag[STATEMANAGER_MAX_TRANSFORMSTATES];
-#endif _DEBUG
+private:
+	ID3D11Device*			m_pDevice;
+	ID3D11DeviceContext*	m_pContext;
+	CStateObjectCache*		m_pStateCache;
+
+	// Current and saved state
+	SDX11PendingState		m_CurrentState;
+	SDX11PendingState		m_SavedState;
+
+	// Currently bound state objects
+	ID3D11BlendState*			m_pCurrentBlendState;
+	ID3D11RasterizerState*		m_pCurrentRasterizerState;
+	ID3D11DepthStencilState*	m_pCurrentDepthStencilState;
+	ID3D11SamplerState*			m_pCurrentSamplerStates[STATEMANAGER_MAX_STAGES];
+
+	// Dirty flags
+	bool m_bBlendStateDirty;
+	bool m_bRasterizerStateDirty;
+	bool m_bDepthStencilStateDirty;
+	bool m_bSamplerStateDirty[STATEMANAGER_MAX_STAGES];
+
+	// Textures
+	ID3D11ShaderResourceView*	m_pTextures[STATEMANAGER_MAX_STAGES];
+	ID3D11ShaderResourceView*	m_pSavedTextures[STATEMANAGER_MAX_STAGES];
+
+	// Transform matrices
+	Matrix			m_Matrices[STATEMANAGER_MAX_TRANSFORMSTATES];
+	Matrix			m_SavedMatrices[STATEMANAGER_MAX_TRANSFORMSTATES];
+
+	// Material (light data managed entirely by ShaderManager)
+	SD3D11Material	m_Material;
+	SD3D11Material	m_SavedMaterial;
+
+	// Stream and index data
+	CStreamData		m_StreamData[STATEMANAGER_MAX_STREAMS];
+	CStreamData		m_SavedStreamData[STATEMANAGER_MAX_STREAMS];
+	CIndexData		m_IndexData;
+	CIndexData		m_SavedIndexData;
+
+	// Shader parameters (pure DX11 - constant buffer values)
+	bool			m_bFogEnabled;
+	float			m_fFogStart;
+	float			m_fFogEnd;
+	DWORD			m_dwFogColor;
+	bool			m_bAlphaTestEnabled;
+	float			m_fAlphaRef;
+	bool			m_bLightingEnabled;
+	DWORD			m_dwParticleColor;
+
+	// Input layout (for shader binding)
+	EInputLayoutType	m_InputLayout;
+	EInputLayoutType	m_SavedInputLayout;
+
+	// Saved shader state
+	ID3D11VertexShader*		m_pSavedVertexShader;
+	ID3D11PixelShader*		m_pSavedPixelShader;
+	ID3D11VertexShader*		m_pCurrentVertexShader;
+	ID3D11PixelShader*		m_pCurrentPixelShader;
+
+	// Render state storage for save/restore
+	std::map<EPipelineState, DWORD>	m_SavedRenderStates;
+	std::map<std::pair<DWORD, ESamplerState>, DWORD> m_SavedSamplerStates;
+
+	static const UINT UP_VERTEX_BUFFER_SIZE = 65536;  // 64KB for vertex data
+	static const UINT UP_INDEX_BUFFER_SIZE = 32768;   // 32KB for index data
+	ID3D11Buffer*	m_pDynamicVertexBuffer;
+	ID3D11Buffer*	m_pDynamicIndexBuffer;
 };
 
 #define STATEMANAGER (CStateManager::Instance())
-
-#endif __CSTATEMANAGER_H
-

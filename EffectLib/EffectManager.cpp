@@ -1,8 +1,13 @@
 #include "StdAfx.h"
 #include "../EterBase/MapPerformance.h"
 #include "../eterBase/Random.h"
-#include "../eterlib/StateManager.h"
+#include "../eterlib/ShaderManager.h"
 #include "EffectManager.h"
+#include "GpuParticlePool.h"
+#ifdef ENABLE_EFFECT_LIMIT
+int CEffectManager::ms_iEffectLimit = EFFECT_LIMIT_DEFAULT;
+Vector3 CEffectManager::ms_v3PlayerPosition(0, 0, 0);
+#endif
 
 void CEffectManager::GetInfo(std::string* pstInfo) const
 {
@@ -84,15 +89,44 @@ struct CEffectManager_FEffectInstanceRender
 
 void CEffectManager::Render()
 {
-	STATEMANAGER.SetTexture(0, nullptr);
-	STATEMANAGER.SetTexture(1, nullptr);
+	SHADERMANAGER.SetShaderResource(0, NULL);
+	SHADERMANAGER.SetShaderResource(1, NULL);
 
-	if (m_isDisableSortRendering)
+	SHADERMANAGER.PushState();
+
+	SHADERMANAGER.SetSamplerState(0, SAMPLER_MINFILTER, FILTER_ANISOTROPIC);
+	SHADERMANAGER.SetSamplerState(0, SAMPLER_MAGFILTER, FILTER_ANISOTROPIC);
+	SHADERMANAGER.SetPipelineState(PSTATE_BLENDENABLE, TRUE);
+	SHADERMANAGER.SetPipelineState(PSTATE_SRCBLEND, BLEND_SRCALPHA);
+	SHADERMANAGER.SetPipelineState(PSTATE_DESTBLEND, BLEND_INVSRCALPHA);
+	SHADERMANAGER.SetAlphaTestEnabled(false);
+	SHADERMANAGER.SetPipelineState(PSTATE_CULLMODE, CULL_NONE);
+	SHADERMANAGER.SetPipelineState(PSTATE_DEPTHWRITEMASK, FALSE);
+	SHADERMANAGER.SetInputLayout(INPUT_LAYOUT_PT);
+	CEffectInstance::ms_bBatchRenderState = true;
+
+	SHADERMANAGER.ResetParticleBatcher();
+	SHADERMANAGER.ResetParticleBatchStats();
+	SHADERMANAGER.SetParticleBatchingActive(true);
+
+
+
+	unsigned rendered = 0;
+    auto renderEffect = [&](CEffectInstance* effect) {
+#ifdef ENABLE_EFFECT_LIMIT
+        const Matrix& transform = effect->GetGlobalMatrix();
+        const Vector3 delta = Vector3(transform._41, transform._42, transform._43) - ms_v3PlayerPosition;
+        if (ms_iEffectLimit > 0 && rendered >= unsigned(ms_iEffectLimit) &&
+            Vec3LengthSq(&delta) > EFFECT_LIMIT_DISTANCE_DEFAULT * EFFECT_LIMIT_DISTANCE_DEFAULT) return;
+#endif
+        effect->Render(); ++rendered;
+    };
+    if (m_isDisableSortRendering)
 	{
 		for (auto itor = m_kEftInstMap.begin(); itor != m_kEftInstMap.end();)
 		{
 			CEffectInstance * pEffectInstance = itor->second;
-			pEffectInstance->Render();
+			renderEffect(pEffectInstance);
 			++itor;
 		}
 	}
@@ -108,8 +142,12 @@ void CEffectManager::Render()
             m_renderOrderDirty = false;
             MapPerformance::Count(MapPerformance::Counter::EffectSorts);
         }
-        std::for_each(m_renderOrder.begin(), m_renderOrder.end(), CEffectManager_FEffectInstanceRender());
+        for (CEffectInstance* effect : m_renderOrder) renderEffect(effect);
 	}
+	SHADERMANAGER.FlushParticleBatches();
+	SHADERMANAGER.SetParticleBatchingActive(false);
+	CEffectInstance::ms_bBatchRenderState = false;
+	SHADERMANAGER.PopState();
 }
 
 BOOL CEffectManager::RegisterEffect(const char * c_szFileName,bool isExistDelete,bool isNeedCache)
@@ -167,7 +205,7 @@ BOOL CEffectManager::RegisterEffect2(const char * c_szFileName, DWORD* pdwRetCRC
 	return RegisterEffect(c_szFileName,false,isNeedCache);
 }
 
-int CEffectManager::CreateEffect(const char * c_szFileName, const D3DXVECTOR3 & c_rv3Position, const D3DXVECTOR3 & c_rv3Rotation)
+int CEffectManager::CreateEffect(const char * c_szFileName, const Vector3 & c_rv3Position, const Vector3 & c_rv3Rotation)
 {
 	std::string strFileName;
 	StringPath(c_szFileName, strFileName); //@fixme030
@@ -175,14 +213,14 @@ int CEffectManager::CreateEffect(const char * c_szFileName, const D3DXVECTOR3 & 
 	return CreateEffect(dwID, c_rv3Position, c_rv3Rotation);
 }
 
-int CEffectManager::CreateEffect(DWORD dwID, const D3DXVECTOR3 & c_rv3Position, const D3DXVECTOR3 & c_rv3Rotation)
+int CEffectManager::CreateEffect(DWORD dwID, const Vector3 & c_rv3Position, const Vector3 & c_rv3Rotation)
 {
 	const int iInstanceIndex = GetEmptyIndex();
 
 	CreateEffectInstance(iInstanceIndex, dwID);
 	SelectEffectInstance(iInstanceIndex);
-	D3DXMATRIX mat;
-	D3DXMatrixRotationYawPitchRoll(&mat,D3DXToRadian(c_rv3Rotation.x),D3DXToRadian(c_rv3Rotation.y),D3DXToRadian(c_rv3Rotation.z));
+	Matrix mat;
+	MatrixRotationYawPitchRoll(&mat,ToRadian(c_rv3Rotation.x),ToRadian(c_rv3Rotation.y),ToRadian(c_rv3Rotation.z));
 	mat._41 = c_rv3Position.x;
 	mat._42 = c_rv3Position.y;
 	mat._43 = c_rv3Position.z;
@@ -293,7 +331,7 @@ void CEffectManager::SetEffectTextures(DWORD dwID,std::vector<string> textures)
 	}
 }
 
-void CEffectManager::SetEffectInstancePosition(const D3DXVECTOR3 & c_rv3Position) const
+void CEffectManager::SetEffectInstancePosition(const Vector3 & c_rv3Position) const
 {
 	if (!m_pSelectedEffectInstance)
 	{
@@ -304,7 +342,7 @@ void CEffectManager::SetEffectInstancePosition(const D3DXVECTOR3 & c_rv3Position
 	m_pSelectedEffectInstance->SetPosition(c_rv3Position);
 }
 
-void CEffectManager::SetEffectInstanceRotation(const D3DXVECTOR3 & c_rv3Rotation) const
+void CEffectManager::SetEffectInstanceRotation(const Vector3 & c_rv3Rotation) const
 {
 	if (!m_pSelectedEffectInstance)
 	{
@@ -315,7 +353,7 @@ void CEffectManager::SetEffectInstanceRotation(const D3DXVECTOR3 & c_rv3Rotation
 	m_pSelectedEffectInstance->SetRotation(c_rv3Rotation.x,c_rv3Rotation.y,c_rv3Rotation.z);
 }
 
-void CEffectManager::SetEffectInstanceGlobalMatrix(const D3DXMATRIX & c_rmatGlobal) const
+void CEffectManager::SetEffectInstanceGlobalMatrix(const Matrix & c_rmatGlobal) const
 {
 	if (!m_pSelectedEffectInstance)
 		return;
@@ -445,6 +483,7 @@ void CEffectManager::__DestroyEffectDataMap()
 
 void CEffectManager::Destroy()
 {
+	GPU_PARTICLE_POOL.Shutdown();
 	__DestroyEffectInstanceMap();
 	__DestroyEffectCacheMap();
 	__DestroyEffectDataMap();

@@ -95,14 +95,14 @@ class CTextFileLoader
 		BOOL GetTokenInteger(const std::string & c_rstrKey, int * pData);
 		BOOL GetTokenDoubleWord(const std::string & c_rstrKey, DWORD * pData);
 		BOOL GetTokenFloat(const std::string & c_rstrKey, float * pData);
-		BOOL GetTokenVector2(const std::string & c_rstrKey, D3DXVECTOR2 * pVector2);
-		BOOL GetTokenVector3(const std::string & c_rstrKey, D3DXVECTOR3 * pVector3);
-		BOOL GetTokenVector4(const std::string & c_rstrKey, D3DXVECTOR4 * pVector4);
+		BOOL GetTokenVector2(const std::string & c_rstrKey, Vector2 * pVector2);
+		BOOL GetTokenVector3(const std::string & c_rstrKey, Vector3 * pVector3);
+		BOOL GetTokenVector4(const std::string & c_rstrKey, Vector4 * pVector4);
 
-		BOOL GetTokenPosition(const std::string & c_rstrKey, D3DXVECTOR3 * pVector);
-		BOOL GetTokenQuaternion(const std::string & c_rstrKey, D3DXQUATERNION * pQ);
-		BOOL GetTokenDirection(const std::string & c_rstrKey, D3DVECTOR * pVector);
-		BOOL GetTokenColor(const std::string & c_rstrKey, D3DXCOLOR * pColor);
+		BOOL GetTokenPosition(const std::string & c_rstrKey, Vector3 * pVector);
+		BOOL GetTokenQuaternion(const std::string & c_rstrKey, Quaternion * pQ);
+		BOOL GetTokenDirection(const std::string & c_rstrKey, Vector3 * pVector);
+		BOOL GetTokenColor(const std::string & c_rstrKey, Color * pColor);
 		BOOL GetTokenColor(const std::string & c_rstrKey, D3DCOLORVALUE * pColor);
 		BOOL GetTokenString(const std::string & c_rstrKey, std::string * pString);
 

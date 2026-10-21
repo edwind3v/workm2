@@ -8,6 +8,6 @@ class CStaticVertexBuffer : public CGraphicVertexBuffer
 		CStaticVertexBuffer();
 		virtual ~CStaticVertexBuffer();
 
-		bool Create(int vtxCount, DWORD fvf, bool isManaged=true);
+		bool Create(int vtxCount, EInputLayoutType layoutType);
+		bool Create(int vtxCount, UINT stride);
 };
-

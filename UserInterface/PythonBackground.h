@@ -49,7 +49,7 @@ public:
 		float m_fFogStart;
 		float m_fFogEnd;
 		float m_fFarClip;
-		D3DXVECTOR3 m_v3SkyBoxScale;
+		Vector3 m_v3SkyBoxScale;
 	} TVIEWDISTANCESET;
 
 public:
@@ -76,10 +76,10 @@ public:
 	DWORD GetRenderShadowTime() const;
 	void GetDistanceSetInfo(int * peNum, float * pfStart, float * pfEnd, float * pfFarClip) const;
 
-	bool GetPickingPoint(D3DXVECTOR3 * v3IntersectPt);
-	bool GetPickingPointWithRay(const CRay & rRay, D3DXVECTOR3 * v3IntersectPt);
-	bool GetPickingPointWithRayOnlyTerrain(const CRay & rRay, D3DXVECTOR3 * v3IntersectPt);
-	BOOL GetLightDirection(D3DXVECTOR3 & rv3LightDirection) const;
+	bool GetPickingPoint(Vector3 * v3IntersectPt);
+	bool GetPickingPointWithRay(const CRay & rRay, Vector3 * v3IntersectPt);
+	bool GetPickingPointWithRayOnlyTerrain(const CRay & rRay, Vector3 * v3IntersectPt);
+	BOOL GetLightDirection(Vector3 & rv3LightDirection) const;
 
 	void Update(float fCenterX, float fCenterY, float fCenterZ);
 
@@ -91,6 +91,7 @@ public:
 	void RenderCollision();
 	void RenderCharacterShadowToTexture();
 	void RenderSky();
+	void RenderCelestialBody();
 	void RenderCloud();
 	void RenderWater();
 	void RenderEffect();

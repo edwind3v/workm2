@@ -880,7 +880,7 @@ class CItemData
 	protected:
 		typedef struct SItemScaleTable
 		{
-			D3DXVECTOR3 v3Scale[NRaceData::SEX_MAX_NUM][NRaceData::JOB_MAX_NUM]{};
+			Vector3 v3Scale[NRaceData::SEX_MAX_NUM][NRaceData::JOB_MAX_NUM]{};
 			float fScaleParticle[NRaceData::SEX_MAX_NUM][NRaceData::JOB_MAX_NUM]{};
 		} TItemScaleTable;
 		TItemScaleTable m_ItemScaleTable;
@@ -888,7 +888,7 @@ class CItemData
 	public:
 		float GetItemParticleScale(BYTE bJob, BYTE bSex) const;
 		void SetItemTableScaleData(BYTE bJob, BYTE bSex, float fScaleX, float fScaleY, float fScaleZ, float fScaleParticle);
-		D3DXVECTOR3& GetItemScaleVector(BYTE bJob, BYTE bSex);
+		Vector3& GetItemScaleVector(BYTE bJob, BYTE bSex);
 #endif
 };
 

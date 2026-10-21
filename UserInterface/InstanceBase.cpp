@@ -1,4 +1,6 @@
 #include "StdAfx.h"
+#include "../EterLib/ShaderManager.h"
+#include "../EterLib/VTFInstanceManager.h"
 #include "InstanceBase.h"
 #include "PythonBackground.h"
 #include "PythonNonPlayer.h"
@@ -1597,7 +1599,7 @@ void CInstanceBase::MovementProcess()
 
 	TPixelPosition kPPosNext;
 	{
-		const D3DXVECTOR3 & c_rkV3Mov = m_GraphicThingInstance.GetMovementVectorRef();
+		const Vector3 & c_rkV3Mov = m_GraphicThingInstance.GetMovementVectorRef();
 
 		kPPosNext.x = kPPosCur.x + (+c_rkV3Mov.x);
 		kPPosNext.y = kPPosCur.y + (-c_rkV3Mov.y);
@@ -1948,7 +1950,7 @@ void CInstanceBase::Transform()
 	{
 		if (IsWalking() || m_GraphicThingInstance.IsUsingMovingSkill())
 		{
-			const D3DXVECTOR3& c_rv3Movment=m_GraphicThingInstance.GetMovementVectorRef();
+			const Vector3& c_rv3Movment=m_GraphicThingInstance.GetMovementVectorRef();
 
 			const float len=(c_rv3Movment.x*c_rv3Movment.x)+(c_rv3Movment.y*c_rv3Movment.y);
 			if (len>1.0f)
@@ -1996,19 +1998,16 @@ void CInstanceBase::Render()
 		if (NEW_GetDstPixelPositionRef().x != 0.0f)
 		{
 			static CScreen s_kScreen;
-
-			STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG1,	D3DTA_DIFFUSE);
-			STATEMANAGER.SetTextureStageState(0, D3DTSS_COLOROP,	D3DTOP_SELECTARG1);
-			STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAOP,	D3DTOP_DISABLE);
-			STATEMANAGER.SaveRenderState(D3DRS_ZENABLE, FALSE);
-			STATEMANAGER.SetRenderState(D3DRS_FOGENABLE, FALSE);
-			STATEMANAGER.SetRenderState(D3DRS_LIGHTING, FALSE);
+			SHADERMANAGER.PushState();
+			SHADERMANAGER.SetPipelineState(PSTATE_DEPTHENABLE, FALSE);
+			SHADERMANAGER.SetFogEnabled(false);
+			SHADERMANAGER.SetLightingEnabled(false);
 
 			TPixelPosition px;
 			m_GraphicThingInstance.GetPixelPosition(&px);
-			const D3DXVECTOR3 kD3DVt3Cur(px.x, px.y, px.z);
-			//D3DXVECTOR3 kD3DVt3Cur(NEW_GetSrcPixelPositionRef().x, -NEW_GetSrcPixelPositionRef().y, NEW_GetSrcPixelPositionRef().z);
-			const D3DXVECTOR3 kD3DVt3Dest(NEW_GetDstPixelPositionRef().x, -NEW_GetDstPixelPositionRef().y, NEW_GetDstPixelPositionRef().z);
+			const Vector3 kD3DVt3Cur(px.x, px.y, px.z);
+			//Vector3 kD3DVt3Cur(NEW_GetSrcPixelPositionRef().x, -NEW_GetSrcPixelPositionRef().y, NEW_GetSrcPixelPositionRef().z);
+			const Vector3 kD3DVt3Dest(NEW_GetDstPixelPositionRef().x, -NEW_GetDstPixelPositionRef().y, NEW_GetDstPixelPositionRef().z);
 
 			//printf("%s %f\n", GetNameString(), kD3DVt3Cur.y - kD3DVt3Dest.y);
 			//float fdx = NEW_GetDstPixelPositionRef().x - NEW_GetSrcPixelPositionRef().x;
@@ -2016,9 +2015,7 @@ void CInstanceBase::Render()
 
 			s_kScreen.SetDiffuseColor(0.0f, 0.0f, 1.0f);
 			s_kScreen.RenderLine3d(kD3DVt3Cur.x, kD3DVt3Cur.y, px.z, kD3DVt3Dest.x, kD3DVt3Dest.y, px.z);
-			STATEMANAGER.RestoreRenderState(D3DRS_ZENABLE);
-			STATEMANAGER.SetRenderState(D3DRS_FOGENABLE, TRUE);
-			STATEMANAGER.SetRenderState(D3DRS_LIGHTING, TRUE);
+			SHADERMANAGER.PopState();
 		}
 	}
 }
@@ -2613,7 +2610,7 @@ void CInstanceBase::SetRenderMode(int iRenderMode)
 	m_GraphicThingInstance.SetRenderMode(iRenderMode);
 }
 
-void CInstanceBase::SetAddColor(const D3DXCOLOR & c_rColor)
+void CInstanceBase::SetAddColor(const Color & c_rColor)
 {
 	m_GraphicThingInstance.SetAddColor(c_rColor);
 }
@@ -3345,7 +3342,7 @@ CInstanceBase::~CInstanceBase()
 	Destroy();
 }
 
-void CInstanceBase::GetBoundBox(D3DXVECTOR3 * vtMin, D3DXVECTOR3 * vtMax)
+void CInstanceBase::GetBoundBox(Vector3 * vtMin, Vector3 * vtMax)
 {
 	m_GraphicThingInstance.GetBoundBox(vtMin, vtMax);
 }
@@ -3404,3 +3401,137 @@ float CInstanceBase::GetBaseHeight() const
 }
 #endif
 
+
+void CInstanceBase::RenderWithRigidDefer()
+{
+	if (!__CanRender())
+		return;
+
+	CActorInstance& rkActor = m_GraphicThingInstance;
+	if (!rkActor.CanBatchOpaqueParts()) { Render(); return; }
+
+	++ms_dwRenderCounter;
+
+	m_kHorse.Render();
+
+	if (!rkActor.isShow())
+		return;
+
+	
+
+
+	SHADERMANAGER.PushState();
+
+	TGraphicMaterial kMtrl;
+	SHADERMANAGER.GetMaterial(&kMtrl);
+	kMtrl.Diffuse = Color(0xffffffff);
+	SHADERMANAGER.SetMaterial(&kMtrl);
+	SHADERMANAGER.SetPipelineState(PSTATE_CULLMODE, CULL_NONE);
+
+	switch (rkActor.GetRenderMode())
+	{
+	case CActorInstance::RENDER_MODE_BLEND:
+		if (rkActor.GetAlphaValue() == 1.0f)
+		{
+			rkActor.BeginDiffuseRender();
+			rkActor.RenderWithOneTexture_SkinnedOnly();
+			rkActor.EndDiffuseRender();
+		}
+		else if (rkActor.GetAlphaValue() > 0.0f)
+		{
+			rkActor.BeginBlendRender();
+			rkActor.RenderWithOneTexture_SkinnedOnly();
+			rkActor.EndBlendRender();
+		}
+		break;
+
+	case CActorInstance::RENDER_MODE_ADD:
+		rkActor.BeginAddRender();
+		rkActor.RenderWithOneTexture_SkinnedOnly();
+		rkActor.EndAddRender();
+		break;
+
+	case CActorInstance::RENDER_MODE_MODULATE:
+		rkActor.BeginModulateRender();
+		rkActor.RenderWithOneTexture_SkinnedOnly();
+		rkActor.EndModulateRender();
+		break;
+
+	default:
+		rkActor.BeginDiffuseRender();
+		rkActor.RenderWithOneTexture_SkinnedOnly();
+		rkActor.EndDiffuseRender();
+		break;
+	}
+
+	SHADERMANAGER.PopState();
+
+	for (DWORD idx = 0; idx < rkActor.GetLODControllerCount(); ++idx)
+	{
+		CGrannyLODController* pLOD = rkActor.GetLODControllerPointer(idx);
+		if (!pLOD || !pLOD->isModelInstance())
+			continue;
+
+		CGrannyModelInstance* pModelInst = pLOD->GetCurrentModelInstance();
+		if (!pModelInst || pModelInst->IsEmpty())
+			continue;
+
+		if (!pModelInst->HasRigidMeshes())
+			continue;
+
+		CGrannyModel* pModel = pModelInst->GetModel();
+		if (pModel)
+			VTFMANAGER.DeferRigidModelInstance(pModel, pModelInst);
+	}
+}
+
+void CInstanceBase::RenderBlendPassDeferred()
+{
+	if (!__CanRender())
+		return;
+
+	CActorInstance& rkActor = m_GraphicThingInstance;
+	if (!rkActor.CanBatchOpaqueParts()) return;
+
+	if (!rkActor.isShow())
+		return;
+
+	if (rkActor.GetRenderMode() == CActorInstance::RENDER_MODE_BLEND &&
+		rkActor.GetAlphaValue() < 1.0f)
+	{
+		return;
+	}
+
+	switch (rkActor.GetRenderMode())
+	{
+		case CActorInstance::RENDER_MODE_BLEND:
+			if (1.0f == rkActor.GetAlphaValue())
+			{
+				rkActor.BeginOpacityRender();
+				rkActor.BlendRenderWithOneTexture();
+				rkActor.EndOpacityRender();
+			}
+			else if (rkActor.GetAlphaValue() > 0.0f)
+			{
+				rkActor.BeginBlendRender();
+				rkActor.BlendRenderWithOneTexture();
+				rkActor.EndBlendRender();
+			}
+			break;
+		case CActorInstance::RENDER_MODE_ADD:
+			rkActor.BeginAddRender();
+			rkActor.BlendRenderWithOneTexture();
+			rkActor.EndAddRender();
+			break;
+		case CActorInstance::RENDER_MODE_MODULATE:
+			rkActor.BeginModulateRender();
+			rkActor.BlendRenderWithOneTexture();
+			rkActor.EndModulateRender();
+			break;
+		default:
+			rkActor.BeginOpacityRender();
+			rkActor.BlendRenderWithOneTexture();
+			rkActor.EndOpacityRender();
+			break;
+	}
+}

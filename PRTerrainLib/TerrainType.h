@@ -13,7 +13,7 @@ typedef struct STerainSplat
 {
 	long					Active;
 	long					NeedsUpdate;
-	LPDIRECT3DTEXTURE9		pd3dTexture;
+	ID3D11ShaderResourceView*		pd3dTexture;
 } TTerainSplat;
 
 typedef struct STerrainSplatPatch
@@ -60,16 +60,21 @@ typedef struct STerrainGlobals
 	long			DisableShadow;
 	long			ShadowMode;
 	long			OutsideVisible;
-	D3DXVECTOR3		SunLocation;
+	Vector3		SunLocation;
 } TTerrainGlobals;
 
 /* Converts a floating point number to an integer by truncation, using
    the FISTP instruction */
-#define PR_FLOAT_TO_INTASM __asm	\
+#if defined(_M_X64) || defined(_M_ARM64)
+#  include <math.h>
+#  define PR_FLOAT_TO_INTASM   do { PR_ICNV = (long)lrintf(PR_FCNV); } while (0)
+#else
+#  define PR_FLOAT_TO_INTASM __asm	\
 {									\
 	__asm fld PR_FCNV				\
 	__asm fistp PR_ICNV				\
 }
+#endif
 
 #define PR_FLOAT_TO_FIXED(inreal, outint)	\
 {											\
@@ -93,4 +98,4 @@ typedef struct STerrainGlobals
 }
 
 #endif //__TERRAIn_TYPES__
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

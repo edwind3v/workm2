@@ -1,9 +1,11 @@
 #include "stdafx.h"
-#include "../eterLib/StateManager.h"
+#include "../eterLib/ShaderManager.h"
 #include "../eterLib/Camera.h"
 
 #include "FlyingData.h"
 #include "FlyTrace.h"
+
+#include "../EterBase/StepTimer.h"
 
 CDynamicPool<CFlyTrace>		CFlyTrace::ms_kPool;
 
@@ -57,10 +59,10 @@ void CFlyTrace::Destroy()
 	__Initialize();
 }
 
-void CFlyTrace::UpdateNewPosition(const D3DXVECTOR3 & v3Position)
+void CFlyTrace::UpdateNewPosition(const Vector3 & v3Position)
 {
-	m_TimePositionDeque.push_front(TTimePosition(CTimer::Instance().GetCurrentSecond(),v3Position));
-	while(!m_TimePositionDeque.empty() && m_TimePositionDeque.back().first+m_fTailLength<CTimer::Instance().GetCurrentSecond())
+	m_TimePositionDeque.push_front(TTimePosition(DX::StepTimer::Instance().GetTotalSeconds(), v3Position));
+	while (!m_TimePositionDeque.empty() && m_TimePositionDeque.back().first + m_fTailLength < DX::StepTimer::Instance().GetTotalSeconds())
 	{
 		m_TimePositionDeque.pop_back();
 	}
@@ -81,201 +83,186 @@ void CFlyTrace::Update() const
 
 struct TFlyVertex
 {
-	D3DXVECTOR3 p;
+	Vector3 p;
 	DWORD c;
-	D3DXVECTOR2 t;
+	Vector2 t;
 	TFlyVertex(){};
-	TFlyVertex(const D3DXVECTOR3& p, DWORD c, const D3DXVECTOR2 & t):p(p),c(c),t(t){}
+	TFlyVertex(const Vector3& p, DWORD c, const Vector2 & t):p(p),c(c),t(t){}
 };
 
-struct TFlyVertexSet
-{
-	TFlyVertex v[6];
-	TFlyVertexSet(TFlyVertex * pv)
-	{
-		memcpy(v,pv,sizeof(v));
-	}
-	bool operator < (const TFlyVertexSet& ) const
-	{
-		return false;
-	}
-	TFlyVertexSet & operator = ( const TFlyVertexSet& rhs )
-	{
-		memcpy(v,rhs.v,sizeof(v));
-		return *this;
-	}
-};
-
-typedef std::vector<std::pair<float, TFlyVertexSet> > TFlyVertexSetVector;
+static std::vector<FlyTraceSegmentInput> s_csSegmentBuffer;
 
 void CFlyTrace::Render()
 {
-	if (m_TimePositionDeque.size()<=1)
+	if (m_TimePositionDeque.size() <= 1)
 		return;
-	TFlyVertexSetVector VSVector;
 
-	//STATEMANAGER.SaveRenderState(D3DRS_ZFUNC,D3DCMP_LESS);
-	STATEMANAGER.SaveRenderState(D3DRS_ZFUNC,D3DCMP_LESS);
-	//STATEMANAGER.SaveRenderState(D3DRS_ZWRITEENABLE,FALSE);
+	CScreen s;
+	s.UpdateViewMatrix();
 
-	D3DXMATRIX matWorld;
-	D3DXMatrixIdentity(&matWorld);
-
-	STATEMANAGER.SaveTransform(D3DTS_WORLD, &matWorld);
-	STATEMANAGER.SaveFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1);
-	STATEMANAGER.SaveRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-
-	STATEMANAGER.SaveRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-	STATEMANAGER.SaveRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-	STATEMANAGER.SaveRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
-
-	STATEMANAGER.SaveRenderState(D3DRS_ALPHATESTENABLE, TRUE);
-	STATEMANAGER.SaveRenderState(D3DRS_ALPHAFUNC, D3DCMP_GREATER);
-	STATEMANAGER.SaveRenderState(D3DRS_ALPHAREF, 0x00000000);
-
-	STATEMANAGER.SaveRenderState(D3DRS_BLENDOP, D3DBLENDOP_ADD );
-	//STATEMANAGER.SaveRenderState(D3DRS_BLENDOP, D3DBLENDOP_ADD );
-
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_DIFFUSE);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_TEXTURE);
-	//STATEMANAGER.SetTextureStageState(0, D3DTSS_COLOROP, /*(m_bUseTexture)?D3DTOP_SELECTARG2:*/D3DTOP_SELECTARG2);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
-
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_DIFFUSE);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG2, D3DTA_TEXTURE);
-	//STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
-	STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAOP, /*(m_bUseTexture)?D3DTOP_SELECTARG2:*/D3DTOP_SELECTARG1);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
-	STATEMANAGER.SetTextureStageState(1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
-	STATEMANAGER.SetRenderState(D3DRS_LIGHTING, FALSE);
-	STATEMANAGER.SetTexture(0, nullptr);
-	STATEMANAGER.SetTexture(1, nullptr);
-
-	D3DXMATRIX m;
-	CScreen s;s.UpdateViewMatrix();
-	CCamera * pCurrentCamera = CCameraManager::Instance().GetCurrentCamera();
+	CCamera* pCurrentCamera = CCameraManager::Instance().GetCurrentCamera();
 	if (!pCurrentCamera)
 		return;
 
-	const D3DXMATRIX & M = pCurrentCamera->GetViewMatrix();
-	D3DXMatrixIdentity(&m);
-	D3DXVECTOR3 F(pCurrentCamera->GetView());
-	m._31 = F.x;
-	m._32 = F.y;
-	m._33 = F.z;
+	SHADERMANAGER.PushState();
 
-	Frustum & frustum = s.GetFrustum();
-	//frustum.BuildViewFrustum(ms_matView * ms_matProj);
+	Matrix matWorld;
+	MatrixIdentity(&matWorld);
 
-	TTimePositionDeque::iterator it1, it2;
-	it2 = it1 = m_TimePositionDeque.begin();
-	++it2;
-	for(;it2!=m_TimePositionDeque.end();++it2,++it1)
+	SHADERMANAGER.SetPipelineState(PSTATE_DEPTHFUNC, COMPARISON_LESS);
+	SHADERMANAGER.SetMatrix(MATRIX_WORLD, &matWorld);
+	SHADERMANAGER.SetInputLayout(INPUT_LAYOUT_PDT);
+	SHADERMANAGER.SetPipelineState(PSTATE_CULLMODE, CULL_NONE);
+	SHADERMANAGER.SetPipelineState(PSTATE_BLENDENABLE, TRUE);
+	SHADERMANAGER.SetPipelineState(PSTATE_SRCBLEND, BLEND_SRCALPHA);
+	SHADERMANAGER.SetPipelineState(PSTATE_DESTBLEND, BLEND_ONE);
+	SHADERMANAGER.SetAlphaTestEnabled(true);
+	SHADERMANAGER.SetPipelineState(PSTATE_BLENDOP, BLENDOP_ADD);
+	SHADERMANAGER.SetLightingEnabled(false);
+	SHADERMANAGER.SetDefaultTexture(0);
+	SHADERMANAGER.SetShaderResource(1, nullptr);
+
+	Frustum& frustum = s.GetFrustum();
+
+	if (SHADERMANAGER.IsFlyTraceCSAvailable())
 	{
-		const D3DXVECTOR3& rkOld=it1->second;
-		const D3DXVECTOR3& rkNew=it2->second;
-		D3DXVECTOR3 B = rkNew - rkOld;
+		s_csSegmentBuffer.clear();
 
-		float radius = max(fabs(B.x),max(fabs(B.y),fabs(B.z)))/2;
-		Vector3d c(it1->second.x+B.x*0.5f,
-			it1->second.y+B.y*0.5f,
-			it1->second.z+B.z*0.5f
-			);
-		if (frustum.ViewVolumeTest(c, radius)==VS_OUTSIDE)
-			continue;
+		TTimePositionDeque::iterator it1, it2;
+		it2 = it1 = m_TimePositionDeque.begin();
+		++it2;
 
-		float rate1 = (1-(CTimer::Instance().GetCurrentSecond()-it1->first)/m_fTailLength);
-		float rate2 = (1-(CTimer::Instance().GetCurrentSecond()-it2->first)/m_fTailLength);
-		float size1 = m_fSize;
-		float size2 = m_fSize;
-		if (!m_bRectShape)
+		for (; it2 != m_TimePositionDeque.end(); ++it2, ++it1)
 		{
-			size1 *= rate1;
-			size2 *= rate2;
+			const Vector3& rkOld = it1->second;
+			const Vector3& rkNew = it2->second;
+			Vector3 B = rkNew - rkOld;
+
+			float radius = max(fabs(B.x), max(fabs(B.y), fabs(B.z))) / 2;
+			Vector3d c(rkOld.x + B.x * 0.5f, rkOld.y + B.y * 0.5f, rkOld.z + B.z * 0.5f);
+
+			if (frustum.ViewVolumeTest(c, radius) == VS_OUTSIDE)
+				continue;
+
+			float rate1 = 1 - (DX::StepTimer::Instance().GetTotalSeconds() - it1->first) / m_fTailLength;
+			float rate2 = 1 - (DX::StepTimer::Instance().GetTotalSeconds() - it2->first) / m_fTailLength;
+			float size1 = m_fSize;
+			float size2 = m_fSize;
+
+			if (!m_bRectShape)
+			{
+				size1 *= rate1;
+				size2 *= rate2;
+			}
+
+			FlyTraceSegmentInput seg;
+			seg.pos1X = rkOld.x; seg.pos1Y = rkOld.y; seg.pos1Z = rkOld.z;
+			seg.size1 = size1;
+			seg.pos2X = rkNew.x; seg.pos2Y = rkNew.y; seg.pos2Z = rkNew.z;
+			seg.size2 = size2;
+			seg.color = m_dwColor;
+			seg._pad[0] = seg._pad[1] = seg._pad[2] = 0;
+
+			s_csSegmentBuffer.push_back(seg);
 		}
-		TFlyVertex v[6] =
+
+		if (!s_csSegmentBuffer.empty())
 		{
-			TFlyVertex(D3DXVECTOR3(0.0f,size1,0.0f), m_dwColor,D3DXVECTOR2(0.0f,0.0f)),
-			TFlyVertex(D3DXVECTOR3(-size1,0.0f,0.0f),m_dwColor,D3DXVECTOR2(0.0f,0.5f)),
-			TFlyVertex(D3DXVECTOR3(size1,0.0f,0.0f), m_dwColor,D3DXVECTOR2(0.5f,0.0f)),
-			TFlyVertex(D3DXVECTOR3(-size2,0.0f,0.0f),m_dwColor,D3DXVECTOR2(0.5f,1.0f)),
-			TFlyVertex(D3DXVECTOR3(size2,0.0f,0.0f), m_dwColor,D3DXVECTOR2(1.0f,0.5f)),
-			TFlyVertex(D3DXVECTOR3(0.0f,-size2,0.0f),m_dwColor,D3DXVECTOR2(1.0f,1.0f)),
+			UINT segCount = (UINT)s_csSegmentBuffer.size();
 
-			/*TVertex(D3DXVECTOR3(0.0f,size1,0.0f), ((DWORD)(0x40*rate1)<<24) + 0x0000ff,D3DXVECTOR2(0.0f,0.0f)),
-			TVertex(D3DXVECTOR3(-size1,0.0f,0.0f),((DWORD)(0x40*rate1)<<24) + 0x0000ff,D3DXVECTOR2(0.0f,0.0f)),
-			TVertex(D3DXVECTOR3(size1,0.0f,0.0f), ((DWORD)(0x40*rate1)<<24) + 0x0000ff,D3DXVECTOR2(0.0f,0.0f)),
-			TVertex(D3DXVECTOR3(-size2,0.0f,0.0f),((DWORD)(0x40*rate2)<<24) + 0x0000ff,D3DXVECTOR2(0.0f,0.0f)),
-			TVertex(D3DXVECTOR3(size2,0.0f,0.0f), ((DWORD)(0x40*rate2)<<24) + 0x0000ff,D3DXVECTOR2(0.0f,0.0f)),
-			TVertex(D3DXVECTOR3(0.0f,-size2,0.0f),((DWORD)(0x40*rate2)<<24) + 0x0000ff,D3DXVECTOR2(0.0f,0.0f)),*/
+			SHADERMANAGER.SetParticleColor(0xFFFFFFFF);
+			SHADERMANAGER.BeginParticlePCT();
 
-			/*TVertex(D3DXVECTOR3(0.0f,size1,0.0f),0x20ff0000,D3DXVECTOR2(0.0f,0.0f)),
-			TVertex(D3DXVECTOR3(-size1,0.0f,0.0f),0x20ff0000,D3DXVECTOR2(0.0f,0.0f)),
-			TVertex(D3DXVECTOR3(size1,0.0f,0.0f),0x20ff0000,D3DXVECTOR2(0.0f,0.0f)),
-			TVertex(D3DXVECTOR3(-size2,0.0f,0.0f),0x20ff0000,D3DXVECTOR2(0.0f,0.0f)),
-			TVertex(D3DXVECTOR3(size2,0.0f,0.0f),0x20ff0000,D3DXVECTOR2(0.0f,0.0f)),
-			TVertex(D3DXVECTOR3(0.0f,-size2,0.0f),0x20ff0000,D3DXVECTOR2(0.0f,0.0f)),*/
-
-			/*TVertex(D3DXVECTOR3(0.0f,size1,0.0f),0xffff0000,D3DXVECTOR2(0.0f,0.0f)),
-			TVertex(D3DXVECTOR3(-size1,0.0f,0.0f),0xffff0000,D3DXVECTOR2(0.0f,0.0f)),
-			TVertex(D3DXVECTOR3(size1,0.0f,0.0f),0xffff0000,D3DXVECTOR2(0.0f,0.0f)),
-			TVertex(D3DXVECTOR3(-size2,0.0f,0.0f),0xff0000ff,D3DXVECTOR2(0.0f,0.0f)),
-			TVertex(D3DXVECTOR3(size2,0.0f,0.0f),0xff0000ff,D3DXVECTOR2(0.0f,0.0f)),
-			TVertex(D3DXVECTOR3(0.0f,-size2,0.0f),0xff0000ff,D3DXVECTOR2(0.0f,0.0f)),*/
-		};
-
-		D3DXVECTOR3 E(M._41,M._42,M._43);
-		E = pCurrentCamera->GetEye();
-		E-=it1->second;
-
-		D3DXVECTOR3 P;
-		D3DXVec3Cross(&P, &B,&E);
-
-		D3DXVECTOR3 U;
-		D3DXVec3Cross(&U,&F,&P);
-		D3DXVec3Normalize(&U,&U);
-		D3DXVECTOR3 R;
-		D3DXVec3Cross(&R,&F,&U);
-		//D3DXMatrixIdentity(&m);
-		m._21 = U.x;
-		m._22 = U.y;
-		m._23 = U.z;
-		m._11 = R.x;
-		m._12 = R.y;
-		m._13 = R.z;
-		int i;
-		for(i=0;i<6;i++)
-			D3DXVec3TransformNormal(&v[i].p,&v[i].p,&m);
-		for(i=0;i<3;i++)
-			v[i].p += it1->second;
-		for(;i<6;i++)
-			v[i].p += it2->second;
-		//for(i=0;i<6;i++)
-		//	Tracenf("#%d:%f %f %f", i, v[i].p.x,v[i].p.y,v[i].p.z);
-
-		VSVector.emplace_back(-D3DXVec3Dot(&E,&pCurrentCamera->GetView()),TFlyVertexSet(v));
-		//OLD: STATEMANAGER.DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 4, v, sizeof(TVertex));
-		//OLD: STATEMANAGER.DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v+1, sizeof(TVertex));
+			if (SHADERMANAGER.DispatchFlyTraceCS(s_csSegmentBuffer.data(), segCount))
+				SHADERMANAGER.DrawFlyTraceCSOutput(segCount);
+		}
 	}
-
-	std::sort(VSVector.begin(),VSVector.end());
-
-	for(auto it = VSVector.begin();it!=VSVector.end();++it)
+	else
 	{
-		STATEMANAGER.DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 4, it->second.v, sizeof(TVertex));
+		Vector3 F(pCurrentCamera->GetView());
+
+		Matrix m;
+		MatrixIdentity(&m);
+
+		m._31 = F.x;
+		m._32 = F.y;
+		m._33 = F.z;
+
+		std::vector<TFlyVertex> batchedVertices;
+
+		TTimePositionDeque::iterator it1, it2;
+		it2 = it1 = m_TimePositionDeque.begin();
+		++it2;
+
+		for (; it2 != m_TimePositionDeque.end(); ++it2, ++it1)
+		{
+			const Vector3& rkOld = it1->second;
+			const Vector3& rkNew = it2->second;
+			Vector3 B = rkNew - rkOld;
+
+			float radius = max(fabs(B.x), max(fabs(B.y), fabs(B.z))) / 2;
+			Vector3d c(rkOld.x + B.x * 0.5f, rkOld.y + B.y * 0.5f, rkOld.z + B.z * 0.5f);
+
+			if (frustum.ViewVolumeTest(c, radius) == VS_OUTSIDE)
+				continue;
+
+			float rate1 = 1 - (DX::StepTimer::Instance().GetTotalSeconds() - it1->first) / m_fTailLength;
+			float rate2 = 1 - (DX::StepTimer::Instance().GetTotalSeconds() - it2->first) / m_fTailLength;
+			float size1 = m_fSize;
+			float size2 = m_fSize;
+
+			if (!m_bRectShape)
+			{
+				size1 *= rate1;
+				size2 *= rate2;
+			}
+
+			TFlyVertex v[6] =
+			{
+				TFlyVertex(Vector3(0.0f, size1, 0.0f), m_dwColor, Vector2(0.0f, 0.0f)),
+				TFlyVertex(Vector3(-size1, 0.0f, 0.0f), m_dwColor, Vector2(0.0f, 0.5f)),
+				TFlyVertex(Vector3(size1, 0.0f, 0.0f), m_dwColor, Vector2(0.5f, 0.0f)),
+				TFlyVertex(Vector3(-size2, 0.0f, 0.0f), m_dwColor, Vector2(0.5f, 1.0f)),
+				TFlyVertex(Vector3(size2, 0.0f, 0.0f), m_dwColor, Vector2(1.0f, 0.5f)),
+				TFlyVertex(Vector3(0.0f, -size2, 0.0f), m_dwColor, Vector2(1.0f, 1.0f)),
+			};
+
+			Vector3 E = pCurrentCamera->GetEye();
+			E -= it1->second;
+
+			Vector3 P, U, R;
+			Vec3Cross(&P, &B, &E);
+			Vec3Cross(&U, &F, &P);
+			Vec3Normalize(&U, &U);
+			Vec3Cross(&R, &F, &U);
+
+			m._21 = U.x; m._22 = U.y; m._23 = U.z;
+			m._11 = R.x; m._12 = R.y; m._13 = R.z;
+
+			for (int i = 0; i < 6; ++i)
+				Vec3TransformNormal(&v[i].p, &v[i].p, &m);
+
+			for (int i = 0; i < 3; ++i)
+				v[i].p += it1->second;
+
+			for (int i = 3; i < 6; ++i)
+				v[i].p += it2->second;
+
+			batchedVertices.push_back(v[0]); batchedVertices.push_back(v[1]); batchedVertices.push_back(v[2]);
+			batchedVertices.push_back(v[2]); batchedVertices.push_back(v[1]); batchedVertices.push_back(v[3]);
+			batchedVertices.push_back(v[2]); batchedVertices.push_back(v[3]); batchedVertices.push_back(v[4]);
+			batchedVertices.push_back(v[4]); batchedVertices.push_back(v[3]); batchedVertices.push_back(v[5]);
+		}
+
+		if (!batchedVertices.empty())
+		{
+			SHADERMANAGER.SetParticleColor(0xFFFFFFFF);
+			SHADERMANAGER.BeginParticlePCT();
+			SHADERMANAGER.DrawDynamic(TOPOLOGY_TRIANGLELIST, (UINT)(batchedVertices.size() / 3),
+				batchedVertices.data(), sizeof(TFlyVertex));
+		}
 	}
-	STATEMANAGER.RestoreRenderState(D3DRS_DESTBLEND);
-	STATEMANAGER.RestoreRenderState(D3DRS_SRCBLEND);
-	STATEMANAGER.RestoreRenderState(D3DRS_ALPHABLENDENABLE);
-	STATEMANAGER.RestoreRenderState(D3DRS_CULLMODE);
-	STATEMANAGER.RestoreFVF();
-	STATEMANAGER.RestoreTransform(D3DTS_WORLD);
-	//STATEMANAGER.RestoreRenderState(D3DRS_ZWRITEENABLE);
-	STATEMANAGER.RestoreRenderState(D3DRS_ZFUNC);
-	STATEMANAGER.RestoreRenderState(D3DRS_BLENDOP);
 
-	STATEMANAGER.RestoreRenderState(D3DRS_ALPHATESTENABLE);
-	STATEMANAGER.RestoreRenderState(D3DRS_ALPHAFUNC);
-	STATEMANAGER.RestoreRenderState(D3DRS_ALPHAREF);
+	SHADERMANAGER.PopState();
 }
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

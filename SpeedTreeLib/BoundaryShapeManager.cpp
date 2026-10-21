@@ -162,13 +162,13 @@ bool CBoundaryShapeManager::PointInside(float fX, float fY)
 ///////////////////////////////////////////////////////////////////////
 //	CBoundaryShapeManager::PointInShape
 
-bool CBoundaryShapeManager::PointInShape(SBoundaryShape& sShape, float fX, float fY) const
+bool CBoundaryShapeManager::PointInShape(SBoundaryShape& sShape, float fX, float fY)
 {
 	bool bInside = false;
 
 	for (DWORD k = 0; k < sShape.m_vContours.size(); ++k)
 	{
-		for (DWORD i = 0, j = sShape.m_vContours[k].size() - 1; i < sShape.m_vContours[k].size(); j = i++)
+		for (DWORD i = 0, j = (DWORD)(sShape.m_vContours[k].size() - 1); i < sShape.m_vContours[k].size(); j = i++)
 		{
 			if ((((sShape.m_vContours[k][i][1] <= fY) && (fY < sShape.m_vContours[k][j][1])) ||
 				 ((sShape.m_vContours[k][j][1] <= fY) && (fY < sShape.m_vContours[k][i][1]))) &&
@@ -192,7 +192,7 @@ bool CBoundaryShapeManager::RandomPoint(float& fX, float& fY)
 	if (m_vBoundaries.size() > 0)
 	{
 		// pick a random boundary shape
-		const int nIndex = random_range(0, m_vBoundaries.size() - 1);
+		int nIndex = random_range(0, (long)(m_vBoundaries.size() - 1));
 		SBoundaryShape& sShape = m_vBoundaries[nIndex];
 
 		// pick a point at random within its extents
@@ -205,4 +205,4 @@ bool CBoundaryShapeManager::RandomPoint(float& fX, float& fY)
 
 	return bSuccess;
 }
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

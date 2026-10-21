@@ -16,21 +16,26 @@ class CGraphicShadowTexture : public CGraphicTexture
 		void End();
 		void Set(int stage = 0) const;
 
-		const D3DXMATRIX& GetLightVPMatrixReference() const;
-		LPDIRECT3DTEXTURE9 GetD3DTexture() const;
+		const Matrix& GetLightVPMatrixReference() const;
+		ID3D11ShaderResourceView* GetD3DTexture() const;
 
 	protected:
 		void Initialize();
 
 	protected:
-		D3DXMATRIX			m_d3dLightVPMatrix;
-		D3DVIEWPORT9		m_d3dOldViewport;
+		Matrix					m_d3dLightVPMatrix;
+		D3D11_VIEWPORT				m_d3dOldViewport;
 
-		LPDIRECT3DTEXTURE9	m_lpd3dShadowTexture;
-		LPDIRECT3DSURFACE9	m_lpd3dShadowSurface;
-		LPDIRECT3DSURFACE9	m_lpd3dDepthSurface;
+		// DX11 render target resources
+		ID3D11Texture2D*			m_pShadowTexture;
+		ID3D11RenderTargetView*		m_pShadowRTV;
+		ID3D11ShaderResourceView*	m_pShadowSRV;
 
-		LPDIRECT3DSURFACE9	m_lpd3dOldBackBufferSurface;
-		LPDIRECT3DSURFACE9	m_lpd3dOldDepthBufferSurface;
+		// Depth buffer for shadow rendering
+		ID3D11Texture2D*			m_pDepthTexture;
+		ID3D11DepthStencilView*		m_pDepthDSV;
+
+		// Cached old render targets
+		ID3D11RenderTargetView*		m_pOldRTV;
+		ID3D11DepthStencilView*		m_pOldDSV;
 };
-

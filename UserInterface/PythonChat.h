@@ -93,7 +93,7 @@ class CPythonChat : public CSingleton<CPythonChat>, public IAbstractChat
 		{
 			int iType;
 			float fAppendedTime;
-			D3DXCOLOR aColor[CHAT_LINE_COLOR_ARRAY_MAX_NUM];
+			Color aColor[CHAT_LINE_COLOR_ARRAY_MAX_NUM];
 			CGraphicTextInstance Instance;
 
 			SChatLine();
@@ -101,7 +101,7 @@ class CPythonChat : public CSingleton<CPythonChat>, public IAbstractChat
 
 			void SetColor(DWORD dwID, DWORD dwColor);
 			void SetColorAll(DWORD dwColor);
-			D3DXCOLOR & GetColorRef(DWORD dwID);
+			Color & GetColorRef(DWORD dwID);
 			static void DestroySystem();
 
 			static SChatLine* New();
@@ -230,6 +230,6 @@ class CPythonChat : public CSingleton<CPythonChat>, public IAbstractChat
 		TIgnoreCharacterSet					m_IgnoreCharacterSet;
 		TWaitChatList						m_WaitChatList;
 
-		D3DXCOLOR m_akD3DXClrChat[CHAT_TYPE_MAX_NUM];
+		Color m_akD3DXClrChat[CHAT_TYPE_MAX_NUM];
 };
 

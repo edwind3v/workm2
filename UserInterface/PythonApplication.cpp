@@ -3,14 +3,15 @@
 #include "../eterBase/Error.h"
 #include "../eterlib/Camera.h"
 #include "../eterlib/AttributeInstance.h"
-#include "../eterLib/DX11Probe.h"
-#include "../eterLib/DX11GrannyProbe.h"
 #include "../gamelib/AreaTerrain.h"
 #include "../EterGrnLib/Material.h"
 #include "../CWebBrowser/CWebBrowser.h"
 
 #include "resource.h"
 #include "PythonApplication.h"
+#include "../EterLib/ShaderManager.h"
+#include "../EterLib/ShaderInit.h"
+#include "../EterBase/StepTimer.h"
 #include "PythonLoading.h"
 #include "PythonCharacterManager.h"
 
@@ -50,21 +51,20 @@ m_fGlobalElapsedTime(0.0f),
 m_dwLButtonDownTime(0),
 m_dwLastIdleTime(0)
 {
-	m_dx11SharedPreviewTexture = nullptr;
-	m_dx11ModelPreviewTexture = nullptr;
-	m_dx11ModelPreviewAttempted = false;
 #ifndef _DEBUG
 	SetEterExceptionHandler();
 #endif
 
 	CTimer::Instance().UseCustomTime();
+	// CTimer and the existing application loop continue to control game pacing.
+	m_renderTimer.SetTargetFPS(0);
 	m_dwWidth = 800;
 	m_dwHeight = 600;
 
 	ms_pInstance = this;
 	m_isWindowFullScreenEnable = FALSE;
 
-	m_v3CenterPosition = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
+	m_v3CenterPosition = Vector3(0.0f, 0.0f, 0.0f);
 	m_dwStartLocalTime = ELTimer_GetMSec();
 	m_tServerTime = 0;
 	m_tLocalStartTime = 0;
@@ -108,16 +108,6 @@ m_dwLastIdleTime(0)
 
 CPythonApplication::~CPythonApplication()
 {
-	if (m_dx11ModelPreviewTexture)
-	{
-		m_dx11ModelPreviewTexture->Release();
-		m_dx11ModelPreviewTexture = nullptr;
-	}
-	if (m_dx11SharedPreviewTexture)
-	{
-		m_dx11SharedPreviewTexture->Release();
-		m_dx11SharedPreviewTexture = nullptr;
-	}
 }
 
 void CPythonApplication::GetMousePosition(POINT* ppt)
@@ -212,6 +202,7 @@ bool PERF_CHECKER_RENDER_GAME = false;
 void CPythonApplication::RenderGame()
 {
 	MapPerformance::Scope mapProfile("game.render");
+	struct FinishWorldPass { CGraphicDevice& device; ~FinishWorldPass() { device.FinishWorldRendering(); } } finishWorld{m_grpDevice};
 	if (!PERF_CHECKER_RENDER_GAME)
 	{
 		const float fAspect=m_kWndMgr.GetAspect();
@@ -235,6 +226,7 @@ void CPythonApplication::RenderGame()
 		}
 
 		m_pyBackground.RenderSky();
+		m_pyBackground.RenderCelestialBody();
 
 		m_pyBackground.RenderBeforeLensFlare();
 
@@ -294,6 +286,7 @@ void CPythonApplication::RenderGame()
 	}
 
 	m_pyBackground.RenderSky();
+		m_pyBackground.RenderCelestialBody();
 	const DWORD t7=ELTimer_GetMSec();
 	m_pyBackground.RenderBeforeLensFlare();
 	const DWORD t8=ELTimer_GetMSec();
@@ -328,7 +321,7 @@ void CPythonApplication::RenderGame()
 	const DWORD tEnd=ELTimer_GetMSec();
 
 	if (GetAsyncKeyState(VK_Z))
-		STATEMANAGER.SetRenderState(D3DRS_FILLMODE, D3DFILL_SOLID);
+		SHADERMANAGER.SetPipelineState(PSTATE_FILLMODE, FILL_SOLID);
 
 	if (tEnd-t1<3)
 		return;
@@ -443,131 +436,6 @@ bool CPythonApplication::Process()
 	if (CheckLatestFiles_PollEvent())
 		return false;
 #endif
-	// Diagnostic migration step: load one genuine game texture via the pack
-	// manager and preview it through the independent DX11 resource path.
-	// This runs once only when explicitly requested, never during normal play.
-	static bool s_dx11AssetAttempted = false;
-	if (!s_dx11AssetAttempted)
-	{
-		s_dx11AssetAttempted = true;
-		char assetPath[512] = {};
-		const DWORD assetPathLength = GetEnvironmentVariableA(
-			"M2_DX11_ASSET_PATH", assetPath, ARRAYSIZE(assetPath));
-		if (assetPathLength >= ARRAYSIZE(assetPath))
-		{
-			TraceError("DX11_ASSET_FAILED stage=AssetPathTooLong hr=0x%08X game_renderer=DX9Ex",
-				static_cast<unsigned>(HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW)));
-		}
-		else if (assetPathLength > 0 && m_isWindowed)
-		{
-			char sharedPreviewFlag[8] = {};
-			const DWORD sharedFlagLength = GetEnvironmentVariableA(
-				"M2_DX11_SHARED_PREVIEW", sharedPreviewFlag, ARRAYSIZE(sharedPreviewFlag));
-			const bool requestSharedPreview = sharedFlagLength == 1 && sharedPreviewFlag[0] == '1';
-			graphics::DX11ProbeResult assetResult;
-			graphics::DX11SharedProbeResult sharedResult;
-			const HRESULT assetHr = graphics::RunDX11AssetProbe(
-				GetWindowHandle(), m_grpDevice.GetDevice(), assetPath,
-				L"dx11_asset_probe.bmp", &assetResult,
-				requestSharedPreview ? m_grpDevice.GetDevice() : nullptr,
-				requestSharedPreview ? &sharedResult : nullptr);
-			if (SUCCEEDED(assetHr))
-			{
-				TraceError("DX11_ASSET_DRAW path=\"%s\" source=%ux%u center_rgba=%u,%u,%u,%u image_saved=%u game_renderer=DX9Ex",
-					assetPath, assetResult.sourceWidth, assetResult.sourceHeight,
-					assetResult.centerPixelRGBA[0], assetResult.centerPixelRGBA[1],
-					assetResult.centerPixelRGBA[2], assetResult.centerPixelRGBA[3],
-					assetResult.bitmapSaved ? 1 : 0);
-			}
-			else
-			{
-				TraceError("DX11_ASSET_FAILED path=\"%s\" stage=%s hr=0x%08X game_renderer=DX9Ex",
-					assetPath, assetResult.stage, static_cast<unsigned>(assetHr));
-			}
-			if (requestSharedPreview)
-			{
-				if (SUCCEEDED(sharedResult.status) && sharedResult.texture)
-				{
-					m_dx11SharedPreviewTexture = sharedResult.texture;
-					TraceError("DX11_SHARED_READY path=\"%s\" format=%s size=256x256 center_rgba=%u,%u,%u,%u game_renderer=DX9Ex",
-						assetPath, sharedResult.format, sharedResult.centerPixelRGBA[0],
-						sharedResult.centerPixelRGBA[1], sharedResult.centerPixelRGBA[2],
-						sharedResult.centerPixelRGBA[3]);
-				}
-				else if (SUCCEEDED(assetHr))
-				{
-					TraceError("DX11_SHARED_FAILED path=\"%s\" stage=%s hr=0x%08X game_renderer=DX9Ex",
-						assetPath, sharedResult.stage, static_cast<unsigned>(sharedResult.status));
-				}
-			}
-		}
-	}
-	// A real animated/rigid Granny mesh may only become available after the
-	// character scene starts rendering. Consume its one-shot CPU snapshot on
-	// the next frame, outside the D3D9 BeginScene / EndScene interval.
-	if (m_isWindowed && !m_dx11ModelPreviewAttempted)
-	{
-		static bool modelCaptureConfigReported = false;
-		if (!modelCaptureConfigReported)
-		{
-			modelCaptureConfigReported = true;
-			const char* captureMode = graphics::GetDX11GrannyCaptureMode();
-			if (strcmp(captureMode, "off") != 0)
-				TraceError("DX11_MODEL_CAPTURE_CONFIG mode=%s retry_ms=500 max_attempts=32 game_renderer=DX9Ex",
-					captureMode);
-		}
-		graphics::DX11GrannySnapshot snapshot;
-		if (graphics::TakeDX11GrannySnapshot(&snapshot))
-		{
-			m_dx11ModelPreviewAttempted = true;
-			unsigned char modelPixel[4] = {};
-			UINT modelCoveredPixels = 0;
-			UINT modelTexturesLoaded = 0;
-			UINT modelTexturesMissing = 0;
-			const char* modelStage = "NotAttempted";
-			const char* sharedFormat = "none";
-			const HRESULT modelHr = graphics::RunDX11GrannyPreview(
-				GetWindowHandle(), m_grpDevice.GetDevice(), snapshot,
-				&m_dx11ModelPreviewTexture, modelPixel, &modelCoveredPixels,
-				&modelTexturesLoaded, &modelTexturesMissing,
-				&modelStage, &sharedFormat);
-			if (SUCCEEDED(modelHr))
-			{
-				TraceError("DX11_MODEL_READY source=%s mesh=\"%.80s\" meshes=%u vertices=%u indices=%u material_groups=%u textures_loaded=%u textures_missing=%u format=%s drawn_pixels=%u center_rgba=%u,%u,%u,%u game_renderer=DX9Ex",
-					snapshot.skinned ? "granny_deformed" : "granny_rigid",
-					snapshot.meshName.c_str(),
-					static_cast<unsigned>(snapshot.meshCount),
-					static_cast<unsigned>(snapshot.vertices.size()),
-					static_cast<unsigned>(snapshot.indices.size()),
-					static_cast<unsigned>(snapshot.groups.size()),
-					modelTexturesLoaded, modelTexturesMissing, sharedFormat,
-					modelCoveredPixels,
-					modelPixel[0], modelPixel[1], modelPixel[2], modelPixel[3]);
-				if (!snapshot.groups.empty())
-				{
-					TraceError("DX11_MODEL_MATERIAL first_diffuse=\"%.180s\" first_opacity=\"%.180s\"",
-						snapshot.groups[0].diffusePath.c_str(),
-						snapshot.groups[0].opacityPath.c_str());
-					UINT blendedGroups = 0;
-					UINT twoSidedGroups = 0;
-					UINT specularGroups = 0;
-					for (const auto& group : snapshot.groups)
-					{
-						if (group.alphaBlend) ++blendedGroups;
-						if (group.twoSided) ++twoSidedGroups;
-						if (group.specularEnabled) ++specularGroups;
-					}
-					TraceError("DX11_MODEL_MATERIAL_STATE blend_groups=%u two_sided_groups=%u specular_groups=%u model_params_bytes=48 sphere_map=unimplemented",
-						blendedGroups, twoSidedGroups, specularGroups);
-				}
-			}
-			else
-			{
-				TraceError("DX11_MODEL_FAILED stage=%s hr=0x%08X game_renderer=DX9Ex",
-					modelStage, static_cast<unsigned>(modelHr));
-			}
-		}
-	}
 	MapPerformance::Frame mapProfileFrame;
 	ELTimer_SetFrameMSec();
 
@@ -606,6 +474,8 @@ bool CPythonApplication::Process()
 
 	m_fGlobalTime = rkTimer.GetCurrentSecond();
 	m_fGlobalElapsedTime = rkTimer.GetElapsedSecond();
+	m_renderTimer.Tick([]() {});
+	SHADERMANAGER.SetTime(m_fGlobalTime, m_fGlobalElapsedTime);
 
 	const UINT uiFrameTime = rkTimer.GetElapsedMilliecond();
 	s_uiNextFrameTime += uiFrameTime;
@@ -654,6 +524,7 @@ bool CPythonApplication::Process()
 	DWORD dwUpdateTime7=ELTimer_GetMSec();
 #endif
 	OnCameraUpdate();
+	UpdateShaderFrameConstants();
 #ifdef __PERFORMANCE_CHECK__
 	DWORD dwUpdateTime8=ELTimer_GetMSec();
 #endif
@@ -724,34 +595,7 @@ bool CPythonApplication::Process()
 		}
 		else
 		{
-#ifdef ENABLE_FIX_MOBS_LAG
-			// CheckDeviceState owns resource release, reset, and reconstruction.
-			canRender = (DEVICE_STATE_OK == CheckDeviceState());
-#else
-			if (m_pyGraphic.IsLostDevice())
-			{
-				// Do not hold an external D3D9Ex render-target texture across
-				// a graphics-device restore. The preview can be re-enabled by
-				// restarting the client after recovery.
-				if (m_dx11SharedPreviewTexture)
-				{
-					m_dx11SharedPreviewTexture->Release();
-					m_dx11SharedPreviewTexture = nullptr;
-				}
-				if (m_dx11ModelPreviewTexture)
-				{
-					m_dx11ModelPreviewTexture->Release();
-					m_dx11ModelPreviewTexture = nullptr;
-				}
-				CPythonBackground& rkBG = CPythonBackground::Instance();
-				rkBG.ReleaseCharacterShadowTexture();
-
-				if (m_pyGraphic.RestoreDevice())
-					rkBG.CreateCharacterShadowTexture();
-				else
-					canRender = false;
-			}
-#endif
+canRender = (DEVICE_STATE_OK == CheckDeviceState());
 		}
 
 		if (!IsActive())
@@ -770,62 +614,16 @@ bool CPythonApplication::Process()
 			if (m_pyGraphic.Begin())
 			{
 				mapProfileFrame.Rendered();
-				m_pyGraphic.ClearDepthBuffer();
-
-#ifdef _DEBUG
-				m_pyGraphic.SetClearColor(0.3f, 0.3f, 0.3f);
+				m_pyGraphic.SetClearColor(0.0f, 0.0f, 0.0f);
 				m_pyGraphic.Clear();
-#endif
 
 				/////////////////////
 				// Interface
 				m_pyGraphic.SetInterfaceRenderState();
 
 				MapPerformance::Measure("app.ui_render", nullptr, [&] { OnUIRender(); });
-				if (m_dx11ModelPreviewTexture)
-				{
-					// Make the single-mesh diagnostic large enough to inspect.
-					// DX11GrannyProbe fits the model itself to the render texture.
-					const HRESULT modelDraw = graphics::DrawDX11SharedPreview(
-						m_grpDevice.GetDevice(), m_dx11ModelPreviewTexture, 128, 320);
-					if (modelDraw == S_OK)
-					{
-						static bool s_modelPresented = false;
-						if (!s_modelPresented)
-						{
-							s_modelPresented = true;
-							TraceError("DX11_MODEL_PRESENT source=Granny/DX11 target=DX9Ex position=top_right size=320x320");
-						}
-					}
-					if (FAILED(modelDraw))
-					{
-						TraceError("DX11_MODEL_FAILED stage=DrawModelOverlay hr=0x%08X game_renderer=DX9Ex",
-							static_cast<unsigned>(modelDraw));
-						m_dx11ModelPreviewTexture->Release();
-						m_dx11ModelPreviewTexture = nullptr;
-					}
-				}
-				if (m_dx11SharedPreviewTexture)
-				{
-					const HRESULT sharedDraw = graphics::DrawDX11SharedPreview(
-						m_grpDevice.GetDevice(), m_dx11SharedPreviewTexture);
-					if (sharedDraw == S_OK)
-					{
-						static bool s_sharedPresented = false;
-						if (!s_sharedPresented)
-						{
-							s_sharedPresented = true;
-							TraceError("DX11_SHARED_PRESENT source=DX11 target=DX9Ex position=top_right size=96x96");
-						}
-					}
-					if (FAILED(sharedDraw))
-					{
-						TraceError("DX11_SHARED_FAILED stage=DrawD3D9Overlay hr=0x%08X game_renderer=DX9Ex",
-							static_cast<unsigned>(sharedDraw));
-						m_dx11SharedPreviewTexture->Release();
-						m_dx11SharedPreviewTexture = nullptr;
-					}
-				}
+				
+				
 				OnMouseRender();
 				/////////////////////
 
@@ -900,7 +698,7 @@ bool CPythonApplication::Process()
 					m_dwFaceAccCount += dwCurFaceCount;
 					m_dwFaceAccTime += m_dwCurRenderTime;
 
-					m_fFaceSpd=(m_dwFaceAccCount/m_dwFaceAccTime);
+					m_fFaceSpd=m_dwFaceAccTime ? (m_dwFaceAccCount/m_dwFaceAccTime) : 0.0f;
 
 					if (-1 == m_iForceSightRange)
 					{
@@ -961,7 +759,7 @@ void CPythonApplication::SetMouseHandler(PyObject* poMouseHandler)
 
 int CPythonApplication::CheckDeviceState()
 {
-	const CGraphicDevice::EDeviceState e_deviceState = m_grpDevice.GetDeviceState();
+	CGraphicDevice::EDeviceState e_deviceState = m_grpDevice.GetDeviceState();
 
 	switch (e_deviceState)
 	{
@@ -969,31 +767,12 @@ int CPythonApplication::CheckDeviceState()
 		return DEVICE_STATE_FALSE;
 
 	case CGraphicDevice::DEVICESTATE_BROKEN:
-		return DEVICE_STATE_SKIP;
+        { static bool reported = false;
+          if (!reported) { reported = true; TraceError("DX11 device removed: restart the client to recreate GPU resources."); Abort(); }
+        }
+        return DEVICE_STATE_SKIP;
 
-	case CGraphicDevice::DEVICESTATE_NEEDS_RESET:
-#ifdef ENABLE_FIX_MOBS_LAG
-		// This client has shadow targets and DX11 preview textures, but no
-		// CRenderTargetManager. Release its actual external targets here.
-		if (m_dx11SharedPreviewTexture)
-		{
-			m_dx11SharedPreviewTexture->Release();
-			m_dx11SharedPreviewTexture = nullptr;
-		}
-		if (m_dx11ModelPreviewTexture)
-		{
-			m_dx11ModelPreviewTexture->Release();
-			m_dx11ModelPreviewTexture = nullptr;
-		}
-		m_pyBackground.ReleaseCharacterShadowTexture();
-#endif
-		if (!m_grpDevice.Reset())
-			return DEVICE_STATE_SKIP;
-#ifdef ENABLE_FIX_MOBS_LAG
-		m_pyBackground.CreateCharacterShadowTexture();
-		// Resume drawing on the following frame after resource recovery.
-		return DEVICE_STATE_SKIP;
-#endif
+	case CGraphicDevice::DEVICESTATE_OK:
 		break;
 	}
 
@@ -1005,14 +784,16 @@ bool CPythonApplication::CreateDevice(int width, int height, int Windowed, int b
 	int iRet;
 
 	m_grpDevice.InitBackBufferCount(2);
+	m_grpDevice.SetRequestedMSAASamples(m_pySystem.GetConfig()->iAntialiasing ? 1 : m_pySystem.GetConfig()->dx11MSAASamples);
 	m_grpDevice.RegisterWarningString(CGraphicDevice::CREATE_BAD_DRIVER, ApplicationStringTable_GetStringz(IDS_WARN_BAD_DRIVER, "WARN_BAD_DRIVER"));
-	m_grpDevice.RegisterWarningString(CGraphicDevice::CREATE_NO_TNL, ApplicationStringTable_GetStringz(IDS_WARN_NO_TNL, "WARN_NO_TNL"));
 
-	iRet = m_grpDevice.Create(GetWindowHandle(), width, height, Windowed ? true : false, bit,frequency, m_pySystem.GetAntialiasing());
+	iRet = m_grpDevice.Create(GetWindowHandle(), width, height, Windowed ? true : false, bit,frequency);
 
 	switch (iRet)
 	{
 	case CGraphicDevice::CREATE_OK:
+		SHADERMANAGER.SetBloomEnabled(m_pySystem.GetConfig()->dx11Bloom);
+		SHADERMANAGER.SetSSAOEnabled(m_pySystem.GetConfig()->dx11SSAO);
 		return true;
 
 	case CGraphicDevice::CREATE_REFRESHRATE:
@@ -1026,7 +807,7 @@ bool CPythonApplication::CreateDevice(int width, int height, int Windowed, int b
 
 	case CGraphicDevice::CREATE_NO_DIRECTX:
 		SET_EXCEPTION(CREATE_NO_DIRECTX);
-		TraceError("CreateDevice: DirectX 8.1 or greater required to run game");
+		TraceError("CreateDevice: DirectX 11 required to run game");
 		return false;
 
 	case CGraphicDevice::CREATE_DEVICE:
@@ -1050,15 +831,8 @@ bool CPythonApplication::CreateDevice(int width, int height, int Windowed, int b
 		return false;
 
 	default:
-		if (iRet & CGraphicDevice::CREATE_OK)
-		{
-			if (iRet & CGraphicDevice::CREATE_NO_TNL)
-				CGrannyLODController::SetMinLODMode(true);
-			return true;
-		}
-
 		SET_EXCEPTION(UNKNOWN_ERROR);
-		TraceError("CreateDevice: Unknown Error!");
+		TraceError("CreateDevice: Unknown error code: %d", iRet);
 		return false;
 	}
 }
@@ -1312,12 +1086,7 @@ bool CPythonApplication::Create(PyObject * poSelf, const char * c_szName, int wi
 	GrannyCreateSharedDeformBuffer();
 
 	if (m_pySystem.IsAutoTiling())
-	{
-		if (m_grpDevice.IsFastTNL())
-			m_pyBackground.ReserveSoftwareTilingEnable(false);
-		else
-			m_pyBackground.ReserveSoftwareTilingEnable(true);
-	}
+		m_pyBackground.ReserveSoftwareTilingEnable(false);
 	else
 		m_pyBackground.ReserveSoftwareTilingEnable(m_pySystem.IsSoftwareTiling());
 
@@ -1345,9 +1114,6 @@ bool CPythonApplication::Create(PyObject * poSelf, const char * c_szName, int wi
 		SET_EXCEPTION("CREATE_NETWORK");
 		return false;
 	}
-
-	if (!m_grpDevice.IsFastTNL())
-		CGrannyLODController::SetMinLODMode(true);
 
 	m_pyItem.Create();
 
@@ -1491,16 +1257,8 @@ void CPythonApplication::Destroy()
 #if defined(ENABLE_LOADING_PERFORMANCE)
 	m_pyLoading.EndThreadLoading();
 #endif
-	if (m_dx11ModelPreviewTexture)
-	{
-		m_dx11ModelPreviewTexture->Release();
-		m_dx11ModelPreviewTexture = nullptr;
-	}
-	if (m_dx11SharedPreviewTexture)
-	{
-		m_dx11SharedPreviewTexture->Release();
-		m_dx11SharedPreviewTexture = nullptr;
-	}
+	
+	
 	WebBrowser_Destroy();
 
 	// SphereMap

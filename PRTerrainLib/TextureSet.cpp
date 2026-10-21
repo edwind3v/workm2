@@ -11,7 +11,7 @@ CTextureSet::~CTextureSet()
 	Clear();
 }
 
-void CTextureSet::Initialize() const
+void CTextureSet::Initialize()
 {
 }
 
@@ -34,13 +34,13 @@ bool CTextureSet::Load(const char * c_szTextureSetFileName, float fTerrainTexCoo
 		return false;
 	}
 
-	if (!stTokenVectorMap.contains("textureset"))
+	if (stTokenVectorMap.end() == stTokenVectorMap.find("textureset"))
 	{
 		TraceError("TextureSet::Load : syntax error, TextureSet (filename: %s)", c_szTextureSetFileName);
 		return false;
 	}
 
-	if (!stTokenVectorMap.contains("texturecount"))
+	if (stTokenVectorMap.end() == stTokenVectorMap.find("texturecount"))
 	{
 		TraceError("TextureSet::Load : syntax error, TextureCount (filename: %s)", c_szTextureSetFileName);
 		return false;
@@ -50,7 +50,7 @@ bool CTextureSet::Load(const char * c_szTextureSetFileName, float fTerrainTexCoo
 
 	const std::string & c_rstrCount = stTokenVectorMap["texturecount"][0];
 
-	const long lCount = atol(c_rstrCount.c_str());
+	long lCount = atol(c_rstrCount.c_str());
 	char szTextureName[32 + 1];
 
 	m_Textures.resize(lCount + 1);
@@ -59,7 +59,7 @@ bool CTextureSet::Load(const char * c_szTextureSetFileName, float fTerrainTexCoo
 	{
 		_snprintf(szTextureName, sizeof(szTextureName), "texture%03d", i + 1);
 
-		if (!stTokenVectorMap.contains(szTextureName))
+		if (stTokenVectorMap.end() == stTokenVectorMap.find(szTextureName))
 			continue;
 
 		const CTokenVector & rVector = stTokenVectorMap[szTextureName];
@@ -102,13 +102,13 @@ void CTextureSet::Clear()
 
 void CTextureSet::AddEmptyTexture()
 {
-	const TTerrainTexture eraser;
+	TTerrainTexture eraser;
 	m_Textures.push_back(eraser);
 }
 
-unsigned long CTextureSet::GetTextureCount() const
+unsigned long CTextureSet::GetTextureCount()
 {
-	return m_Textures.size();
+	return (unsigned long)(m_Textures.size());
 }
 
 TTerrainTexture	& CTextureSet::GetTexture(unsigned long ulIndex)
@@ -137,11 +137,6 @@ bool CTextureSet::SetTexture(unsigned long ulIndex,
 	}
 
 	CResource * pResource = CResourceManager::Instance().GetResourcePointer(c_szFileName);
-	if (!pResource) // @fixme043
-	{
-		TraceError("CTextureSet::SetTexture : Texture Load Failed %s", c_szFileName);
-		return false;
-	}
 
 	if (!pResource->IsType(CGraphicImage::Type()))
 	{
@@ -162,7 +157,7 @@ bool CTextureSet::SetTexture(unsigned long ulIndex,
 	tex.ImageInstance.SetImagePointer(static_cast<CGraphicImage *>(pResource));
 	tex.pd3dTexture = tex.ImageInstance.GetTexturePointer()->GetD3DTexture();
 
-	D3DXMatrixScaling(&tex.m_matTransform, fTerrainTexCoordBase * tex.UScale, -fTerrainTexCoordBase * tex.VScale, 0.0f);
+	MatrixScaling(&tex.m_matTransform, fTerrainTexCoordBase * tex.UScale, -fTerrainTexCoordBase * tex.VScale, 0.0f);
 	tex.m_matTransform._41 = tex.UOffset;
 	tex.m_matTransform._42 = -tex.VOffset;
 	return true;
@@ -177,7 +172,7 @@ void CTextureSet::Reload(float fTerrainTexCoordBase)
 		tex.ImageInstance.ReloadImagePointer((CGraphicImage *) CResourceManager::Instance().GetResourcePointer(tex.stFilename.c_str()));
 		tex.pd3dTexture = tex.ImageInstance.GetTexturePointer()->GetD3DTexture();
 
-		D3DXMatrixScaling(&tex.m_matTransform, fTerrainTexCoordBase * tex.UScale, -fTerrainTexCoordBase * tex.VScale, 0.0f);
+		MatrixScaling(&tex.m_matTransform, fTerrainTexCoordBase * tex.UScale, -fTerrainTexCoordBase * tex.VScale, 0.0f);
 		tex.m_matTransform._41 = tex.UOffset;
 		tex.m_matTransform._42 = -tex.VOffset;
 	}
@@ -209,11 +204,6 @@ bool CTextureSet::AddTexture(const char * c_szFileName,
 	}
 
 	CResource * pResource = CResourceManager::Instance().GetResourcePointer(c_szFileName);
-	if (!pResource) // @fixme043
-	{
-		TraceError("CTextureSet::AddTexture : Texture Load Failed %s", c_szFileName);
-		return false;
-	}
 
 	if (!pResource->IsType(CGraphicImage::Type()))
 	{
@@ -225,7 +215,7 @@ bool CTextureSet::AddTexture(const char * c_szFileName,
 
 	// @fixme003
 	AddEmptyTexture();
-	SetTexture(m_Textures.size() - 1,
+	SetTexture((unsigned long)(m_Textures.size() - 1),
 			   c_szFileName,
 			   fuScale,
 			   fvScale,
@@ -244,7 +234,7 @@ bool CTextureSet::RemoveTexture(unsigned long ulIndex)
 	if (GetTextureCount() <= ulIndex)
 		return false;
 
-	const auto itor = m_Textures.begin() + ulIndex;
+	TTextureVector::iterator itor = m_Textures.begin() + ulIndex;
 	m_Textures.erase(itor);
 	return true;
 }
@@ -282,4 +272,4 @@ bool CTextureSet::Save(const char * c_pszFileName)
 	fclose(pFile);
 	return true;
 }
-
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

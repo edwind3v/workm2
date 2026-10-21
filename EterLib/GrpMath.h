@@ -4,14 +4,14 @@ float CrossProduct2D(float x1, float y1, float x2, float y2);
 
 bool IsInTriangle2D(float ax, float ay, float bx, float by, float cx, float cy, float tx, float ty);
 
-D3DXVECTOR3* D3DXVec3Rotation(D3DXVECTOR3* pvtOut, const D3DXVECTOR3* c_pvtSrc, const D3DXQUATERNION* c_pqtRot);
-D3DXVECTOR3* D3DXVec3Translation(D3DXVECTOR3* pvtOut, const D3DXVECTOR3* c_pvtSrc, const D3DXVECTOR3* c_pvtTrans);
+Vector3* Vec3Rotation(Vector3* pvtOut, const Vector3* c_pvtSrc, const Quaternion* c_pqtRot);
+Vector3* Vec3Translation(Vector3* pvtOut, const Vector3* c_pvtSrc, const Vector3* c_pvtTrans);
 
-void GetRotationFromMatrix(D3DXVECTOR3 * pRotation, const D3DXMATRIX * c_pMatrix);
-void GetPivotAndRotationFromMatrix(D3DXMATRIX * pMatrix, D3DXVECTOR3 * pPivot, D3DXVECTOR3 * pRotation);
-void ExtractMovement(D3DXMATRIX * pTargetMatrix, D3DXMATRIX * pSourceMatrix);
+void GetRotationFromMatrix(Vector3 * pRotation, const Matrix * c_pMatrix);
+void GetPivotAndRotationFromMatrix(Matrix * pMatrix, Vector3 * pPivot, Vector3 * pRotation);
+void ExtractMovement(Matrix * pTargetMatrix, Matrix * pSourceMatrix);
 
-inline D3DXVECTOR3* D3DXVec3Blend(D3DXVECTOR3* pvtOut, const D3DXVECTOR3* c_pvtSrc1, const D3DXVECTOR3* c_pvtSrc2, float d)
+inline Vector3* Vec3Blend(Vector3* pvtOut, const Vector3* c_pvtSrc1, const Vector3* c_pvtSrc2, float d)
 {
 	pvtOut->x=c_pvtSrc1->x+d*(c_pvtSrc2->x-c_pvtSrc1->x);
 	pvtOut->y=c_pvtSrc1->y+d*(c_pvtSrc2->y-c_pvtSrc1->y);
@@ -20,7 +20,7 @@ inline D3DXVECTOR3* D3DXVec3Blend(D3DXVECTOR3* pvtOut, const D3DXVECTOR3* c_pvtS
 	return pvtOut;
 }
 
-inline D3DXQUATERNION* D3DXQuaternionBlend(D3DXQUATERNION* pqtOut, const D3DXQUATERNION* c_pqtSrc1, const D3DXQUATERNION* c_pqtSrc2, float d)
+inline Quaternion* QuaternionBlend(Quaternion* pqtOut, const Quaternion* c_pqtSrc1, const Quaternion* c_pqtSrc2, float d)
 {
 	pqtOut->x=c_pqtSrc1->x+d*(c_pqtSrc2->x-c_pqtSrc1->x);
 	pqtOut->y=c_pqtSrc1->y+d*(c_pqtSrc2->y-c_pqtSrc1->y);
@@ -39,87 +39,87 @@ inline float ClampDegree(float fDegree)
 	return fDegree;
 }
 
-inline float GetVector3Distance(const D3DXVECTOR3 & c_rv3Source, const D3DXVECTOR3 & c_rv3Target)
+inline float GetVector3Distance(const Vector3 & c_rv3Source, const Vector3 & c_rv3Target)
 {
 	return (c_rv3Source.x-c_rv3Target.x)*(c_rv3Source.x-c_rv3Target.x) + (c_rv3Source.y-c_rv3Target.y)*(c_rv3Source.y-c_rv3Target.y);
 }
 
-inline D3DXQUATERNION SafeRotationNormalizedArc(const D3DXVECTOR3 & vFrom , const D3DXVECTOR3 & vTo)
+inline Quaternion SafeRotationNormalizedArc(const Vector3 & vFrom , const Vector3 & vTo)
 {
 	if (vFrom == vTo)
-		return D3DXQUATERNION(0.0f,0.0f,0.0f,1.0f);
+		return Quaternion(0.0f,0.0f,0.0f,1.0f);
 	if (vFrom == -vTo)
-		return D3DXQUATERNION(0.0f,0.0f,1.0f,0.0f);
-	D3DXVECTOR3 c;
-	D3DXVec3Cross(&c, &vFrom, &vTo);
-	const float d = D3DXVec3Dot(&vFrom, &vTo);
+		return Quaternion(0.0f,0.0f,1.0f,0.0f);
+	Vector3 c;
+	Vec3Cross(&c, &vFrom, &vTo);
+	const float d = Vec3Dot(&vFrom, &vTo);
 	const float s = sqrtf((1+d)*2);
 
-	return D3DXQUATERNION(c.x/s,c.y/s,c.z/s,s*0.5f);
+	return Quaternion(c.x/s,c.y/s,c.z/s,s*0.5f);
 }
 
-inline D3DXQUATERNION RotationNormalizedArc(const D3DXVECTOR3 & vFrom , const D3DXVECTOR3 & vTo)
+inline Quaternion RotationNormalizedArc(const Vector3 & vFrom , const Vector3 & vTo)
 
 {
-	D3DXVECTOR3 c;
-	D3DXVec3Cross(&c, &vFrom, &vTo);
-	const float d = D3DXVec3Dot(&vFrom, &vTo);
+	Vector3 c;
+	Vec3Cross(&c, &vFrom, &vTo);
+	const float d = Vec3Dot(&vFrom, &vTo);
 	const float s = sqrtf((1+d)*2);
 
-	return D3DXQUATERNION(c.x/s,c.y/s,c.z/s,s*0.5f);
+	return Quaternion(c.x/s,c.y/s,c.z/s,s*0.5f);
 }
 
-inline D3DXQUATERNION RotationArc(const D3DXVECTOR3 & vFrom , const D3DXVECTOR3 & vTo)
+inline Quaternion RotationArc(const Vector3 & vFrom , const Vector3 & vTo)
 {
-	D3DXVECTOR3 vnFrom, vnTo;
-	D3DXVec3Normalize(&vnFrom, &vFrom);
-	D3DXVec3Normalize(&vnTo, &vTo);
+	Vector3 vnFrom, vnTo;
+	Vec3Normalize(&vnFrom, &vFrom);
+	Vec3Normalize(&vnTo, &vTo);
 	return RotationNormalizedArc(vnFrom, vnTo);
 }
 
-inline float square_distance_between_linesegment_and_point(const D3DXVECTOR3& p1,const D3DXVECTOR3& p2,const D3DXVECTOR3& x)
+inline float square_distance_between_linesegment_and_point(const Vector3& p1,const Vector3& p2,const Vector3& x)
 {
 	const auto val1 = (p2-p1);
 	const auto val2 = (x-p1);
 	const auto val3 = (p2-p1);
-	const float l = D3DXVec3LengthSq(&val1);
-	const float d = D3DXVec3Dot(&val2,&val3);
+	const float l = Vec3LengthSq(&val1);
+	const float d = Vec3Dot(&val2,&val3);
 	if (d<=0.0f)
 	{
 		const auto val = (x-p1);
-		return D3DXVec3LengthSq(&val);
+		return Vec3LengthSq(&val);
 	}
 	else if (d>=l)
 	{
 		const auto val = (x-p2);
-		return D3DXVec3LengthSq(&val);
+		return Vec3LengthSq(&val);
 	}
 	else
 	{
-		D3DXVECTOR3 c;
+		Vector3 c;
 		const auto val1 = (x-p1);
 		const auto val2 = (p2-p1);
-		return D3DXVec3LengthSq(D3DXVec3Cross(&c,&val1,&val2))/l;
+		return Vec3LengthSq(Vec3Cross(&c,&val1,&val2))/l;
 	}
 }
 
-inline D3DXVECTOR3 * Vec3TransformQuaternionSafe(D3DXVECTOR3* pvout, const D3DXVECTOR3* pv, const D3DXQUATERNION* pq)
+inline Vector3 * Vec3TransformQuaternionSafe(Vector3* pvout, const Vector3* pv, const Quaternion* pq)
 {
-	D3DXVECTOR3 v;
-	D3DXVec3Cross(&v,pv,(D3DXVECTOR3*)pq);
+	Vector3 v;
+	Vec3Cross(&v,pv,(Vector3*)pq);
 	v *= -2*pq->w;
-	v += (pq->w*pq->w - D3DXVec3LengthSq((D3DXVECTOR3*)pq))*(*pv);
-	v += 2*D3DXVec3Dot((D3DXVECTOR3*)pq,pv)*(*(D3DXVECTOR3*)pq);
+	v += (pq->w*pq->w - Vec3LengthSq((Vector3*)pq))*(*pv);
+	v += 2*Vec3Dot((Vector3*)pq,pv)*(*(Vector3*)pq);
 	*pvout = v;
 	return pvout;
 }
 
-inline D3DXVECTOR3 * Vec3TransformQuaternion(D3DXVECTOR3* pvout, const D3DXVECTOR3* pv, const D3DXQUATERNION* pq)
+inline Vector3 * Vec3TransformQuaternion(Vector3* pvout, const Vector3* pv, const Quaternion* pq)
 {
-	D3DXVec3Cross(pvout,pv,(D3DXVECTOR3*)pq);
+	Vec3Cross(pvout,pv,(Vector3*)pq);
 	*pvout *= -2*pq->w;
-	*pvout += (pq->w*pq->w - D3DXVec3LengthSq((D3DXVECTOR3*)pq))*(*pv);
-	*pvout += 2*D3DXVec3Dot((D3DXVECTOR3*)pq,pv)*(*(D3DXVECTOR3*)pq);
+	*pvout += (pq->w*pq->w - Vec3LengthSq((Vector3*)pq))*(*pv);
+	*pvout += 2*Vec3Dot((Vector3*)pq,pv)*(*(Vector3*)pq);
 
 	return pvout;
 }

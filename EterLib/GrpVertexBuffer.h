@@ -1,56 +1,69 @@
 #pragma once
 
+/*
+ * GrpVertexBuffer.h
+ * DX11 Vertex Buffer Implementation
+ */
+
 #include "GrpBase.h"
-#include <cstdint>
 
 class CGraphicVertexBuffer : public CGraphicBase
 {
-	public:
-		CGraphicVertexBuffer();
-		virtual ~CGraphicVertexBuffer();
+public:
+	CGraphicVertexBuffer();
+	virtual ~CGraphicVertexBuffer();
 
-		void	Destroy();
-		virtual bool	Create(int vtxCount, DWORD fvf, DWORD usage, D3DPOOL d3dPool);
+	void Destroy();
 
-		bool	CreateDeviceObjects();
-		void	DestroyDeviceObjects();
+	bool Create(int vtxCount, UINT stride, D3D11_USAGE usage = D3D11_USAGE_DEFAULT, const void* pInitData = nullptr);
 
-		bool	Copy(int bufSize, const void* srcVertices);
+	bool Create(int vtxCount, EInputLayoutType layoutType, D3D11_USAGE usage = D3D11_USAGE_DEFAULT, const void* pInitData = nullptr);
 
-		bool	LockRange(unsigned count, void** pretVertices) const;
-		bool	LockDiscardRange(unsigned count, void** pretVertices) const;
-		std::uint64_t GetContentVersion() const { return m_contentVersion; }
-		bool	Lock(void** pretVertices) const;
-		bool	Unlock() const;
+	bool CreateDeviceObjects();
+	void DestroyDeviceObjects();
 
-		bool	LockDynamic(void** pretVertices) const;
-		virtual bool	Lock(void** pretVertices);
-		bool	Unlock();
+	// Copy data to buffer (for DEFAULT usage buffers)
+	bool Copy(int bufSize, const void* srcVertices);
 
-		void	SetStream(int stride, int layer=0) const;
+	// Map/Unmap for dynamic buffers
+	bool Map(void** ppData, D3D11_MAP mapType = D3D11_MAP_WRITE_DISCARD);
+	void Unmap();
 
-		int		GetVertexCount() const;
-		int		GetVertexStride() const;
-		DWORD	GetFlexibleVertexFormat() const;
+	// Const versions for compatibility
+	bool Map(void** ppData, D3D11_MAP mapType = D3D11_MAP_WRITE_DISCARD) const;
+	void Unmap() const;
 
-		inline	LPDIRECT3DVERTEXBUFFER9 GetD3DVertexBuffer() const	{ return m_lpd3dVB; }
-		inline	DWORD GetBufferSize() const	{ return m_dwBufferSize; }
+	// Bind buffer to input assembler
+	void Bind(UINT slot = 0, UINT offset = 0) const;
 
-		bool	IsEmpty() const;
+	// Legacy SetStream wrapper
+	void SetStream(int stride, int layer = 0) const;
 
-	protected:
-		void	Initialize();
+	// Accessors
+	int GetVertexCount() const { return m_vtxCount; }
+	UINT GetVertexStride() const { return m_uStride; }
+	DWORD GetBufferSize() const { return m_dwBufferSize; }
+	ID3D11Buffer* GetBuffer() const { return m_pBuffer; }
+	ID3D11Buffer* GetD3DVertexBuffer() const { return m_pBuffer; }  // Legacy alias
+	bool IsEmpty() const { return m_pBuffer == nullptr; }
+	bool IsDynamic() const { return m_Usage == D3D11_USAGE_DYNAMIC; }
 
-	protected:
-		LPDIRECT3DVERTEXBUFFER9 m_lpd3dVB;
+	// Get the input layout type this buffer was created for
+	EInputLayoutType GetLayoutType() const { return m_LayoutType; }
 
-		DWORD					m_dwBufferSize;
-		DWORD					m_dwFVF;
-		DWORD					m_dwUsage;
-		D3DPOOL					m_d3dPool;
-		int						m_vtxCount;
-		DWORD					m_dwLockFlag;
-		DWORD m_vertexStride = 0;
-		mutable std::uint64_t m_contentVersion = 0;
+protected:
+	void Initialize();
+
+protected:
+	ID3D11Buffer*	m_pBuffer;
+	DWORD			m_dwBufferSize;
+	UINT			m_uStride;
+	D3D11_USAGE		m_Usage;
+	int				m_vtxCount;
+
+	// Input layout type for this buffer
+	EInputLayoutType m_LayoutType;
+
+	// Mutable for const Map/Unmap
+	mutable bool	m_bMapped;
 };
-

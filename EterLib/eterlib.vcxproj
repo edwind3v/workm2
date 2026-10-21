@@ -85,7 +85,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <Optimization>Disabled</Optimization>
-      <AdditionalIncludeDirectories>../../Extern/include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\third_party\stb;$(ProjectDir)..\third_party\stb;../../Extern/include</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_CRT_SECURE_NO_WARNINGS;_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS;_SILENCE_ALL_CXX20_DEPRECATION_WARNINGS;_DEBUG;_LIB;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
@@ -120,7 +120,7 @@
     <ClCompile>
       <Optimization>MaxSpeed</Optimization>
       <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
-      <AdditionalIncludeDirectories>../../Extern/include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\third_party\stb;$(ProjectDir)..\third_party\stb;../../Extern/include</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_CRT_SECURE_NO_WARNINGS;_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS;_SILENCE_ALL_CXX20_DEPRECATION_WARNINGS;NDEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>true</StringPooling>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
@@ -145,7 +145,7 @@
     <ResourceCompile>
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <Culture>0x0412</Culture>
-      <AdditionalIncludeDirectories>c:/eterlib/bin/;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\third_party\stb;$(ProjectDir)..\third_party\stb;c:/eterlib/bin/;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Lib>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
@@ -156,7 +156,7 @@
     <ClCompile>
       <Optimization>MaxSpeed</Optimization>
       <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
-      <AdditionalIncludeDirectories>.;../../extern/include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\third_party\stb;$(ProjectDir)..\third_party\stb;.;../../extern/include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_CRT_SECURE_NO_WARNINGS;NDEBUG;DISTRIBUTE;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <StringPooling>true</StringPooling>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
@@ -180,7 +180,7 @@
     <ResourceCompile>
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <Culture>0x0412</Culture>
-      <AdditionalIncludeDirectories>c:/eterlib/bin/;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\third_party\stb;$(ProjectDir)..\third_party\stb;c:/eterlib/bin/;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Lib>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
@@ -199,7 +199,7 @@
     <ClCompile Include="GrpCollisionObject.cpp" />
     <ClCompile Include="GrpColor.cpp" />
     <ClCompile Include="GrpColorInstance.cpp" />
-    <ClCompile Include="GrpD3DXBuffer.cpp" />
+    <ClCompile Include="GrpD3DXBuffer.cpp"><ExcludedFromBuild>true</ExcludedFromBuild></ClCompile>
     <ClCompile Include="GrpDIB.cpp" />
     <ClCompile Include="GrpIndexBuffer.cpp" />
     <ClCompile Include="GrpLightManager.cpp" />
@@ -233,12 +233,12 @@
     <ClCompile Include="CullingManager.cpp" />
     <ClCompile Include="GrpBase.cpp" />
     <ClCompile Include="GrpDetector.cpp" />
-    <ClCompile Include="DX11AssetProbe.cpp" />
-    <ClCompile Include="DX11Device.cpp" />
-    <ClCompile Include="DX11GrannyProbe.cpp" />
-    <ClCompile Include="DX11Probe.cpp" />
-    <ClCompile Include="DX11Resources.cpp" />
-    <ClCompile Include="DX11ShaderLibrary.cpp" />
+    <ClCompile Include="DX11AssetProbe.cpp"><ExcludedFromBuild>true</ExcludedFromBuild></ClCompile>
+    <ClCompile Include="DX11Device.cpp"><ExcludedFromBuild>true</ExcludedFromBuild></ClCompile>
+    <ClCompile Include="DX11GrannyProbe.cpp"><ExcludedFromBuild>true</ExcludedFromBuild></ClCompile>
+    <ClCompile Include="DX11Probe.cpp"><ExcludedFromBuild>true</ExcludedFromBuild></ClCompile>
+    <ClCompile Include="DX11Resources.cpp"><ExcludedFromBuild>true</ExcludedFromBuild></ClCompile>
+    <ClCompile Include="DX11ShaderLibrary.cpp"><ExcludedFromBuild>true</ExcludedFromBuild></ClCompile>
     <ClCompile Include="GrpDevice.cpp" />
     <ClCompile Include="GrpMath.cpp" />
     <ClCompile Include="GrpScreen.cpp" />
@@ -362,4 +362,16 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
+  <ItemGroup>
+    <ClCompile Include="BufferPool.cpp" />
+    <ClCompile Include="DX11Cache.cpp" />
+    <ClCompile Include="DX11Resource.cpp" />
+    <ClCompile Include="ImageDecoder.cpp" />
+    <ClCompile Include="MatrixStack.cpp" />
+    <ClCompile Include="ShaderInit.cpp" />
+    <ClCompile Include="ShaderManager.cpp" />
+    <ClCompile Include="ShaderManagerCB.cpp" />
+    <ClCompile Include="VolumetricFog.cpp" />
+    <ClCompile Include="VTFInstanceManager.cpp" />
+  </ItemGroup>
 </Project>

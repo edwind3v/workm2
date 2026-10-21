@@ -29,9 +29,9 @@ void CLightInstance::OnSetDataPointer(CEffectElementBase * pElement)
 
 	m_iLoopCount = m_pData->GetLoopCount();
 
-	D3DLIGHT9 Light;
+	TLight Light;
 	m_pData->InitializeLight(Light);
-	CLightManager::Instance().RegisterLight(LIGHT_TYPE_DYNAMIC, &m_LightID, Light);
+	CLightManager::Instance().RegisterLight(LIGHT_BEHAVIOR_DYNAMIC, &m_LightID, Light);
 }
 
 bool CLightInstance::OnUpdate(float fElapsedTime)
@@ -98,9 +98,9 @@ bool CLightInstance::OnUpdate(float fElapsedTime)
 		m_pData->GetRange(m_fLocalTime, fRange);
 		pLight->SetRange(fRange);
 
-		D3DXVECTOR3 pos;
+		Vector3 pos;
 		m_pData->GetPosition(m_fLocalTime,pos);
-		D3DXVec3TransformCoord(&pos,&pos,mc_pmatLocal);
+		Vec3TransformCoord(&pos,&pos,mc_pmatLocal);
 		pLight->SetPosition(pos.x,pos.y,pos.z);
 
 	}

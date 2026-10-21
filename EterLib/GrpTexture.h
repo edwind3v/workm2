@@ -1,33 +1,58 @@
 #pragma once
 
+/*
+ * GrpTexture.h
+ * DX11 Texture Implementation
+ */
+
 #include "GrpBase.h"
 
 class CGraphicTexture : public CGraphicBase
 {
-	public:
-		virtual bool IsEmpty() const;
+public:
+	virtual bool IsEmpty() const;
 
-		int GetWidth() const;
-		int GetHeight() const;
+	int GetWidth() const;
+	int GetHeight() const;
+	DXGI_FORMAT GetFormat() const;
 
-		void SetTextureStage(int stage) const;
-		LPDIRECT3DTEXTURE9 GetD3DTexture() const;
+	// Bind texture to shader stage
+	void SetTextureStage(int stage) const;
 
-		void DestroyDeviceObjects();
+	// Bind to specific shader stages
+	void BindToVS(UINT slot) const;
+	void BindToPS(UINT slot) const;
+	void BindToGS(UINT slot) const;
 
-	protected:
-		CGraphicTexture();
-		virtual	~CGraphicTexture();
+	// Unbind from shader stage
+	static void UnbindFromPS(UINT slot);
 
-		void Destroy();
-		void Initialize();
+	// Get DX11 resources
+	ID3D11Texture2D* GetTexture() const;
+	ID3D11ShaderResourceView* GetSRV() const;
 
-	protected:
-		bool m_bEmpty;
+	// Legacy accessor (returns SRV for compatibility)
+	ID3D11ShaderResourceView* GetD3DTexture() const { return m_pSRV; }
 
-		int m_width;
-		int m_height;
+	void DestroyDeviceObjects();
 
-		LPDIRECT3DTEXTURE9 m_lpd3dTexture;
+protected:
+	CGraphicTexture();
+	virtual ~CGraphicTexture();
+
+	void Destroy();
+	void Initialize();
+
+	// Create SRV from texture
+	bool CreateShaderResourceView();
+
+protected:
+	bool m_bEmpty;
+
+	int m_width;
+	int m_height;
+	DXGI_FORMAT m_Format;
+
+	ID3D11Texture2D* m_pTexture;
+	ID3D11ShaderResourceView* m_pSRV;
 };
-

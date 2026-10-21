@@ -3,7 +3,9 @@
 #include "Model.h"
 #include "../EterLib/ResourceManager.h"
 
-CGrannyModel* CGrannyModelInstance::GetModel() const
+bool CGrannyModelInstance::ms_bShadowSkipRigid = false;
+
+CGrannyModel* CGrannyModelInstance::GetModel()
 {
 	return m_pModel;
 }
@@ -16,10 +18,9 @@ void CGrannyModelInstance::SetMaterialImagePointer(const char* c_szImageName, CG
 void CGrannyModelInstance::SetMaterialData(const char* c_szImageName, const SMaterialData& c_rkMaterialData)
 {
 	m_kMtrlPal.SetMaterialData(c_szImageName, c_rkMaterialData);
-	m_material_data = c_rkMaterialData; // @fixme057
 }
 
-void CGrannyModelInstance::SetSpecularInfo(const char* c_szMtrlName, BOOL bEnable, float fPower) const
+void CGrannyModelInstance::SetSpecularInfo(const char* c_szMtrlName, BOOL bEnable, float fPower)
 {
 	m_kMtrlPal.SetSpecularInfo(c_szMtrlName, bEnable, fPower);
 }
@@ -37,7 +38,7 @@ int CGrannyModelInstance::ResetLocalTime()
 	return 0;
 }
 
-float CGrannyModelInstance::GetLocalTime() const
+float CGrannyModelInstance::GetLocalTime()
 {
 	return m_fLocalTime;
 }
@@ -55,10 +56,9 @@ void CGrannyModelInstance::SetParentModelInstance(const CGrannyModelInstance* c_
 {
 	mc_pParentInstance = c_pParentModelInstance;
 	m_iParentBoneIndex = iBone;
-	InvalidatePose();
 }
 
-bool CGrannyModelInstance::IsEmpty() const
+bool CGrannyModelInstance::IsEmpty()
 {
 	if (m_pModel)
 	{
@@ -86,39 +86,40 @@ void CGrannyModelInstance::DestroyDeviceObjects()
 
 void CGrannyModelInstance::__Initialize()
 {
+    m_poseInputRevision = 1; m_sampledInputRevision = m_poseRevision = 0;
+    m_sampledParent = nullptr; m_hasParentMatrix = false;
 	if (m_pModel)
 	{
 		m_pModel->Release();
 	}
-	m_pModel = nullptr;
-	mc_pParentInstance = nullptr;
+	m_pModel = NULL;
+	mc_pParentInstance = NULL;
 	m_iParentBoneIndex = 0;
 
-	m_pgrnModelInstance = nullptr;
+	m_pgrnModelInstance = NULL;
 
 	// WORK
-	m_pgrnWorldPoseReal = nullptr;
+	m_pgrnWorldPoseReal = NULL;
 	// END_OF_WORK
 
 	// TEST
-	m_ppkSkeletonInst = nullptr;
+	// m_pgrnWorldPose = NULL;
+	m_ppkSkeletonInst = NULL;
 	// END_OF_TEST
 
-	m_meshMatrices = nullptr;
-	m_pgrnCtrl = nullptr;
-	m_pgrnAni = nullptr;
+	m_meshMatrices = NULL;
+	m_pgrnCtrl = NULL;
+	m_pgrnAni = NULL;
 
-	m_material_data = {}; // @fixme057
 	m_dwOldUpdateFrame=0;
-    m_poseInputRevision = 1; m_sampledInputRevision = m_poseRevision = 0;
-    m_sampledParent = nullptr; m_hasParentMatrix = false;
-    m_skinnedPoseRevision = m_skinnedBufferVersion = 0; m_skinnedBuffer = nullptr;
-    m_ownsMeshBindings = true;
+
+	m_nLocalMaxBoneIndex = 0;
+	m_bHasLocalSkinnedVB = false;
 }
 
 CGrannyModelInstance::CGrannyModelInstance()
 {
-	m_pModel = nullptr;
+	m_pModel = NULL;
 	__Initialize();
 }
 
@@ -146,3 +147,17 @@ void CGrannyModelInstance::DestroySystem()
 	DestroyWorldPoseCache();
 }
 
+int CGrannyModelInstance::GetMeshCount() const
+{
+	if (!m_pModel)
+		return 0;
+	return m_pModel->GetMeshCount();
+}
+
+bool CGrannyModelInstance::HasRigidMeshes() const
+{
+	if (!m_pModel)
+		return false;
+	return (m_pModel->GetPNTD3DVertexBuffer() != nullptr && !m_pModel->HasGPUSkinning());
+}
+//martysama0134's dcf42890919f0da1c0e6dbb7f15bc7ec

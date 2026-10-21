@@ -52,7 +52,7 @@ namespace NMotionEvent
 	// Screen Flashing
 	typedef struct SMotionEventDataScreenFlashing : public SMotionEventData
 	{
-		D3DXCOLOR FlashingColor;
+		Color FlashingColor;
 
 		SMotionEventDataScreenFlashing() {}
 		virtual ~SMotionEventDataScreenFlashing() {}
@@ -71,7 +71,7 @@ namespace NMotionEvent
 		BOOL isFollowing;
 		BOOL isIndependent;
 		std::string strAttachingBoneName;
-		D3DXVECTOR3 v3EffectPosition;
+		Vector3 v3EffectPosition;
 
 		DWORD dwEffectIndex;
 		std::string strEffectFileName;
@@ -119,7 +119,7 @@ namespace NMotionEvent
 		DWORD dwEffectIndex;
 
 		std::string strEffectFileName;
-		D3DXVECTOR3 v3EffectPosition;
+		Vector3 v3EffectPosition;
 		BOOL isFollowing;
 		BOOL isFishingEffect;
 
@@ -161,7 +161,7 @@ namespace NMotionEvent
 	{
 		BOOL isAttaching;
 		std::string strAttachingBoneName;
-		D3DXVECTOR3 v3FlyPosition;
+		Vector3 v3FlyPosition;
 
 		DWORD dwFlyIndex;
 		std::string strFlyFileName;

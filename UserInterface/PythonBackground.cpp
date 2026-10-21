@@ -10,6 +10,8 @@
 #include "../gamelib/PropertyLoader.h"
 
 #include "PythonBackground.h"
+#include "../EterLib/ShaderManager.h"
+#include "../EterLib/ShaderInit.h"
 #include "PythonCharacterManager.h"
 #include "PythonNetworkStream.h"
 #include "PythonMiniMap.h"
@@ -162,7 +164,7 @@ void CPythonBackground::SetViewDistanceSet(int eNum, float fFarClip)
 	m_ViewDistanceSet[eNum].m_fFogEnd		= fFarClip * 0.7f;//0.6666667f;
 
 	const float fSkyBoxScale						= fFarClip * 0.6f;//0.5773502f;
-	m_ViewDistanceSet[eNum].m_v3SkyBoxScale	= D3DXVECTOR3(fSkyBoxScale, fSkyBoxScale, fSkyBoxScale);
+	m_ViewDistanceSet[eNum].m_v3SkyBoxScale	= Vector3(fSkyBoxScale, fSkyBoxScale, fSkyBoxScale);
 	m_ViewDistanceSet[eNum].m_fFarClip		= fFarClip;
 
 	if (eNum == m_eViewDistanceNum)
@@ -271,25 +273,25 @@ void CPythonBackground::__CreateProperty()
 // Normal Functions
 //////////////////////////////////////////////////////////////////////
 
-bool CPythonBackground::GetPickingPoint(D3DXVECTOR3 * v3IntersectPt)
+bool CPythonBackground::GetPickingPoint(Vector3 * v3IntersectPt)
 {
 	CMapOutdoor& rkMap=GetMapOutdoorRef();
 	return rkMap.GetPickingPoint(v3IntersectPt);
 }
 
-bool CPythonBackground::GetPickingPointWithRay(const CRay & rRay, D3DXVECTOR3 * v3IntersectPt)
+bool CPythonBackground::GetPickingPointWithRay(const CRay & rRay, Vector3 * v3IntersectPt)
 {
 	CMapOutdoor& rkMap=GetMapOutdoorRef();
 	return rkMap.GetPickingPointWithRay(rRay, v3IntersectPt);
 }
 
-bool CPythonBackground::GetPickingPointWithRayOnlyTerrain(const CRay & rRay, D3DXVECTOR3 * v3IntersectPt)
+bool CPythonBackground::GetPickingPointWithRayOnlyTerrain(const CRay & rRay, Vector3 * v3IntersectPt)
 {
 	CMapOutdoor& rkMap=GetMapOutdoorRef();
 	return rkMap.GetPickingPointWithRayOnlyTerrain(rRay, v3IntersectPt);
 }
 
-BOOL CPythonBackground::GetLightDirection(D3DXVECTOR3 & rv3LightDirection) const
+BOOL CPythonBackground::GetLightDirection(Vector3 & rv3LightDirection) const
 {
 	if (!mc_pcurEnvironmentData)
 		return FALSE;
@@ -367,7 +369,7 @@ void CPythonBackground::Update(float fCenterX, float fCenterY, float fCenterZ)
 #ifdef __PERFORMANCE_CHECKER__
 	DWORD t3=ELTimer_GetMSec();
 #endif
-	m_SnowEnvironment.Update(D3DXVECTOR3(fCenterX, -fCenterY, fCenterZ));
+	m_SnowEnvironment.Update(Vector3(fCenterX, -fCenterY, fCenterZ));
 
 #ifdef __PERFORMANCE_CHECKER__
 	{
@@ -485,6 +487,7 @@ bool CPythonBackground::__IsSame(std::set<int> & rleft, std::set<int> & rright) 
 
 void CPythonBackground::Render()
 {
+	if (IsMapReady()) GetMapOutdoorRef().SetGodRaysEnabled(CPythonSystem::Instance().GetConfig()->dx11GodRays);
 	if (!IsMapReady())
 		return;
 
@@ -529,32 +532,45 @@ void CPythonBackground::RenderCharacterShadowToTexture()
 		return;
 
 	CMapOutdoor& rkMap=GetMapOutdoorRef();
-	const DWORD t1=ELTimer_GetMSec();
+	DWORD t1=ELTimer_GetMSec();
 
 	if (m_eShadowLevel == SHADOW_ALL ||
 		m_eShadowLevel == SHADOW_ALL_HIGH ||
 		m_eShadowLevel == SHADOW_ALL_MAX ||
 		m_eShadowLevel == SHADOW_GROUND_AND_SOLO)
 	{
-		D3DXMATRIX matWorld;
-		STATEMANAGER.GetTransform(D3DTS_WORLD, &matWorld);
+		Matrix matWorld;
+		SHADERMANAGER.GetMatrix(MATRIX_WORLD, &matWorld);
 
-		const bool canRender=rkMap.BeginRenderCharacterShadowToTexture();
-		if (canRender)
+		CPythonCharacterManager& rkChrMgr=CPythonCharacterManager::Instance();
+
+		static const int s_iShadowCascades = 4;   // full CSM; see the shadow rebuild TODO
+
+		const bool bCacheCasters = (m_eShadowLevel != SHADOW_GROUND_AND_SOLO) && (s_iShadowCascades > 0);
+		if (bCacheCasters)
+			rkChrMgr.CollectShadowCastersForFrame();
+
+		for (int cascade = 0; cascade < s_iShadowCascades; ++cascade)
 		{
-			CPythonCharacterManager& rkChrMgr=CPythonCharacterManager::Instance();
-
-			if (m_eShadowLevel == SHADOW_GROUND_AND_SOLO)
-				rkChrMgr.RenderShadowMainInstance();
-			else
-				rkChrMgr.RenderShadowAllInstances();
+			if (rkMap.BeginRenderCharacterShadowToTexture(cascade))
+			{
+				if (m_eShadowLevel == SHADOW_GROUND_AND_SOLO)
+					rkChrMgr.RenderShadowMainInstance();
+				else
+					rkChrMgr.RenderShadowAllInstances();
+				rkMap.RenderObjectShadowsToTexture();
+				rkMap.RenderTreeShadowsToTexture();
+			}
+			rkMap.EndRenderCharacterShadowToTexture();
 		}
-		rkMap.EndRenderCharacterShadowToTexture();
 
-		STATEMANAGER.SetTransform(D3DTS_WORLD, &matWorld);
+		if (bCacheCasters)
+			rkChrMgr.EndShadowCastersForFrame();
+
+		SHADERMANAGER.SetMatrix(MATRIX_WORLD, &matWorld);
 	}
 
-	const DWORD t2=ELTimer_GetMSec();
+	DWORD t2=ELTimer_GetMSec();
 
 	m_dwRenderShadowTime=t2-t1;
 }
@@ -707,7 +723,14 @@ void CPythonBackground::SetCharacterDirLight()
 	if (!mc_pcurEnvironmentData)
 		return;
 
-	STATEMANAGER.SetLight(0, &mc_pcurEnvironmentData->DirLights[ENV_DIRLIGHT_CHARACTER]);
+	SHADERMANAGER.SetLight(0, &mc_pcurEnvironmentData->DirLights[ENV_DIRLIGHT_CHARACTER]);
+
+	// Update shader lighting constants
+	Color ambient(mc_pcurEnvironmentData->Material.Ambient.r,
+		mc_pcurEnvironmentData->Material.Ambient.g,
+		mc_pcurEnvironmentData->Material.Ambient.b,
+		mc_pcurEnvironmentData->Material.Ambient.a);
+	UpdateShaderLightingConstants(mc_pcurEnvironmentData->DirLights[ENV_DIRLIGHT_CHARACTER], ambient);
 }
 
 void CPythonBackground::SetBackgroundDirLight()
@@ -717,7 +740,14 @@ void CPythonBackground::SetBackgroundDirLight()
 	if (!mc_pcurEnvironmentData)
 		return;
 
-	STATEMANAGER.SetLight(0, &mc_pcurEnvironmentData->DirLights[ENV_DIRLIGHT_BACKGROUND]);
+	SHADERMANAGER.SetLight(0, &mc_pcurEnvironmentData->DirLights[ENV_DIRLIGHT_BACKGROUND]);
+
+	// Update shader lighting constants
+	Color ambient(mc_pcurEnvironmentData->Material.Ambient.r,
+		mc_pcurEnvironmentData->Material.Ambient.g,
+		mc_pcurEnvironmentData->Material.Ambient.b,
+		mc_pcurEnvironmentData->Material.Ambient.a);
+	UpdateShaderLightingConstants(mc_pcurEnvironmentData->DirLights[ENV_DIRLIGHT_BACKGROUND], ambient);
 }
 
 void CPythonBackground::GlobalPositionToLocalPosition(LONG& rGlobalX, LONG& rGlobalY) const
@@ -836,7 +866,7 @@ void CPythonBackground::DisableSnowEnvironment()
 	m_SnowEnvironment.Disable();
 }
 
-const D3DXVECTOR3 c_v3TreePos = D3DXVECTOR3(76500.0f, -60900.0f, 20215.0f);
+const Vector3 c_v3TreePos = Vector3(76500.0f, -60900.0f, 20215.0f);
 
 void CPythonBackground::SetXMaxTree(int iGrade)
 {
@@ -938,3 +968,12 @@ void CPythonBackground::DeleteSpecialEffect(DWORD dwID)
 	rkMap.SpecialEffect_Delete(dwID);
 }
 
+
+void CPythonBackground::RenderCelestialBody()
+{
+	if (!IsMapReady())
+		return;
+
+	CMapOutdoor& rkMap = GetMapOutdoorRef();
+	rkMap.RenderCelestialBody();
+}
