@@ -211,6 +211,7 @@
       <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <ClCompile Include="ReadAhead.cpp" />
     <ClCompile Include="EterPackManager.cpp">
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Disabled</Optimization>
       <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -251,6 +252,7 @@
     <ClInclude Include="EterPack.h" />
     <ClInclude Include="EterPackCursor.h" />
     <ClInclude Include="EterPackManager.h" />
+    <ClInclude Include="ReadAhead.h" />
     <ClInclude Include="EterPackPolicy_CSHybridCrypt.h" />
     <ClInclude Include="Inline.h" />
     <ClInclude Include="md5.h" />

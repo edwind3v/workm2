@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
 #include "Model.h"
 #include "Mesh.h"
 
@@ -310,6 +311,7 @@ int CGrannyModel::GetIdxCount() const
 
 bool CGrannyModel::CreateDeviceObjects()
 {
+	MapPerformance::Scope profile("graphics.model_upload");
 	if (m_rigidVtxCount > 0)
 		if (!m_pntVtxBuf.CreateDeviceObjects())
 			return false;

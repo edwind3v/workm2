@@ -5,6 +5,7 @@
 #include "../eterBase/MappedFile.h"
 #include "../eterLib/Util.h"
 #include "../eterLib/Pool.h"
+#include <memory>
 
 class CTextFileLoader
 {
@@ -64,6 +65,8 @@ class CTextFileLoader
 		static void SetCacheMode();
 
 		static CTextFileLoader* Cache(const char* c_szFileName);
+		static std::shared_ptr<CTextFileLoader> AcquireCached(const char* filename);
+		size_t GetMemoryCost() const;
 
 	public:
 		CTextFileLoader();

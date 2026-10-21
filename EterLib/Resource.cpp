@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
 #include "../eterPack/EterPackManager.h"
 #include "../eterBase/CRC32.h"
 #include "../eterBase/Timer.h"
@@ -41,6 +42,8 @@ void CResource::Load()
 		return;
 
 	const char * c_szFileName = GetFileName();
+	MapPerformance::Scope mapProfile("resource.load", c_szFileName);
+	MapPerformance::Count(MapPerformance::Counter::Resources);
 
 	const DWORD		dwStart = ELTimer_GetMSec();
 	CMappedFile	file;
@@ -48,12 +51,12 @@ void CResource::Load()
 
 	//Tracenf("Load %s", c_szFileName);
 
-	if (CEterPackManager::Instance().Get(file, c_szFileName, &fileData))
+	if (MapPerformance::Measure("resource.pack_read", c_szFileName, [&] { return CEterPackManager::Instance().Get(file, c_szFileName, &fileData); }))
 	{
 		m_dwLoadCostMiliiSecond = ELTimer_GetMSec() - dwStart;
 		//Tracef("CResource::Load %s (%d bytes) in %d ms\n", c_szFileName, file.Size(), m_dwLoadCostMiliiSecond);
 
-		if (OnLoad(file.Size(), fileData))
+		if (MapPerformance::Measure("resource.decode", c_szFileName, [&] { return OnLoad(file.Size(), fileData); }))
 		{
 			me_state = STATE_EXIST;
 		}
@@ -66,7 +69,7 @@ void CResource::Load()
 	}
 	else
 	{
-		if (OnLoad(0, nullptr))
+		if (MapPerformance::Measure("resource.decode_missing", c_szFileName, [&] { return OnLoad(0, nullptr); }))
 			me_state = STATE_EXIST;
 		else
 		{

@@ -38,6 +38,12 @@ class CTerrain : public CTerrainImpl, public CGraphicBase
 		bool			LoadHeightMap(const char * c_pszFileName);
 
 		void			CalculateTerrainPatch();
+		bool LoadTileMapDeferred(const char* filename);
+		void PrepareBlendMask(DWORD index);
+		void PrepareGeometryPatch(DWORD index);
+		DWORD GetGeometryPatchCount() const { return PATCH_XCOUNT * PATCH_YCOUNT; }
+		DWORD GetBlendMaskCount() const { return GetTextureSet()->GetTextureCount(); }
+		bool ClearStep(unsigned units);
 		//////////////////////////////////////////////////////////////////////////
 
 		void			CopySettingFromGlobalSetting();
@@ -99,7 +105,7 @@ class CTerrain : public CTerrainImpl, public CGraphicBase
 		void			SetName(const std::string c_strName) { m_strName = c_strName; }
 
 		CMapOutdoor *	GetOwner() const { return m_pOwnerOutdoorMap; }
-		void			RAW_GenerateSplat(bool bBGLoading = false);
+		void			RAW_GenerateSplat(bool bBGLoading = false, DWORD first = 1, DWORD end = 0xffffffff);
 
 	protected:
 		bool	Initialize();
@@ -120,6 +126,7 @@ class CTerrain : public CTerrainImpl, public CGraphicBase
 		WORD					m_wY;
 
 	protected:
+		unsigned m_cleanupCursor = 0;
 		bool					m_bReady;
 
 		CGraphicImageInstance	m_ShadowGraphicImageInstance;

@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterPack/EterPackManager.h"
 #include "../eterlib/StateManager.h"
 #include "../eterlib/Camera.h"
 #include "../PRTerrainLib/StdAfx.h"
@@ -205,6 +206,8 @@ bool CMapOutdoor::ConsumeAreaChangedFlag()
 
 bool CMapOutdoor::Destroy()
 {
+	CancelStreaming();
+	if (CEterPackManager::InstancePtr()) CEterPackManager::Instance().ClearReadAhead();
 	m_bEnableTerrainOnlyForHeight = FALSE;
 	m_bEnablePortal = FALSE;
 

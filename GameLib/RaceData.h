@@ -1,6 +1,8 @@
 #pragma once
 
 #include "../eterGrnLib/Thing.h"
+#include <memory>
+struct SSharedMotionLibrary;
 
 class CRaceMotionData;
 class CAttributeData;
@@ -157,6 +159,7 @@ class CRaceData
 		const char* GetAttributeFileName() const;
 		const char* GetMotionListFileName() const;
 		CGraphicThing * GetBaseModelThing();
+		std::shared_ptr<const SSharedMotionLibrary> AcquireMotionLibrary();
 		CGraphicThing * GetLODModelThing();
 		CAttributeData * GetAttributeDataPtr() const;
 		BOOL GetAttachingBoneName(DWORD dwPartIndex, const char ** c_pszBoneName);
@@ -227,6 +230,7 @@ class CRaceData
 
 	protected:
 		DWORD m_dwRaceIndex;
+		std::weak_ptr<const SSharedMotionLibrary> m_motionLibrary;
 		DWORD m_adwSmokeEffectID[SMOKE_NUM];
 
 		CGraphicThing * m_pBaseModelThing;

@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
 #include "../eterlib/Camera.h"
 #include "../PRTerrainLib/StdAfx.h"
 
@@ -41,6 +42,8 @@ class PCBlocker_CDynamicSphereInstanceVector
 
 bool CMapOutdoor::Update(float fX, float fY, float fZ)
 {
+	MapPerformance::Scope mapProfile("world.update", GetName().c_str());
+	CArea::BeginPreparationFrame();
 	D3DXVECTOR3 v3Player(fX, fY, fZ);
 
 	m_v3Player=v3Player;
@@ -55,6 +58,8 @@ bool CMapOutdoor::Update(float fX, float fY, float fZ)
 
 	short sCoordX = MINMAX(0, ix / CTerrainImpl::TERRAIN_XSIZE, m_sTerrainCountX - 1);
 	short sCoordY = MINMAX(0, iy / CTerrainImpl::TERRAIN_YSIZE, m_sTerrainCountY - 1);
+	MapPerformance::SetWorld(GetName().c_str(), v3Player.x, v3Player.y, v3Player.z, sCoordX, sCoordY);
+	MapPerformance::Scope mapStage("world.sector_check");
 #ifdef __PERFORMANCE_CHECKER__
 	DWORD t2=ELTimer_GetMSec();
 #endif
@@ -107,27 +112,45 @@ bool CMapOutdoor::Update(float fX, float fY, float fZ)
 #ifdef __PERFORMANCE_CHECKER__
 	DWORD t3=ELTimer_GetMSec();
 #endif
+	mapStage.Reset("world.trees");
 	CSpeedTreeForest::Instance().UpdateSystem(CTimer::Instance().GetCurrentSecond());
 #ifdef __PERFORMANCE_CHECKER__
 	DWORD t4=ELTimer_GetMSec();
 #endif
+	mapStage.Reset("world.delayed_cleanup");
 	__UpdateGarvage();
 #ifdef __PERFORMANCE_CHECKER__
 	DWORD t5=ELTimer_GetMSec();
 #endif
+	mapStage.Reset("world.terrain_update");
 	UpdateTerrain(fX, fY);
 #ifdef __PERFORMANCE_CHECKER__
 	DWORD t6=ELTimer_GetMSec();
 #endif
+	mapStage.Reset("world.area_update");
 	__UpdateArea(v3Player);
 #ifdef __PERFORMANCE_CHECKER__
 	DWORD t7=ELTimer_GetMSec();
 #endif
+	mapStage.Reset("world.sky");
 	UpdateSky();
 #ifdef __PERFORMANCE_CHECKER__
 	DWORD t8=ELTimer_GetMSec();
 #endif
+	mapStage.Reset("world.height_cache");
 	__HeightCache_Update();
+	mapStage.Stop();
+	if (!bNeedInit) UpdateStreaming(v3Player);
+	for (auto* area : m_AreaVector)
+	{
+		WORD x, y; area->GetCoordinate(&x, &y);
+		if (abs(int(x) - sCoordX) > 1 || abs(int(y) - sCoordY) > 1)
+		{
+#ifdef ENABLE_AREA_OPTIMIZATION
+			m_bAreaChangedThisFrame |= area->PrepareObjects(v3Player);
+#endif
+		}
+	}
 
 #ifdef __PERFORMANCE_CHECKER__
 	{
@@ -250,15 +273,15 @@ void CMapOutdoor::__Game_UpdateArea(D3DXVECTOR3& v3Player)
 #ifdef __PERFORMANCE_CHECKER__
 	DWORD t3=timeGetTime();
 #endif
-	__CollectShadowReceiver(v3Player, v3Light);
+	MapPerformance::Measure("world.collect_shadow_receivers", nullptr, [&] { __CollectShadowReceiver(v3Player, v3Light); });
 #ifdef __PERFORMANCE_CHECKER__
 	DWORD t4=timeGetTime();
 #endif
-	__CollectCollisionPCBlocker(v3Eye, v3Player, fDistance);
+	MapPerformance::Measure("world.collect_blockers", nullptr, [&] { __CollectCollisionPCBlocker(v3Eye, v3Player, fDistance); });
 #ifdef __PERFORMANCE_CHECKER__
 	DWORD t5=timeGetTime();
 #endif
-	__CollectCollisionShadowReceiver(v3Player, v3Light);
+	MapPerformance::Measure("world.collect_collision_shadows", nullptr, [&] { __CollectCollisionShadowReceiver(v3Player, v3Light); });
 #ifdef __PERFORMANCE_CHECKER__
 	DWORD t6=timeGetTime();
 #endif
@@ -838,6 +861,8 @@ void CMapOutdoor::FPushAreaToDeleteVector::operator () (CArea * pArea)
 
 void CMapOutdoor::__ClearGarvage()
 {
+	MapPerformance::Scope mapProfile("map.bulk_cleanup");
+	mapProfile.Detail("terrain_count=%u area_count=%u", static_cast<unsigned>(m_TerrainDeleteVector.size()), static_cast<unsigned>(m_AreaDeleteVector.size()));
 	std::for_each(m_TerrainDeleteVector.begin(), m_TerrainDeleteVector.end(), CTerrain::Delete);
 	m_TerrainDeleteVector.clear();
 
@@ -847,102 +872,55 @@ void CMapOutdoor::__ClearGarvage()
 
 void CMapOutdoor::__UpdateGarvage()
 {
-	constexpr DWORD dwTerrainEraseInterval = 1000 * 60;
-	static DWORD dwEraseTime = ELTimer_GetMSec();
-
-	if (!m_TerrainDeleteVector.empty())
+	MapPerformance::Scope profile("map.cleanup_budget");
+	CFrameWorkBudget budget(m_AreaDeleteVector.size() > 6 ? 3.0 : 0.75);
+	if (m_TerrainDeleteVector.size() > 3)
 	{
-		if (ELTimer_GetMSec() - dwEraseTime <= dwTerrainEraseInterval)
-			return;
-		TTerrainPtrVectorIterator aTerrainPtrDeleteItertor = m_TerrainDeleteVector.begin();
-		CTerrain * pTerrain = *aTerrainPtrDeleteItertor;
-		CTerrain::Delete(pTerrain);
-
-		aTerrainPtrDeleteItertor = m_TerrainDeleteVector.erase(aTerrainPtrDeleteItertor);
-		dwEraseTime = ELTimer_GetMSec();
-		Trace("Delete Terrain \n");
-		return;
+		if (m_TerrainDeleteVector.front()->ClearStep(4))
+		{ CTerrain::Delete(m_TerrainDeleteVector.front()); m_TerrainDeleteVector.erase(m_TerrainDeleteVector.begin()); }
 	}
-
-	if (!m_AreaDeleteVector.empty())
+	// Retire instances in small batches. Never overwrite a pending deletion list.
+	while (!m_AreaDeleteVector.empty() && budget.Available())
 	{
-		if (ELTimer_GetMSec() - dwEraseTime <= dwTerrainEraseInterval)
-			return;
-		TAreaPtrVectorIterator aAreaPtrDeleteItertor = m_AreaDeleteVector.begin();
-
-		CArea * pArea = *aAreaPtrDeleteItertor;
-		CArea::Delete(pArea);
-
-		aAreaPtrDeleteItertor = m_AreaDeleteVector.erase(aAreaPtrDeleteItertor);
-		dwEraseTime = ELTimer_GetMSec();
-		Trace("Delete Area \n");
-		return;
+		CArea* area = m_AreaDeleteVector.front();
+		if (!area->ClearStep(4)) continue;
+		CArea::Delete(area); m_AreaDeleteVector.erase(m_AreaDeleteVector.begin());
+	}
+	if (!m_TerrainDeleteVector.empty() && budget.Available())
+	{
+		if (m_TerrainDeleteVector.front()->ClearStep(4))
+		{
+			CTerrain::Delete(m_TerrainDeleteVector.front());
+			m_TerrainDeleteVector.erase(m_TerrainDeleteVector.begin());
+		}
 	}
 }
 
-void CMapOutdoor::UpdateAreaList(long lCenterX, long lCenterY)
+void CMapOutdoor::UpdateAreaList(long, long)
 {
-	if (m_TerrainVector.size() <= AROUND_AREA_NUM && m_AreaVector.size() <= AROUND_AREA_NUM)
-		return;
-
-	__ClearGarvage();
-
-	FPushToDeleteVector::EDeleteDir eDeleteLRDir, eDeleteTBDir;
-
-	if (lCenterX > CTerrainImpl::XSIZE / 2)
-		eDeleteLRDir = FPushToDeleteVector::DELETE_LEFT;
-	else
-		eDeleteLRDir = FPushToDeleteVector::DELETE_RIGHT;
-	if (lCenterY > CTerrainImpl::YSIZE / 2)
-		eDeleteTBDir = FPushToDeleteVector::DELETE_TOP;
-	else
-		eDeleteTBDir = FPushToDeleteVector::DELETE_BOTTOM;
-
-	FPushTerrainToDeleteVector rPushTerrainToDeleteVector = std::for_each(m_TerrainVector.begin(), m_TerrainVector.end(),
-		FPushTerrainToDeleteVector(eDeleteLRDir, eDeleteTBDir, m_CurCoordinate));
-	FPushAreaToDeleteVector rPushAreaToDeleteVector = std::for_each(m_AreaVector.begin(), m_AreaVector.end(),
-		FPushAreaToDeleteVector(eDeleteLRDir, eDeleteTBDir, m_CurCoordinate));
-
-	if (!rPushTerrainToDeleteVector.m_ReturnTerrainVector.empty())
-	{
-		m_TerrainDeleteVector.resize(rPushTerrainToDeleteVector.m_ReturnTerrainVector.size());
-		std::copy(rPushTerrainToDeleteVector.m_ReturnTerrainVector.begin(), rPushTerrainToDeleteVector.m_ReturnTerrainVector.end(), m_TerrainDeleteVector.begin());
-
-		for (DWORD dwIndex = 0; dwIndex < rPushTerrainToDeleteVector.m_ReturnTerrainVector.size(); ++dwIndex)
+	MapPerformance::Scope profile("map.update_area_list");
+	// Keep the active 3x3 plus at most three nearby recently used sections.
+	// This also retains ahead-of-boundary area data without growing with travel.
+	auto retire = [&](auto& active, auto& pending) {
+		using Pointer = typename std::decay_t<decltype(active)>::value_type;
+		std::vector<std::pair<int, Pointer>> spare;
+		for (auto* section : active)
 		{
-			bool isDel=false;
-			TTerrainPtrVectorIterator aTerrainPtrItertor = m_TerrainVector.begin();
-			while(aTerrainPtrItertor != m_TerrainVector.end())
-			{
-				const CTerrain * pTerrain = *aTerrainPtrItertor;
-				if (pTerrain == rPushTerrainToDeleteVector.m_ReturnTerrainVector[dwIndex])
-				{
-					aTerrainPtrItertor = m_TerrainVector.erase(aTerrainPtrItertor);
-					isDel=true;
-				}
-				else
-					++aTerrainPtrItertor;
-			}
+			WORD x, y; section->GetCoordinate(&x, &y);
+			const int dx = abs(int(x) - m_CurCoordinate.m_sTerrainCoordX);
+			const int dy = abs(int(y) - m_CurCoordinate.m_sTerrainCoordY);
+			if (dx > 1 || dy > 1) spare.emplace_back(dx * dx + dy * dy, section);
 		}
-	}
-	if (!rPushAreaToDeleteVector.m_ReturnAreaVector.empty())
-	{
-		m_AreaDeleteVector.resize(rPushAreaToDeleteVector.m_ReturnAreaVector.size());
-		std::copy(rPushAreaToDeleteVector.m_ReturnAreaVector.begin(), rPushAreaToDeleteVector.m_ReturnAreaVector.end(), m_AreaDeleteVector.begin());
-
-		for (DWORD dwIndex = 0; dwIndex < rPushAreaToDeleteVector.m_ReturnAreaVector.size(); ++dwIndex)
-		{
-			TAreaPtrVectorIterator aAreaPtrItertor = m_AreaVector.begin();
-			while(aAreaPtrItertor != m_AreaVector.end())
+		std::sort(spare.begin(), spare.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+		for (size_t i = 0; i < spare.size(); ++i)
+			if (i >= (IsWorldMemoryPressure() ? 1u : 3u) || spare[i].first > 8)
 			{
-				const CArea * pArea = *aAreaPtrItertor;
-				if (pArea == rPushAreaToDeleteVector.m_ReturnAreaVector[dwIndex])
-					aAreaPtrItertor = m_AreaVector.erase(aAreaPtrItertor);
-				else
-					++aAreaPtrItertor;
+				pending.push_back(spare[i].second);
+				active.erase(std::find(active.begin(), active.end(), spare[i].second));
 			}
-		}
-	}
+	};
+	retire(m_TerrainVector, m_TerrainDeleteVector);
+	retire(m_AreaVector, m_AreaDeleteVector);
 }
 
 void CMapOutdoor::ConvertTerrainToTnL(long lx, long ly)

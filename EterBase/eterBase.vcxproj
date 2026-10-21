@@ -213,6 +213,7 @@
     <ClCompile Include="tea.cpp" />
     <ClCompile Include="TempFile.cpp" />
     <ClCompile Include="Timer.cpp" />
+    <ClCompile Include="MapPerformance.cpp" />
     <ClCompile Include="Utils.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -239,6 +240,8 @@
     <ClInclude Include="tea.h" />
     <ClInclude Include="TempFile.h" />
     <ClInclude Include="Timer.h" />
+    <ClInclude Include="MapPerformance.h" />
+    <ClInclude Include="FrameWorkBudget.h" />
     <ClInclude Include="Utils.h" />
     <ClInclude Include="vk.h" />
   </ItemGroup>

@@ -6,6 +6,9 @@
 #include "../eterBase/Stl.h"
 
 #include "EterPack.h"
+#include <memory>
+#include <atomic>
+class CReadAheadFileCache;
 
 class CEterPackManager : public CSingleton<CEterPackManager>
 {
@@ -30,6 +33,9 @@ class CEterPackManager : public CSingleton<CEterPackManager>
 		virtual ~CEterPackManager();
 
 		void SetCacheMode();
+		void RequestReadAhead(const std::vector<std::string>& files);
+		bool IsReadAheadReady(const char* filename);
+		void ClearReadAhead();
 		void SetRelativePathMode();
 
 		void LoadStaticCache(const char* c_szFileName);
@@ -80,7 +86,7 @@ class CEterPackManager : public CSingleton<CEterPackManager>
 	protected:
 		bool					m_bTryRelativePath;
 		bool					m_isCacheMode;
-		int						m_iSearchMode;
+		std::atomic<int> m_iSearchMode;
 
 		CEterFileDict			m_FileDict;
 		CEterPack				m_RootPack;
@@ -90,6 +96,7 @@ class CEterPackManager : public CSingleton<CEterPackManager>
 
 		boost::unordered_map<DWORD, SCache> m_kMap_dwNameKey_kCache;
 
+		std::unique_ptr<CReadAheadFileCache> m_readAhead;
 		CRITICAL_SECTION		m_csFinder;
 };
 

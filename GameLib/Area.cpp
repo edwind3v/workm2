@@ -1,4 +1,7 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
+#include "../EterBase/FrameWorkBudget.h"
+#include "../EterPack/EterPackManager.h"
 
 #include "../eterLib/ResourceManager.h"
 #include "../eterLib/StateManager.h"
@@ -46,6 +49,8 @@ CArea* CArea::New()
 
 void CArea::Delete(CArea* pkArea)
 {
+	MapPerformance::Scope mapProfile("map.area_destroy");
+	mapProfile.Detail("sector=(%u,%u) slots=%u", pkArea->m_wX, pkArea->m_wY, static_cast<unsigned>(pkArea->m_ObjectInstanceVector.size()));
 	pkArea->Clear();
 	ms_kPool.Free(pkArea);
 }
@@ -88,66 +93,78 @@ void CArea::__UpdateAniThingList()
 	}
 }
 
-#ifdef ENABLE_AREA_OPTIMIZATION
-bool CArea::__UpdateLoadedObjectInstances(D3DXVECTOR3& v3Player)
+namespace { thread_local CFrameWorkBudget areaPreparationBudget; }
+
+void CArea::BeginPreparationFrame() { areaPreparationBudget.Reset(2.0); }
+
+bool CArea::PrepareObjects(D3DXVECTOR3& player)
 {
-	const float fMaxDist = GetMaxLoadingDistanceSqr();
-	const DWORD dwStartTime = ELTimer_GetMSec();
-	bool bAnyModified = false;
+#ifdef ENABLE_AREA_OPTIMIZATION
+	return __UpdateLoadedObjectInstances(player);
+#else
+	return false;
+#endif
+}
 
-	DWORD i = 0;
-	for (auto it = m_ObjectInstanceVector.begin(); it != m_ObjectInstanceVector.end(); ++it, ++i)
+bool CArea::ClearStep(unsigned maxObjects)
+{
+	MapPerformance::Scope profile("map.area_cleanup_step");
+	m_retiring = true;
+	unsigned removed = 0;
+	while (!m_ObjectInstanceVector.empty() && removed < maxObjects)
 	{
-		const TObjectData* c_pObjectData;
-
-		if (!GetObjectDataPointer(i, &c_pObjectData))
-			continue;
-
-		bool bDidModify = false;
-		const float fDist = (v3Player.x - c_pObjectData->Position.x) * (v3Player.x - c_pObjectData->Position.x)
-			+ (v3Player.y - c_pObjectData->Position.y) * (v3Player.y - c_pObjectData->Position.y);
-
-		if (fMaxDist > fDist)
-		{
-			if ((*it) == nullptr)
-			{
-				*it = ms_ObjectInstancePool.Alloc();
-				(*it)->Clear();
-
-				__SetObjectInstance(*it, c_pObjectData);
-
-				if ((*it)->dwType == prt::PROPERTY_TYPE_BUILDING)
-					m_GraphicThingInstanceCRCMap.emplace(TGraphicThingInstanceCRCMap::value_type((*it)->pThingInstance, c_pObjectData->dwCRC));
-
-				Refresh(*it, false);
-				bDidModify = true;
-			}
-		}
-		else
-		{
-			if ((*it) != nullptr)
-			{
-				if ((*it)->dwType == prt::PROPERTY_TYPE_BUILDING)
-					m_GraphicThingInstanceCRCMap.erase((*it)->pThingInstance);
-
-				Refresh(*it, true);
-
-				__Clear_DestroyObjectInstance(*it);
-				*it = nullptr;
-				bDidModify = true;
-			}
-		}
-
-		if (bDidModify)
-		{
-			bAnyModified = true;
-			const DWORD dwElapsed = ELTimer_GetMSec() - dwStartTime;
-			if (dwElapsed > 2)
-				break;
-		}
+		auto* object = m_ObjectInstanceVector.back();
+		m_ObjectInstanceVector.pop_back();
+		if (object) { __Clear_DestroyObjectInstance(object); ++removed; }
 	}
+	if (!m_ObjectInstanceVector.empty()) return false;
+	Clear(); return true;
+}
 
-	return bAnyModified;
+#ifdef ENABLE_AREA_OPTIMIZATION
+bool CArea::__UpdateLoadedObjectInstances(D3DXVECTOR3& player)
+{
+	MapPerformance::Scope profile("area.object_distance_update");
+	const float visibleSqr = GetMaxLoadingDistanceSqr();
+	const bool memoryPressure = IsWorldMemoryPressure();
+	const float prepare = sqrtf(visibleSqr) + (memoryPressure ? 2048.0f : 4096.0f);
+	const float retain = prepare + (memoryPressure ? 1024.0f : 2048.0f);
+	profile.Detail("sector=(%u,%u) slots=%u visible_sq=%.0f prepare=%.0f", m_wX, m_wY, static_cast<unsigned>(m_ObjectInstanceVector.size()), visibleSqr, prepare);
+	m_createCandidates.clear(); m_removeCandidates.clear();
+	for (DWORD i = 0; i < m_ObjectInstanceVector.size(); ++i)
+	{
+		const auto& data = m_ObjectDataVector[i];
+		const float dx = player.x - data.Position.x, dy = player.y - data.Position.y;
+		const float dist = dx * dx + dy * dy;
+		if (!m_ObjectInstanceVector[i] && dist < prepare * prepare) m_createCandidates.emplace_back(dist, i);
+		else if (m_ObjectInstanceVector[i] && dist > retain * retain) m_removeCandidates.emplace_back(dist, i);
+	}
+	std::sort(m_createCandidates.begin(), m_createCandidates.end());
+	bool changed = false;
+	for (const auto& candidate : m_createCandidates)
+	{
+		// Required visible objects keep their exact appearance/collision behavior.
+		// The shared soft budget applies to preparation outside the visible range.
+		if (candidate.first >= visibleSqr && !areaPreparationBudget.Available()) break;
+		const DWORD index = candidate.second;
+		const TObjectData* data = &m_ObjectDataVector[index];
+		MapPerformance::Scope create("object.activate");
+		create.Detail("sector=(%u,%u) crc=%u ahead=%u", m_wX, m_wY, data->dwCRC, candidate.first >= visibleSqr);
+		auto* object = ms_ObjectInstancePool.Alloc(); object->Clear();
+		__SetObjectInstance(object, data); m_ObjectInstanceVector[index] = object;
+		if (object->dwType == prt::PROPERTY_TYPE_BUILDING)
+			m_GraphicThingInstanceCRCMap.emplace(object->pThingInstance, data->dwCRC);
+		Refresh(object, false); changed = true;
+		if (candidate.first >= visibleSqr) MapPerformance::Count(MapPerformance::Counter::ObjectsPreparedAhead);
+	}
+	for (const auto& candidate : m_removeCandidates)
+	{
+		if (!areaPreparationBudget.Available()) break;
+		auto*& object = m_ObjectInstanceVector[candidate.second];
+		if (object->dwType == prt::PROPERTY_TYPE_BUILDING) m_GraphicThingInstanceCRCMap.erase(object->pThingInstance);
+		Refresh(object, true); __Clear_DestroyObjectInstance(object); object = nullptr; changed = true;
+	}
+	return changed;
 }
 
 extern DWORD GetUpdateFPS();
@@ -203,9 +220,11 @@ float CArea::GetMaxLoadingDistanceSqr() const
 
 bool CArea::Update(D3DXVECTOR3& v3Player)
 {
+	MapPerformance::Scope mapProfile("area.update");
+	mapProfile.Detail("sector=(%u,%u)", m_wX, m_wY);
 	const bool bAreaChanged = __UpdateLoadedObjectInstances(v3Player);
-	__UpdateAniThingList();
-	__UpdateEffectList(v3Player);
+	MapPerformance::Measure("area.animated_objects", nullptr, [&] { __UpdateAniThingList(); });
+	MapPerformance::Measure("area.effects_update", nullptr, [&] { __UpdateEffectList(v3Player); });
 	return bAreaChanged;
 }
 #else
@@ -530,6 +549,7 @@ void CArea::RenderDungeon()
 #ifdef ENABLE_AREA_OPTIMIZATION
 void CArea::Refresh(TObjectInstance* pObjectInstance, bool bRemove)
 {
+	MapPerformance::Scope mapProfile(bRemove ? "object.unregister" : "object.register_collision_and_bounds");
 	if (!pObjectInstance)
 		return;
 
@@ -768,6 +788,9 @@ void CArea::__Load_BuildObjectInstances()
 
 void CArea::__SetObjectInstance(TObjectInstance * pObjectInstance, const TObjectData * c_pData)
 {
+	MapPerformance::Scope mapProfile("object.create");
+	MapPerformance::Count(MapPerformance::Counter::ObjectsCreated);
+	mapProfile.Detail("sector=(%u,%u) crc=%u", m_wX, m_wY, c_pData->dwCRC);
 	CProperty * pProperty;
 	if (!CPropertyManager::Instance().Get(c_pData->dwCRC, &pProperty))
 		return;
@@ -776,6 +799,7 @@ void CArea::__SetObjectInstance(TObjectInstance * pObjectInstance, const TObject
 
 	if (!pProperty->GetString("PropertyType", &c_szPropertyType))
 		return;
+	mapProfile.Detail("sector=(%u,%u) crc=%u type=%s property=%s", m_wX, m_wY, c_pData->dwCRC, c_szPropertyType, pProperty->GetFileName());
 
 	switch (prt::GetPropertyType(c_szPropertyType))
 	{
@@ -806,6 +830,7 @@ void CArea::__SetObjectInstance_SetEffect(TObjectInstance * pObjectInstance, con
 	prt::TPropertyEffect Data;
 	if (!prt::PropertyEffectStringToData(pProperty, &Data))
 		return;
+	MapPerformance::Scope mapProfile("object.effect", Data.strFileName.c_str());
 
 	std::string strFileName;
 	StringPath(Data.strFileName.c_str(), strFileName); //@fixme030
@@ -854,6 +879,7 @@ void CArea::__SetObjectInstance_SetTree(TObjectInstance * pObjectInstance, const
 	const char * c_szTreeName;
 	if (!pProperty->GetString("TreeFile", &c_szTreeName))
 		return;
+	MapPerformance::Scope mapProfile("object.tree", c_szTreeName);
 
 	pObjectInstance->SetTree(
 		c_pData->Position.x,
@@ -876,6 +902,7 @@ void CArea::__SetObjectInstance_SetBuilding(TObjectInstance * pObjectInstance, c
 	prt::TPropertyBuilding Data;
 	if (!prt::PropertyBuildingStringToData(pProperty, &Data))
 		return;
+	MapPerformance::Scope mapProfile("object.building", Data.strFileName.c_str());
 
 	CResourceManager& rkResMgr=CResourceManager::Instance();
 
@@ -979,6 +1006,7 @@ void CArea::__SetObjectInstance_SetDungeonBlock(TObjectInstance * pObjectInstanc
 	prt::TPropertyDungeonBlock Data;
 	if (!prt::PropertyDungeonBlockStringToData(pProperty, &Data))
 		return;
+	MapPerformance::Scope mapProfile("object.dungeon", Data.strFileName.c_str());
 
 	pObjectInstance->dwType = prt::PROPERTY_TYPE_DUNGEON_BLOCK;
 	pObjectInstance->pDungeonBlock = ms_DungeonBlockInstancePool.Alloc();
@@ -1000,6 +1028,7 @@ void CArea::__SetObjectInstance_SetDungeonBlock(TObjectInstance * pObjectInstanc
 
 void CArea::__LoadAttribute(TObjectInstance * pObjectInstance, const char * c_szAttributeFileName) const
 {
+	MapPerformance::Scope mapProfile("object.attributes", c_szAttributeFileName);
 	const bool bFileExist = CResourceManager::Instance().IsFileExist(c_szAttributeFileName);
 
 	const auto pAttributeData = (CAttributeData *) CResourceManager::Instance().GetResourcePointer(c_szAttributeFileName);
@@ -1053,14 +1082,34 @@ void CArea::__LoadAttribute(TObjectInstance * pObjectInstance, const char * c_sz
 
 bool CArea::Load(const char * c_szPathName)
 {
+	MapPerformance::Scope mapProfile("area.load", c_szPathName);
 	Clear();
 
 	const std::string strObjectDataFileName = c_szPathName + std::string("AreaData.txt");
 	const std::string strAmbienceDataFileName = c_szPathName + std::string("AreaAmbienceData.txt");
 
-	__Load_LoadObject(strObjectDataFileName.c_str());
-	__Load_LoadAmbience(strAmbienceDataFileName.c_str());
-	__Load_BuildObjectInstances();
+	MapPerformance::Measure("area.parse_objects", c_szPathName, [&] { __Load_LoadObject(strObjectDataFileName.c_str()); });
+	MapPerformance::Measure("area.parse_ambience", c_szPathName, [&] { __Load_LoadAmbience(strAmbienceDataFileName.c_str()); });
+	MapPerformance::Measure("area.build_instances", c_szPathName, [&] { __Load_BuildObjectInstances(); });
+	// Read future object bytes before their instances enter the visible range.
+	// Resource construction and collision registration stay on this thread.
+	std::vector<std::string> assetFiles;
+	for (const auto& object : m_ObjectDataVector)
+	{
+		CProperty* property = nullptr;
+		if (!CPropertyManager::Instance().Get(object.dwCRC, &property)) continue;
+		for (const char* key : {"BuildingFile", "TreeFile", "EffectFile", "DungeonBlockFile"})
+		{
+			const char* file = nullptr;
+			if (!property->GetString(key, &file) || !file || !*file) continue;
+			assetFiles.emplace_back(file);
+			if (strcmp(key, "BuildingFile") == 0) assetFiles.push_back(CFileNameHelper::NoExtension(file) + ".mdatr");
+		}
+	}
+	std::sort(assetFiles.begin(), assetFiles.end());
+	assetFiles.erase(std::unique(assetFiles.begin(), assetFiles.end()), assetFiles.end());
+	CEterPackManager::Instance().RequestReadAhead(assetFiles);
+
 
 	return true;
 }
@@ -1370,6 +1419,8 @@ void CArea::RefreshPortal()
 
 void CArea::Clear()
 {
+	m_retiring = false;
+	m_createCandidates.clear(); m_removeCandidates.clear();
 	// Real Instances
 	TObjectInstanceVector::iterator it;
 	for (it = m_ObjectInstanceVector.begin(); it != m_ObjectInstanceVector.end(); ++it)
@@ -1412,6 +1463,9 @@ void CArea::Clear()
 
 void CArea::__Clear_DestroyObjectInstance(TObjectInstance * pObjectInstance)
 {
+	MapPerformance::Scope mapProfile("object.destroy");
+	MapPerformance::Count(MapPerformance::Counter::ObjectsRemoved);
+	mapProfile.Detail("sector=(%u,%u) type=%u", m_wX, m_wY, pObjectInstance->dwType);
 #ifdef ENABLE_AREA_OPTIMIZATION
 	if (pObjectInstance->dwEffectInstanceIndex != 0)
 	{

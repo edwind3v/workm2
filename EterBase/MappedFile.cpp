@@ -41,6 +41,13 @@ LPCVOID CMappedFile::Get() const
 	return m_lpData;
 }
 
+void CMappedFile::LinkOwned(std::shared_ptr<const std::vector<BYTE>> buffer)
+{
+	Destroy();
+	m_ownedBuffer = std::move(buffer);
+	Link(static_cast<DWORD>(m_ownedBuffer->size()), m_ownedBuffer->data());
+}
+
 void CMappedFile::Link(DWORD dwBufSize, const void* c_pvBufData)
 {
 	m_dwBufLinkSize=dwBufSize;
@@ -85,6 +92,7 @@ BYTE* CMappedFile::AppendDataBlock( const void* pBlock, DWORD dwBlockSize )
 
 void CMappedFile::Destroy()
 {
+	m_ownedBuffer.reset();
 	if (m_pLZObj)
 	{
 		delete m_pLZObj;

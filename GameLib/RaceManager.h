@@ -28,6 +28,7 @@ class CRaceManager : public CSingleton<CRaceManager>
 		// Handling
 
 		BOOL GetRaceDataPointer(DWORD dwRaceIndex, CRaceData ** ppRaceData);
+		void RequestRacePreparation(DWORD race);
 
 	protected:
 		CRaceData* __LoadRaceData(DWORD dwRaceIndex);

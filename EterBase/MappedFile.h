@@ -3,6 +3,8 @@
 
 #include "lzo.h"
 #include "FileBase.h"
+#include <memory>
+#include <vector>
 
 class CMappedFile : public CFileBase
 {
@@ -19,6 +21,7 @@ public:
 	virtual ~CMappedFile();
 
 	void		Link(DWORD dwBufSize, const void* c_pvBufData);
+	void LinkOwned(std::shared_ptr<const std::vector<BYTE>> buffer);
 
 	BOOL		Create(const char* filename);
 	BOOL		Create(const char* filename, const void** dest, int offset, int size);
@@ -40,6 +43,7 @@ private:
 	void		Unmap(LPCVOID data);
 
 private:
+	std::shared_ptr<const std::vector<BYTE>> m_ownedBuffer;
 	BYTE*		m_pbBufLinkData;
 	DWORD		m_dwBufLinkSize;
 

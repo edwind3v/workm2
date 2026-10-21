@@ -5,6 +5,13 @@
 #include "../eterlib/GrpShadowTexture.h"
 
 #include "LODController.h"
+#include <memory>
+
+// Shared immutable lookup/reference ownership; animation clocks remain per actor.
+struct SSharedMotionLibrary
+{
+	std::map<DWORD, CGraphicThing::TRef> motions;
+};
 
 constexpr int DONTUSEVALUE = -1;
 class CGraphicThingInstance : public CGraphicObjectInstance
@@ -57,6 +64,7 @@ class CGraphicThingInstance : public CGraphicObjectInstance
 		void		RegisterModelThing(int iModelThing, CGraphicThing * pModelThing);
 		void		RegisterLODThing(int iModelThing, CGraphicThing * pModelThing);
 		void		RegisterMotionThing(DWORD dwMotionKey, CGraphicThing * pMotionThing);
+		void SetSharedMotionLibrary(std::shared_ptr<const SSharedMotionLibrary> library);
 
 		bool		SetModelInstance(int iDstModelInstance, int iSrcModelThing, int iSrcModel,int iSkelInstance = DONTUSEVALUE) const;
 		void		SetEndStopMotion();
@@ -144,6 +152,7 @@ class CGraphicThingInstance : public CGraphicObjectInstance
 		std::vector<CGrannyLODController *>		m_LODControllerVector;
 		std::vector<TModelThingSet>				m_modelThingSetVector;
 		std::map<DWORD, CGraphicThing::TRef *>	m_roMotionThingMap;
+		std::shared_ptr<const SSharedMotionLibrary> m_sharedMotionLibrary;
 
 	protected:
 		virtual void		OnUpdateCollisionData(const CStaticCollisionDataVector * pscdVector);

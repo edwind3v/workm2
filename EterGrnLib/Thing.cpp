@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
 #include "../eterbase/Debug.h"
 #include "Thing.h"
 #include "ThingInstance.h"
@@ -159,7 +160,7 @@ bool CGraphicThing::OnLoad(int iSize, const void * c_pvBuf)
 	if (!c_pvBuf)
 		return false;
 
-	m_pgrnFile = GrannyReadEntireFileFromMemory(iSize, (void *) c_pvBuf);
+	m_pgrnFile = MapPerformance::Measure("granny.file_decode", GetFileName(), [&] { return GrannyReadEntireFileFromMemory(iSize, (void *) c_pvBuf); });
 
 	if (!m_pgrnFile)
 		return false;
@@ -169,8 +170,8 @@ bool CGraphicThing::OnLoad(int iSize, const void * c_pvBuf)
 	if (!m_pgrnFileInfo)
 		return false;
 
-	LoadModels();
-	LoadMotions();
+	MapPerformance::Measure("granny.models_and_materials", GetFileName(), [&] { LoadModels(); });
+	MapPerformance::Measure("granny.motion_binding", GetFileName(), [&] { LoadMotions(); });
 	return true;
 }
 

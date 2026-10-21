@@ -1,4 +1,6 @@
 #include "StdAfx.h"
+#include "../EterGrnLib/ThingInstance.h"
+#include "../EterBase/MapPerformance.h"
 #include "../eterLib/ResourceManager.h"
 #include "../eterLib/AttributeInstance.h"
 #include "../eterBase/Utils.h"
@@ -278,6 +280,28 @@ BOOL CRaceData::GetBodyCollisionDataPointer(const NRaceData::TAttachingData ** c
 	return FALSE;
 }
 
+std::shared_ptr<const SSharedMotionLibrary> CRaceData::AcquireMotionLibrary()
+{
+	if (auto shared = m_motionLibrary.lock())
+	{
+		MapPerformance::Count(MapPerformance::Counter::MotionLibraryHits);
+		return shared;
+	}
+	MapPerformance::Count(MapPerformance::Counter::MotionLibraryBuilds);
+	MapPerformance::Scope profile("race.build_motion_library");
+	profile.Detail("race=%u modes=%u", m_dwRaceIndex, static_cast<unsigned>(m_pMotionModeDataMap.size()));
+	auto library = std::make_shared<SSharedMotionLibrary>();
+	for (const auto& mode : m_pMotionModeDataMap)
+		for (const auto& motion : mode.second->MotionVectorMap)
+			for (size_t variant = 0; variant < motion.second.size(); ++variant)
+			{
+				const DWORD key = MAKE_RANDOM_MOTION_KEY(mode.first, motion.first, variant);
+				library->motions[key].SetPointer(motion.second[variant].pMotion);
+			}
+	m_motionLibrary = library;
+	return library;
+}
+
 void CRaceData::SetRace(DWORD dwRaceIndex)
 {
 	m_dwRaceIndex = dwRaceIndex;
@@ -312,6 +336,7 @@ CGraphicThing* CRaceData::NEW_RegisterMotion(CRaceMotionData* pkMotionData, WORD
 	kMotion.pMotion		 = pMotionThing;
 	kMotion.pMotionData	 = pkMotionData;
 	pMotionModeData->MotionVectorMap[wMotionIndex].push_back(kMotion);
+	m_motionLibrary.reset();
 
 	return pMotionThing;
 }
@@ -577,6 +602,7 @@ void CRaceData::Destroy()
 void CRaceData::__Initialize()
 {
 	m_strMotionListFileName = "motlist.txt";
+	m_motionLibrary.reset();
 
 	m_pBaseModelThing = nullptr;
 	m_pLODModelThing = nullptr;

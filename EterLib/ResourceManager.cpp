@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
 #include <io.h>
 #include "../eterBase/CRC32.h"
 #include "../eterBase/Timer.h"
@@ -490,7 +491,7 @@ void CResourceManager::Update()
 			if (pResource->canDestroy())
 			{
 				//Tracef("Resource Clear %s\n", pResource->GetFileName());
-				pResource->Clear();
+				MapPerformance::Measure("resource.destroy", pResource->GetFileName(), [&] { pResource->Clear(); });
 			}
 
 			itor = m_ResourceDeletingMap.erase(itor);

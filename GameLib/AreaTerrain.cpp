@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
 #include "../PRTerrainLib/StdAfx.h"
 
 #include "../eterLib/ResourceManager.h"
@@ -22,6 +23,8 @@ CTerrain* CTerrain::New()
 
 void CTerrain::Delete(CTerrain* pkTerrain)
 {
+	MapPerformance::Scope mapProfile("map.terrain_destroy");
+	mapProfile.Detail("sector=(%u,%u)", pkTerrain->m_wX, pkTerrain->m_wY);
 	pkTerrain->Clear();
 	ms_kPool.Free(pkTerrain);
 }
@@ -45,6 +48,31 @@ void CTerrain::SetMapOutDoor(CMapOutdoor * pOwnerOutdoorMap)
 	m_pOwnerOutdoorMap=pOwnerOutdoorMap;
 }
 
+bool CTerrain::ClearStep(unsigned units)
+{
+	MapPerformance::Scope profile("map.terrain_cleanup_step");
+	SetReady(false);
+	const unsigned textures = GetBlendMaskCount();
+	const unsigned total = textures + GetGeometryPatchCount();
+	while (units-- && m_cleanupCursor < total)
+	{
+		const unsigned part = m_cleanupCursor++;
+		if (part < textures)
+		{
+			if (m_lpAlphaTexture[part]) { m_lpAlphaTexture[part]->Release(); m_lpAlphaTexture[part] = nullptr; }
+			m_TerrainSplatPatch.Splats[part].pd3dTexture = nullptr;
+		}
+		else
+		{
+			const unsigned patch = part - textures;
+			m_TerrainPatchList[patch].Clear();
+		}
+	}
+	if (m_cleanupCursor < total) return false;
+	m_ShadowGraphicImageInstance.Destroy(); m_MiniMapGraphicImageInstance.Destroy();
+	Clear(); return true;
+}
+
 void CTerrain::Clear()
 {
 	DeallocateMarkedSplats();
@@ -54,6 +82,7 @@ void CTerrain::Clear()
 
 bool CTerrain::Initialize()
 {
+	m_cleanupCursor = 0;
 	SetReady(false);
 	m_strName = "";
 	m_wX = m_wY = 0xFFFF;
@@ -561,6 +590,8 @@ void CTerrain::RAW_DeallocateSplats(bool bBGLoading)
 
 void CTerrain::RAW_AllocateSplats(bool bBGLoading)
 {
+	MapPerformance::Scope mapProfile("terrain.build_blend_masks");
+	mapProfile.Detail("sector=(%u,%u)", m_wX, m_wY);
 	RAW_DeallocateSplats(bBGLoading);
 	const DWORD dwTexCount = GetTextureSet()->GetTextureCount();
 
@@ -631,7 +662,7 @@ void CTerrain::RAW_CountTiles()
 	}
 }
 
-void CTerrain::RAW_GenerateSplat(bool bBGLoading)
+void CTerrain::RAW_GenerateSplat(bool bBGLoading, DWORD first, DWORD end)
 {
 	if (!m_TerrainSplatPatch.m_bNeedsUpdate)
 		return;
@@ -641,7 +672,7 @@ void CTerrain::RAW_GenerateSplat(bool bBGLoading)
 	BYTE abyAlphaMap[SPLATALPHA_RAW_XSIZE * SPLATALPHA_RAW_YSIZE];
 	BYTE * aptr;
 
-	for (DWORD i = 1; i < GetTextureSet()->GetTextureCount(); ++i)
+	for (DWORD i = first; i < (std::min)(end, GetTextureSet()->GetTextureCount()); ++i)
 	{
 		TTerainSplat & rSplat = m_TerrainSplatPatch.Splats[i];
 
@@ -902,6 +933,30 @@ void CTerrain::SetCoordinate(WORD wCoordX, WORD wCoordY)
 {
 	m_wX = wCoordX;
 	m_wY = wCoordY;
+}
+
+bool CTerrain::LoadTileMapDeferred(const char* filename)
+{
+	if (!CTerrainImpl::RAW_LoadTileMap(filename)) return false;
+	RAW_DeallocateSplats();
+	RAW_CountTiles();
+	for (DWORD i = 1; i < GetBlendMaskCount(); ++i) m_TerrainSplatPatch.Splats[i].NeedsUpdate = 1;
+	return true;
+}
+
+void CTerrain::PrepareBlendMask(DWORD index)
+{
+	MapPerformance::Scope profile("stream.terrain_blend_mask");
+	profile.Detail("sector=(%u,%u) mask=%u", m_wX, m_wY, index);
+	m_TerrainSplatPatch.m_bNeedsUpdate = true;
+	RAW_GenerateSplat(false, index, index + 1);
+}
+
+void CTerrain::PrepareGeometryPatch(DWORD index)
+{
+	MapPerformance::Scope profile("stream.terrain_geometry_patch");
+	if (index < GetGeometryPatchCount())
+		_CalculateTerrainPatch(static_cast<BYTE>(index % PATCH_XCOUNT), static_cast<BYTE>(index / PATCH_XCOUNT));
 }
 
 void CTerrain::CalculateTerrainPatch()

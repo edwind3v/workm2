@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
 #include "../EffectLib/EffectManager.h"
 #include "FlyingObjectManager.h"
 #include "RaceMotionData.h"
@@ -321,9 +322,10 @@ void CRaceMotionData::SetAccumulationPosition(const TPixelPosition & c_rPos)
 
 bool CRaceMotionData::LoadMotionData(const char * c_szFileName)
 {
+	MapPerformance::Scope profile("race.motion_metadata", c_szFileName);
 	const float c_fFrameTime = 1.0f / g_fGameFPS;
 
-	CTextFileLoader* pkTextFileLoader=CTextFileLoader::Cache(c_szFileName);
+	const auto pkTextFileLoader = CTextFileLoader::AcquireCached(c_szFileName);
 	if (!pkTextFileLoader)
 		return false;
 
@@ -574,6 +576,7 @@ bool CRaceMotionData::SaveMotionData(const char * c_szFileName)
 #endif
 bool CRaceMotionData::LoadSoundScriptData(const char * c_szFileName)
 {
+	MapPerformance::Scope profile("race.sound_metadata", c_szFileName);
 	NSound::TSoundDataVector SoundDataVector;
 	if (!NSound::LoadSoundInformationPiece(c_szFileName, SoundDataVector))
 	{

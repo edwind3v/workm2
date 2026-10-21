@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
 #include "../eterLib/ResourceManager.h"
 
 #include "RaceData.h"
@@ -9,9 +10,10 @@
 #define ENABLE_SKIN_EXTENDED
 BOOL CRaceData::LoadRaceData(const char * c_szFileName)
 {
-	CTextFileLoader TextFileLoader;
-	if (!TextFileLoader.Load(c_szFileName))
-		return FALSE;
+	MapPerformance::Scope profile("race.shape_metadata", c_szFileName);
+	const auto parsed = CTextFileLoader::AcquireCached(c_szFileName);
+	if (!parsed) return FALSE;
+	CTextFileLoader& TextFileLoader = *parsed;
 
 	TextFileLoader.SetTop();
 

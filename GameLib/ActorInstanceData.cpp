@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
 #include "ActorInstance.h"
 #include "RaceManager.h"
 #include "ItemManager.h"
@@ -55,6 +56,8 @@ DWORD CActorInstance::GetRace() const
 
 bool CActorInstance::SetRace(DWORD eRace)
 {
+	MapPerformance::Scope profile("actor.set_race");
+	profile.Detail("race=%u", eRace);
 	CRaceData * pRaceData;
 	if (!CRaceManager::Instance().GetRaceDataPointer(eRace, &pRaceData))
 	{
@@ -90,31 +93,7 @@ bool CActorInstance::SetRace(DWORD eRace)
 		CGraphicThingInstance::ReserveModelInstance(1);
 	}
 
-	CRaceData::TMotionModeDataIterator itor;
-
-	if (pRaceData->CreateMotionModeIterator(itor))
-	{
-		do
-		{
-			const WORD wMotionMode = itor->first;
-			CRaceData::TMotionModeData * pMotionModeData = itor->second;
-
-			auto itorMotion = pMotionModeData->MotionVectorMap.begin();
-			for (; itorMotion != pMotionModeData->MotionVectorMap.end(); ++itorMotion)
-			{
-				const WORD wMotionIndex = itorMotion->first;
-				const CRaceData::TMotionVector & c_rMotionVector = itorMotion->second;
-				CRaceData::TMotionVector::const_iterator it;
-				DWORD i;
-				for (i = 0, it = c_rMotionVector.begin(); it != c_rMotionVector.end(); ++i, ++it)
-				{
-					const DWORD dwMotionKey = MAKE_RANDOM_MOTION_KEY(wMotionMode, wMotionIndex, i);
-					CGraphicThingInstance::RegisterMotionThing(dwMotionKey, it->pMotion);
-				}
-			}
-		}
-		while (pRaceData->NextMotionModeIterator(itor));
-	}
+	CGraphicThingInstance::SetSharedMotionLibrary(pRaceData->AcquireMotionLibrary());
 
 	return true;
 }

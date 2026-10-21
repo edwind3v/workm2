@@ -1,4 +1,6 @@
 #include "StdAfx.h"
+#include "../GameLib/RaceManager.h"
+#include "../EterBase/MapPerformance.h"
 #include "NetworkActorManager.h"
 #include "PythonCharacterManager.h"
 #include "PythonItem.h"
@@ -337,6 +339,8 @@ void CNetworkActorManager::__RemoveCharacterManagerActor(SNetworkActorData& rkNe
 
 CInstanceBase* CNetworkActorManager::__AppendCharacterManagerActor(SNetworkActorData& rkNetActorData)
 {
+	MapPerformance::Scope profile("actor.create_from_packet");
+	profile.Detail("vid=%u race=%u", rkNetActorData.m_dwVID, rkNetActorData.m_dwRace);
 	Lognf(0, "CNetworkActorManager::__AppendCharacterManagerActor(%d, %s)", rkNetActorData.m_dwVID, rkNetActorData.m_stName.c_str());
 
 	const DWORD dwVID=rkNetActorData.m_dwVID;
@@ -447,6 +451,8 @@ void CNetworkActorManager::AppendActor(const SNetworkActorData& c_rkNetActorData
 		if (!__AppendCharacterManagerActor(rkNetActorData))
 			m_kNetActorDict.erase(c_rkNetActorData.m_dwVID);
 	}
+	else
+		CRaceManager::Instance().RequestRacePreparation(rkNetActorData.m_dwRace);
 }
 
 void CNetworkActorManager::RemoveActor(DWORD dwVID)

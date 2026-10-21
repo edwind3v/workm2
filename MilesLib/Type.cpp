@@ -19,7 +19,7 @@ bool NSound::LoadSoundInformationPiece(const char * c_szFileName, NSound::TSound
 	std::string strResult;
 	strResult = c_szFileName;
 
-	CTextFileLoader* pkTextFileLoader=CTextFileLoader::Cache(c_szFileName);
+	const auto pkTextFileLoader = CTextFileLoader::AcquireCached(c_szFileName);
 	if (!pkTextFileLoader)
 		return false;
 

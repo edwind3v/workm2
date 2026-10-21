@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include <mutex>
 #include <stdlib.h>
 #include <lzo/lzoLibLink.h>
 
@@ -20,12 +21,13 @@ public:
 	{
 		std::vector<BYTE*>::iterator i;
 		for (i = m_freeVector.begin(); i != m_freeVector.end(); ++i)
-			delete *i;
+			delete [] *i;
 
 		m_freeVector.clear();
 	}
 	BYTE* Alloc(unsigned capacity)
 	{
+		std::lock_guard<std::mutex> lock(m_mutex);
 		assert(capacity > 0);
 		if (capacity < REUSING_CAPACITY)
 		{
@@ -47,6 +49,7 @@ public:
 	}
 	void Free(BYTE* ptr, unsigned capacity)
 	{
+		std::lock_guard<std::mutex> lock(m_mutex);
 		assert(ptr != nullptr);
 		assert(capacity > 0);
 		if (capacity < REUSING_CAPACITY)
@@ -60,6 +63,7 @@ public:
 		delete [] ptr;
 	}
 private:
+	std::mutex m_mutex;
 	std::vector<BYTE*> m_freeVector;
 } gs_freeMemMgr;
 

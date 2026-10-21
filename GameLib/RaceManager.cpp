@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
 #include "RaceManager.h"
 #include "RaceMotionData.h"
 #include "../EterPack/EterPackManager.h"
@@ -132,6 +133,8 @@ void __GetRaceResourcePathes(unsigned race, std::vector <std::string> & vec_stPa
 
 CRaceData * CRaceManager::__LoadRaceData(DWORD dwRaceIndex)
 {
+	MapPerformance::Scope profile("race.load_definition");
+	profile.Detail("race=%u", dwRaceIndex);
 	const auto fRaceName=m_kMap_dwRaceKey_stRaceName.find(dwRaceIndex);
 	if (m_kMap_dwRaceKey_stRaceName.end()==fRaceName)
 		return nullptr;
@@ -404,6 +407,35 @@ void CRaceManager::SelectRace(DWORD dwRaceIndex)
 CRaceData * CRaceManager::GetSelectedRaceDataPointer() const
 {
 	return m_pSelectedRaceData;
+}
+
+void CRaceManager::RequestRacePreparation(DWORD race)
+{
+	if (m_RaceDataMap.find(race) != m_RaceDataMap.end()) return;
+	const auto found = m_kMap_dwRaceKey_stRaceName.find(race);
+	if (found == m_kMap_dwRaceKey_stRaceName.end() || found->second.empty()) return;
+	const auto& name = found->second;
+	std::vector<std::string> files;
+	if (name[0] == '#')
+	{
+		files.push_back(name.substr(1) + "shape.msm");
+		files.push_back(name.substr(1) + "motlist.txt");
+	}
+	else
+	{
+		std::vector<std::string> paths; __GetRaceResourcePathes(race, paths);
+		for (auto directory : paths)
+		{
+			const auto alias = m_kMap_stRaceName_stSrcName.find(name);
+			directory += alias == m_kMap_stRaceName_stSrcName.end() ? name : alias->second;
+			directory += '/';
+			const bool seasonal = directory[0] == '#';
+			if (seasonal) directory.erase(0, 1);
+			files.push_back(directory + (seasonal ? "shape.msm" : name + ".msm"));
+			files.push_back(directory + "motlist.txt");
+		}
+	}
+	CEterPackManager::Instance().RequestReadAhead(files);
 }
 
 BOOL CRaceManager::GetRaceDataPointer(DWORD dwRaceIndex, CRaceData ** ppRaceData)

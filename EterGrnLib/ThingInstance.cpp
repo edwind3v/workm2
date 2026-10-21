@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
 #include "../eterbase/Debug.h"
 #include "../eterlib/Camera.h"
 #include "../eterBase/Timer.h"
@@ -221,28 +222,41 @@ bool CGraphicThingInstance::CheckModelThingIndex(int iModelThing) const
 	return true;
 }
 
-bool CGraphicThingInstance::CheckMotionThingIndex(DWORD dwMotionKey)
+bool CGraphicThingInstance::CheckMotionThingIndex(DWORD key)
 {
-	const auto itor = m_roMotionThingMap.find(dwMotionKey);
-
-	if (m_roMotionThingMap.end() == itor)
-		return false;
-
-	return true;
+	return m_roMotionThingMap.find(key) != m_roMotionThingMap.end() ||
+		(m_sharedMotionLibrary && m_sharedMotionLibrary->motions.find(key) != m_sharedMotionLibrary->motions.end());
 }
 
-bool CGraphicThingInstance::GetMotionThingPointer(DWORD dwKey, CGraphicThing ** ppMotion)
+bool CGraphicThingInstance::GetMotionThingPointer(DWORD key, CGraphicThing** motion)
 {
-	if (!CheckMotionThingIndex(dwKey))
-		return false;
-
-	*ppMotion = m_roMotionThingMap[dwKey]->GetPointer();
-	return true;
+	const auto local = m_roMotionThingMap.find(key);
+	if (local != m_roMotionThingMap.end())
+	{
+		*motion = local->second->GetPointer();
+		return *motion != nullptr;
+	}
+	if (m_sharedMotionLibrary)
+	{
+		const auto shared = m_sharedMotionLibrary->motions.find(key);
+		if (shared != m_sharedMotionLibrary->motions.end())
+		{
+			*motion = shared->second.GetPointer();
+			return *motion != nullptr;
+		}
+	}
+	*motion = nullptr;
+	return false;
 }
 
 bool CGraphicThingInstance::IsMotionThing() const
 {
-	return !m_roMotionThingMap.empty();
+	return !m_roMotionThingMap.empty() || (m_sharedMotionLibrary && !m_sharedMotionLibrary->motions.empty());
+}
+
+void CGraphicThingInstance::SetSharedMotionLibrary(std::shared_ptr<const SSharedMotionLibrary> library)
+{
+	m_sharedMotionLibrary = std::move(library);
 }
 
 void CGraphicThingInstance::ReserveModelInstance(int iCount)
@@ -345,6 +359,7 @@ bool CGraphicThingInstance::GetBonePosition(int iModelIndex, int iBoneIndex, flo
 }
 bool CGraphicThingInstance::SetModelInstance(int iDstModelInstance, int iSrcModelThing, int iSrcModel,int iSkelInstance) const
 {
+	MapPerformance::Scope profile("actor.bind_model_instance");
 	if (!CheckModelInstanceIndex(iDstModelInstance))
 	{
 		TraceError("CGraphicThingInstance::SetModelInstance(iDstModelInstance=%d, pModelThing=%d, iSrcModel=%d)\n", iDstModelInstance, iSrcModelThing, iSrcModel);
@@ -454,14 +469,8 @@ void CGraphicThingInstance::SetSpecularInfo(UINT ePart, const char* c_szMtrlName
 
 bool CGraphicThingInstance::SetMotion(DWORD dwMotionKey, float blendTime, int loopCount, float speedRatio)
 {
-	if (!CheckMotionThingIndex(dwMotionKey))
-		return false;
-
-	const auto itor = m_roMotionThingMap.find(dwMotionKey);
-	const CGraphicThing::TRef * proMotionThing = itor->second;
-	const CGraphicThing * pMotionThing = proMotionThing->GetPointer();
-
-	if (!pMotionThing)
+	CGraphicThing* pMotionThing = nullptr;
+	if (!GetMotionThingPointer(dwMotionKey, &pMotionThing))
 		return false;
 
 	if (!pMotionThing->CheckMotionIndex(0))
@@ -479,14 +488,8 @@ bool CGraphicThingInstance::SetMotion(DWORD dwMotionKey, float blendTime, int lo
 
 bool CGraphicThingInstance::ChangeMotion(DWORD dwMotionKey, int loopCount, float speedRatio)
 {
-	if (!CheckMotionThingIndex(dwMotionKey))
-		return false;
-
-	const auto itor = m_roMotionThingMap.find(dwMotionKey);
-	const CGraphicThing::TRef * proMotionThing = itor->second;
-	const CGraphicThing * pMotionThing = proMotionThing->GetPointer();
-
-	if (!pMotionThing)
+	CGraphicThing* pMotionThing = nullptr;
+	if (!GetMotionThingPointer(dwMotionKey, &pMotionThing))
 		return false;
 
 	if (!pMotionThing->CheckMotionIndex(0))
@@ -530,9 +533,9 @@ void CGraphicThingInstance::RegisterLODThing(int iModelThing, CGraphicThing * pM
 
 void CGraphicThingInstance::RegisterMotionThing(DWORD dwMotionKey, CGraphicThing* pMotionThing)
 {
-	auto pMotionRef = new CGraphicThing::TRef;
-	pMotionRef->SetPointer(pMotionThing);
-	m_roMotionThingMap.insert(std::map<DWORD, CGraphicThing::TRef *>::value_type(dwMotionKey, pMotionRef));
+	auto& reference = m_roMotionThingMap[dwMotionKey];
+	if (!reference) reference = new CGraphicThing::TRef;
+	reference->SetPointer(pMotionThing);
 }
 
 void CGraphicThingInstance::ResetLocalTime()
@@ -1007,6 +1010,7 @@ void CGraphicThingInstance::OnClear()
 {
 	stl_wipe(m_LODControllerVector);
 	stl_wipe_second(m_roMotionThingMap);
+	m_sharedMotionLibrary.reset();
 
 	for (DWORD d = 0; d < m_modelThingSetVector.size(); ++d)
 		m_modelThingSetVector[d].Clear();

@@ -1,4 +1,8 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
+#include <cctype>
+#include <mutex>
+namespace { std::mutex groupNodePoolMutex; }
 #include "../eterBase/CRC32.h"
 #include <string>
 #include "../eterPack/EterPackManager.h"
@@ -67,11 +71,13 @@ void CTextFileLoader::SGroupNode::SetGroupName(const std::string& c_rstGroupName
 
 CTextFileLoader::SGroupNode* CTextFileLoader::SGroupNode::New()
 {
+	std::lock_guard<std::mutex> lock(groupNodePoolMutex);
 	return ms_kPool.Alloc();
 }
 
 void CTextFileLoader::SGroupNode::Delete(SGroupNode* pkNode)
 {
+	std::lock_guard<std::mutex> lock(groupNodePoolMutex);
 	pkNode->m_kMap_dwKey_kVct_stToken.clear();
 	pkNode->ChildNodeVector.clear();
 	pkNode->m_strGroupName="";
@@ -82,6 +88,74 @@ void CTextFileLoader::SGroupNode::Delete(SGroupNode* pkNode)
 void CTextFileLoader::SGroupNode::DestroySystem()
 {
 	ms_kPool.Destroy();
+}
+
+namespace
+{
+struct SMetadataEntry
+{
+	std::shared_ptr<CTextFileLoader> loader;
+	size_t bytes = 0;
+	unsigned lastUse = 0;
+};
+// Parser cursors and pooled nodes are engine-thread owned. The startup loader
+// has its own cache, destroyed when that worker exits, before engine teardown.
+thread_local std::map<std::string, SMetadataEntry> metadataCache;
+thread_local size_t metadataBytes = 0;
+}
+
+size_t CTextFileLoader::GetMemoryCost() const
+{
+	size_t bytes = sizeof(*this) + m_dwBufCapacity;
+	auto countNode = [&](const TGroupNode& node) {
+		bytes += sizeof(node) + node.ChildNodeVector.capacity() * sizeof(void*);
+		for (const auto& tokens : node.m_kMap_dwKey_kVct_stToken)
+		{
+			bytes += 64 + tokens.second.capacity() * sizeof(std::string);
+			for (const auto& token : tokens.second) bytes += token.capacity();
+		}
+	};
+	countNode(m_GlobalNode);
+	for (const auto* node : m_kVct_pkNode) countNode(*node);
+	return bytes;
+}
+
+std::shared_ptr<CTextFileLoader> CTextFileLoader::AcquireCached(const char* filename)
+{
+	std::string key = filename;
+	for (auto& c : key) c = c == '\\' ? '/' : static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+	const unsigned now = GetTickCount();
+	auto found = metadataCache.find(key);
+	if (found != metadataCache.end() && found->second.loader.use_count() == 1)
+	{
+		found->second.lastUse = now;
+		found->second.loader->SetTop();
+		MapPerformance::Count(MapPerformance::Counter::MetadataHits);
+		return found->second.loader;
+	}
+	MapPerformance::Count(MapPerformance::Counter::MetadataMisses);
+	MapPerformance::Scope profile("metadata.parse", filename);
+	auto loader = std::make_shared<CTextFileLoader>();
+	if (!loader->Load(filename)) return {};
+	// A reentrant caller gets a private cursor instead of resetting a live one.
+	if (found != metadataCache.end()) return loader;
+	constexpr size_t budget = 8u * 1024u * 1024u;
+	const size_t cost = loader->GetMemoryCost();
+	if (cost > budget) return loader;
+	while (!metadataCache.empty() && (metadataBytes + cost > budget || metadataCache.size() >= 384))
+	{
+		auto victim = metadataCache.end();
+		unsigned oldest = 0;
+		for (auto it = metadataCache.begin(); it != metadataCache.end(); ++it)
+			if (it->second.loader.use_count() == 1 && (victim == metadataCache.end() || now - it->second.lastUse > oldest))
+			{ victim = it; oldest = now - it->second.lastUse; }
+		if (victim == metadataCache.end()) return loader;
+		metadataBytes -= victim->second.bytes;
+		metadataCache.erase(victim);
+	}
+	metadataCache.emplace(key, SMetadataEntry{loader, cost, now});
+	metadataBytes += cost;
+	return loader;
 }
 
 CTextFileLoader* CTextFileLoader::Cache(const char* c_szFileName)
@@ -116,6 +190,8 @@ void CTextFileLoader::SetCacheMode()
 
 void CTextFileLoader::DestroySystem()
 {
+	metadataCache.clear();
+	metadataBytes = 0;
 	{
 		std::map<DWORD, CTextFileLoader*>::iterator i;
 		for (i=ms_kMap_dwNameKey_pkTextFileLoader.begin(); i!=ms_kMap_dwNameKey_pkTextFileLoader.end(); ++i)

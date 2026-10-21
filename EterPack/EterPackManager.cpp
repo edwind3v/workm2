@@ -4,6 +4,7 @@
 #include <assert.h>
 
 #include "EterPackManager.h"
+#include "ReadAhead.h"
 #include "EterPackPolicy_CSHybridCrypt.h"
 
 #include "../eterBase/Debug.h"
@@ -40,6 +41,10 @@ CEterPack* CEterPackManager::FindPack(const char* c_szPathName)
 
 	return nullptr;
 }
+
+void CEterPackManager::RequestReadAhead(const std::vector<std::string>& files) { m_readAhead->Request(files); }
+bool CEterPackManager::IsReadAheadReady(const char* filename) { return m_readAhead->Ready(filename); }
+void CEterPackManager::ClearReadAhead() { if (m_readAhead) m_readAhead->Clear(); }
 
 void CEterPackManager::SetCacheMode()
 {
@@ -154,6 +159,7 @@ struct TimeChecker
 
 bool CEterPackManager::Get(CMappedFile & rMappedFile, const char * c_szFileName, LPCVOID * pData)
 {
+	if (!CReadAheadFileCache::IsWorker() && m_readAhead && m_readAhead->TryGet(rMappedFile, c_szFileName, pData)) return true;
 	//TimeChecker timeChecker(c_szFileName);
 	//Logf(1, "Load %s\n", c_szFileName);
 	if (m_iSearchMode == SEARCH_FILE_FIRST)
@@ -297,6 +303,8 @@ const char * CEterPackManager::GetRootPackFileName() const
 
 bool CEterPackManager::DecryptPackIV(DWORD dwPanamaKey)
 {
+	FinderLock lock(m_csFinder);
+	ClearReadAhead();
 	auto itor = m_PackMap.begin();
 	while (itor != m_PackMap.end())
 	{
@@ -361,6 +369,7 @@ bool CEterPackManager::RegisterPack(const char * c_szName, const char * c_szDire
 
 void CEterPackManager::SetSearchMode(bool bPackFirst)
 {
+	ClearReadAhead();
 	m_iSearchMode = bPackFirst ? SEARCH_PACK_FIRST : SEARCH_FILE_FIRST;
 }
 
@@ -372,10 +381,12 @@ int CEterPackManager::GetSearchMode() const
 CEterPackManager::CEterPackManager() : m_bTryRelativePath(false), m_iSearchMode(SEARCH_FILE_FIRST), m_isCacheMode(false)
 {
 	InitializeCriticalSection(&m_csFinder);
+	m_readAhead = std::make_unique<CReadAheadFileCache>(*this);
 }
 
 CEterPackManager::~CEterPackManager()
 {
+	m_readAhead.reset();
 	__ClearCacheMap();
 
 	auto i = m_PackMap.begin();
@@ -390,6 +401,8 @@ CEterPackManager::~CEterPackManager()
 
 void CEterPackManager::RetrieveHybridCryptPackKeys(const BYTE *pStream)
 {
+	FinderLock lock(m_csFinder);
+	ClearReadAhead();
 	////dump file format
 	//total packagecnt (4byte)
 	//	for	packagecntpackage
@@ -438,6 +451,8 @@ void CEterPackManager::RetrieveHybridCryptPackKeys(const BYTE *pStream)
 
 void CEterPackManager::RetrieveHybridCryptPackSDB( const BYTE* pStream )
 {
+	FinderLock lock(m_csFinder);
+	ClearReadAhead();
 	//cnt
 	//for cnt
 	//DWORD				dwPackageIdentifier;

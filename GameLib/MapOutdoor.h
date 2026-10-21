@@ -13,6 +13,8 @@
 #include "Area.h"
 #include "AreaTerrain.h"
 #include "AreaLoaderThread.h"
+#include "../EterBase/FrameWorkBudget.h"
+#include <deque>
 
 #include "MonsterAreaInfo.h"
 
@@ -160,6 +162,19 @@ class CMapOutdoor : public CMapBase
 		virtual bool	LoadTerrain(WORD wTerrainCoordX, WORD wTerrainCoordY, WORD wCellCoordX, WORD wCellCoordY);
 		virtual bool	LoadArea(WORD wAreaCoordX, WORD wAreaCoordY, WORD wCellCoordX, WORD wCellCoordY);
 		virtual void	UpdateAreaList(long lCenterX, long lCenterY);
+		struct STerrainPreparation
+		{
+			WORD x = 0, y = 0;
+			CTerrain* terrain = nullptr;
+			unsigned stage = 0, part = 0;
+			bool failed = false;
+			std::string directory;
+		};
+		std::deque<STerrainPreparation> m_terrainPreparation;
+		void UpdateStreaming(const D3DXVECTOR3& player);
+		void CancelStreaming();
+		bool AdvanceTerrainPreparation(STerrainPreparation& task, bool required);
+		void RequestSectorFiles(WORD x, WORD y);
 		bool			isTerrainLoaded(WORD wX, WORD wY) const;
 		bool			isAreaLoaded(WORD wX, WORD wY) const;
 

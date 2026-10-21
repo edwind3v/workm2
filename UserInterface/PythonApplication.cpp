@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
 #include "../eterBase/Error.h"
 #include "../eterlib/Camera.h"
 #include "../eterlib/AttributeInstance.h"
@@ -210,6 +211,7 @@ bool PERF_CHECKER_RENDER_GAME = false;
 
 void CPythonApplication::RenderGame()
 {
+	MapPerformance::Scope mapProfile("game.render");
 	if (!PERF_CHECKER_RENDER_GAME)
 	{
 		const float fAspect=m_kWndMgr.GetAspect();
@@ -217,11 +219,11 @@ void CPythonApplication::RenderGame()
 
 		m_pyGraphic.SetPerspective(30.0f, fAspect, 100.0, fFarClip);
 
-		CCullingManager::Instance().Process();
+		MapPerformance::Measure("render.culling", nullptr, [&] { CCullingManager::Instance().Process(); });
 
-		m_kChrMgr.Deform();
+		MapPerformance::Measure("render.character_deform", nullptr, [&] { m_kChrMgr.Deform(); });
 
-		m_pyBackground.RenderCharacterShadowToTexture();
+		MapPerformance::Measure("render.character_shadows", nullptr, [&] { m_pyBackground.RenderCharacterShadowToTexture(); });
 
 		m_pyGraphic.SetGameRenderState();
 		m_pyGraphic.PushState();
@@ -239,24 +241,24 @@ void CPythonApplication::RenderGame()
 		m_pyBackground.RenderCloud();
 
 		m_pyBackground.BeginEnvironment();
-		m_pyBackground.Render();
+		MapPerformance::Measure("render.terrain_and_objects", nullptr, [&] { m_pyBackground.Render(); });
 
 		m_pyBackground.SetCharacterDirLight();
-		m_kChrMgr.Render();
+		MapPerformance::Measure("render.characters", nullptr, [&] { m_kChrMgr.Render(); });
 
 		m_pyBackground.SetBackgroundDirLight();
-		m_pyBackground.RenderWater();
+		MapPerformance::Measure("render.water", nullptr, [&] { m_pyBackground.RenderWater(); });
 		m_pyBackground.RenderSnow();
-		m_pyBackground.RenderEffect();
+		MapPerformance::Measure("render.map_effects", nullptr, [&] { m_pyBackground.RenderEffect(); });
 
 		m_pyBackground.EndEnvironment();
 
-		m_kEftMgr.Render();
+		MapPerformance::Measure("render.effects", nullptr, [&] { m_kEftMgr.Render(); });
 		m_pyItem.Render();
 		m_FlyingManager.Render();
 
 		m_pyBackground.BeginEnvironment();
-		m_pyBackground.RenderPCBlocker();
+		MapPerformance::Measure("render.blockers", nullptr, [&] { m_pyBackground.RenderPCBlocker(); });
 		m_pyBackground.EndEnvironment();
 
 		m_pyBackground.RenderAfterLensFlare();
@@ -265,10 +267,10 @@ void CPythonApplication::RenderGame()
 	}
 
 	const DWORD t1=ELTimer_GetMSec();
-	m_kChrMgr.Deform();
+	MapPerformance::Measure("render.character_deform", nullptr, [&] { m_kChrMgr.Deform(); });
 	const DWORD t2=ELTimer_GetMSec();
 	const DWORD t3=ELTimer_GetMSec();
-	m_pyBackground.RenderCharacterShadowToTexture();
+	MapPerformance::Measure("render.character_shadows", nullptr, [&] { m_pyBackground.RenderCharacterShadowToTexture(); });
 	const DWORD t4=ELTimer_GetMSec();
 
 	m_pyGraphic.SetGameRenderState();
@@ -281,7 +283,7 @@ void CPythonApplication::RenderGame()
 
 	const DWORD t5=ELTimer_GetMSec();
 
-	CCullingManager::Instance().Process();
+	MapPerformance::Measure("render.culling", nullptr, [&] { CCullingManager::Instance().Process(); });
 
 	const DWORD t6=ELTimer_GetMSec();
 
@@ -298,27 +300,27 @@ void CPythonApplication::RenderGame()
 	m_pyBackground.RenderCloud();
 	const DWORD t9=ELTimer_GetMSec();
 	m_pyBackground.BeginEnvironment();
-	m_pyBackground.Render();
+	MapPerformance::Measure("render.terrain_and_objects", nullptr, [&] { m_pyBackground.Render(); });
 
 	m_pyBackground.SetCharacterDirLight();
 	const DWORD t10=ELTimer_GetMSec();
-	m_kChrMgr.Render();
+	MapPerformance::Measure("render.characters", nullptr, [&] { m_kChrMgr.Render(); });
 	const DWORD t11=ELTimer_GetMSec();
 
 	m_pyBackground.SetBackgroundDirLight();
-	m_pyBackground.RenderWater();
+	MapPerformance::Measure("render.water", nullptr, [&] { m_pyBackground.RenderWater(); });
 	const DWORD t12=ELTimer_GetMSec();
-	m_pyBackground.RenderEffect();
+	MapPerformance::Measure("render.map_effects", nullptr, [&] { m_pyBackground.RenderEffect(); });
 	const DWORD t13=ELTimer_GetMSec();
 	m_pyBackground.EndEnvironment();
-	m_kEftMgr.Render();
+	MapPerformance::Measure("render.effects", nullptr, [&] { m_kEftMgr.Render(); });
 	const DWORD t14=ELTimer_GetMSec();
 	m_pyItem.Render();
 	const DWORD t15=ELTimer_GetMSec();
 	m_FlyingManager.Render();
 	const DWORD t16=ELTimer_GetMSec();
 	m_pyBackground.BeginEnvironment();
-	m_pyBackground.RenderPCBlocker();
+	MapPerformance::Measure("render.blockers", nullptr, [&] { m_pyBackground.RenderPCBlocker(); });
 	m_pyBackground.EndEnvironment();
 	const DWORD t17=ELTimer_GetMSec();
 	m_pyBackground.RenderAfterLensFlare();
@@ -357,6 +359,7 @@ void CPythonApplication::RenderGame()
 
 void CPythonApplication::UpdateGame()
 {
+	MapPerformance::Scope mapProfile("game.update");
 	const DWORD t1=ELTimer_GetMSec();
 	POINT ptMouse;
 	GetMousePosition(&ptMouse);
@@ -380,7 +383,7 @@ void CPythonApplication::UpdateGame()
 	m_pyPlayer.NEW_GetMainActorPosition(&kPPosMainActor);
 
 	const DWORD t4=ELTimer_GetMSec();
-	m_pyBackground.Update(kPPosMainActor.x, kPPosMainActor.y, kPPosMainActor.z);
+	MapPerformance::Measure("game.background_update", nullptr, [&] { m_pyBackground.Update(kPPosMainActor.x, kPPosMainActor.y, kPPosMainActor.z); });
 #ifdef ENABLE_AREA_OPTIMIZATION
 	CPythonNetworkStream::Instance().TryRefreshHeightsAfterWarp();
 #endif
@@ -390,9 +393,9 @@ void CPythonApplication::UpdateGame()
 	m_GameEventManager.Update();
 
 	const DWORD t6=ELTimer_GetMSec();
-	m_kChrMgr.Update();
+	MapPerformance::Measure("game.characters_update", nullptr, [&] { m_kChrMgr.Update(); });
 	const DWORD t7=ELTimer_GetMSec();
-	m_kEftMgr.Update(); //@fixme029
+	MapPerformance::Measure("game.effects_update", nullptr, [&] { m_kEftMgr.Update(); }); //@fixme029
 	m_kEftMgr.UpdateSound();
 	const DWORD t8=ELTimer_GetMSec();
 	m_FlyingManager.Update();
@@ -565,6 +568,7 @@ bool CPythonApplication::Process()
 			}
 		}
 	}
+	MapPerformance::Frame mapProfileFrame;
 	ELTimer_SetFrameMSec();
 
 	// 	m_Profiler.Clear();
@@ -611,7 +615,7 @@ bool CPythonApplication::Process()
 	DWORD dwUpdateTime2=ELTimer_GetMSec();
 #endif
 	// Network I/O
-	m_pyNetworkStream.Process();
+	MapPerformance::Measure("app.network", nullptr, [&] { m_pyNetworkStream.Process(); });
 
 	m_kGuildMarkUploader.Process();
 
@@ -645,7 +649,7 @@ bool CPythonApplication::Process()
 	DWORD dwUpdateTime6=ELTimer_GetMSec();
 #endif
 	// Update Game Playing
-	CResourceManager::Instance().Update();
+	MapPerformance::Measure("app.resource_update", nullptr, [&] { CResourceManager::Instance().Update(); });
 #ifdef __PERFORMANCE_CHECK__
 	DWORD dwUpdateTime7=ELTimer_GetMSec();
 #endif
@@ -657,7 +661,7 @@ bool CPythonApplication::Process()
 #ifdef __PERFORMANCE_CHECK__
 	DWORD dwUpdateTime9=ELTimer_GetMSec();
 #endif
-	OnUIUpdate();
+	MapPerformance::Measure("app.ui_update", nullptr, [&] { OnUIUpdate(); });
 
 #ifdef __PERFORMANCE_CHECK__
 	DWORD dwUpdateTime10=ELTimer_GetMSec();
@@ -765,6 +769,7 @@ bool CPythonApplication::Process()
 			CCullingManager::Instance().Update();
 			if (m_pyGraphic.Begin())
 			{
+				mapProfileFrame.Rendered();
 				m_pyGraphic.ClearDepthBuffer();
 
 #ifdef _DEBUG
@@ -776,7 +781,7 @@ bool CPythonApplication::Process()
 				// Interface
 				m_pyGraphic.SetInterfaceRenderState();
 
-				OnUIRender();
+				MapPerformance::Measure("app.ui_render", nullptr, [&] { OnUIRender(); });
 				if (m_dx11ModelPreviewTexture)
 				{
 					// Make the single-mesh diagnostic large enough to inspect.
@@ -826,7 +831,7 @@ bool CPythonApplication::Process()
 
 				m_pyGraphic.End();
 
-				m_pyGraphic.Show();
+				MapPerformance::Measure("app.present", nullptr, [&] { m_pyGraphic.Show(); });
 
 				const DWORD dwRenderEndTime = ELTimer_GetMSec();
 
@@ -925,6 +930,8 @@ bool CPythonApplication::Process()
 		}
 	}
 
+	// Finish before intentional frame-pacing sleep; profiling I/O is outside the capture.
+	mapProfileFrame.Finish(IsActive());
 	const int rest = s_uiNextFrameTime - ELTimer_GetMSec();
 
 	if (rest > 0 && !bCurrentLateUpdate )
@@ -1480,6 +1487,7 @@ void CPythonApplication::Clear()
 
 void CPythonApplication::Destroy()
 {
+	MapPerformance::Flush();
 #if defined(ENABLE_LOADING_PERFORMANCE)
 	m_pyLoading.EndThreadLoading();
 #endif

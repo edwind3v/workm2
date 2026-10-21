@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
 #include "MapOutdoor.h"
 #include "AreaTerrain.h"
 #include "AreaLoaderThread.h"
@@ -152,6 +153,15 @@ bool CMapOutdoor::LoadArea(WORD wAreaCoordX, WORD wAreaCoordY, WORD wCellCoordX,
 {
 	if (isAreaLoaded(wAreaCoordX, wAreaCoordY))
 		return true;
+	for (auto it = m_AreaDeleteVector.begin(); it != m_AreaDeleteVector.end(); ++it)
+	{
+		WORD x, y; (*it)->GetCoordinate(&x, &y);
+		if (x == wAreaCoordX && y == wAreaCoordY && !(*it)->IsRetiring())
+		{ m_AreaVector.push_back(*it); m_AreaDeleteVector.erase(it); return true; }
+	}
+	MapPerformance::Count(MapPerformance::Counter::AreasLoaded);
+	MapPerformance::Scope mapProfile("map.area_load");
+	mapProfile.Detail("map=%s sector=(%u,%u)", GetName().c_str(), wAreaCoordX, wAreaCoordY);
 #ifdef _DEBUG
 	DWORD dwStartTime = ELTimer_GetMSec();
 #endif
@@ -185,100 +195,175 @@ bool CMapOutdoor::LoadArea(WORD wAreaCoordX, WORD wAreaCoordY, WORD wCellCoordX,
 	return true;
 }
 
-bool CMapOutdoor::LoadTerrain(WORD wTerrainCoordX, WORD wTerrainCoordY, WORD wCellCoordX, WORD wCellCoordY)
+bool CMapOutdoor::LoadTerrain(WORD x, WORD y, WORD, WORD)
 {
-	if (isTerrainLoaded(wTerrainCoordX, wTerrainCoordY))
-		return true;
-
-	//////////////////////////////////////////////////////////////////////////
-	const DWORD dwStartTime = ELTimer_GetMSec();
-
-	const unsigned long ulID = (unsigned long) (wTerrainCoordX) * 1000L + (unsigned long) (wTerrainCoordY);
-	char filename[256];
-	sprintf(filename, "%s\\%06u\\AreaProperty.txt", GetMapDataDirectory().c_str(), ulID);
-
-	CTokenVectorMap stTokenVectorMap;
-
-	if (!LoadMultipleTextData(filename, stTokenVectorMap))
+	if (isTerrainLoaded(x, y)) return true;
+	MapPerformance::Scope profile("map.terrain_load");
+	profile.Detail("map=%s sector=(%u,%u)", GetName().c_str(), x, y);
+	MapPerformance::Count(MapPerformance::Counter::TerrainsLoaded);
+	// A fully prepared recent section can be reused without rebuilding it.
+	for (auto it = m_TerrainDeleteVector.begin(); it != m_TerrainDeleteVector.end(); ++it)
 	{
-		TraceError("CMapOutdoor::LoadTerrain AreaProperty Read Error\n");
-		return false;
+		WORD oldX, oldY; (*it)->GetCoordinate(&oldX, &oldY);
+		if (oldX == x && oldY == y && (*it)->IsReady())
+		{
+			m_TerrainVector.push_back(*it); m_TerrainDeleteVector.erase(it); return true;
+		}
 	}
-
-	if (!stTokenVectorMap.contains("scripttype"))
+	auto found = std::find_if(m_terrainPreparation.begin(), m_terrainPreparation.end(),
+		[&](const STerrainPreparation& t) { return t.x == x && t.y == y; });
+	STerrainPreparation local;
+	STerrainPreparation* task = &local;
+	if (found != m_terrainPreparation.end()) task = &*found;
+	else
 	{
-		TraceError("CMapOutdoor::LoadTerrain AreaProperty FileFormat Error 1\n");
-		return false;
+		local.x = x; local.y = y;
+		char suffix[32]; sprintf(suffix, "\\%06u\\", unsigned(x) * 1000u + y);
+		local.directory = GetMapDataDirectory() + suffix;
 	}
+	if (task->stage < 11) MapPerformance::Count(MapPerformance::Counter::StreamingFallbacks);
+	while (task->stage < 11 && !task->failed) AdvanceTerrainPreparation(*task, true);
+	const bool success = !task->failed && task->terrain;
+	if (success) m_TerrainVector.push_back(task->terrain);
+	else if (task->terrain) CTerrain::Delete(task->terrain);
+	if (found != m_terrainPreparation.end()) m_terrainPreparation.erase(found);
+	return success;
+}
 
-	if (!stTokenVectorMap.contains("areaname"))
+void CMapOutdoor::RequestSectorFiles(WORD x, WORD y)
+{
+	char suffix[32]; sprintf(suffix, "\\%06u\\", unsigned(x) * 1000u + y);
+	const std::string directory = GetMapDataDirectory() + suffix;
+	std::vector<std::string> files;
+	for (const char* name : {"AreaProperty.txt", "height.raw", "tile.raw", "attr.atr", "water.wtr", "shadowmap.raw", "shadowmap.dds", "minimap.dds", "AreaData.txt", "AreaAmbienceData.txt"})
+		files.push_back(directory + name);
+	CEterPackManager::Instance().RequestReadAhead(files);
+}
+
+bool CMapOutdoor::AdvanceTerrainPreparation(STerrainPreparation& task, bool required)
+{
+	MapPerformance::Scope profile(required ? "stream.required_terrain_step" : "stream.prepare_terrain_step");
+	profile.Detail("sector=(%u,%u) stage=%u part=%u", task.x, task.y, task.stage, task.part);
+	auto ready = [&](const char* name) {
+		if (required) return true;
+		const auto filename = task.directory + name;
+		if (CEterPackManager::Instance().IsReadAheadReady(filename.c_str())) return true;
+		CEterPackManager::Instance().RequestReadAhead({filename});
+		return false;
+	};
+	auto filename = [&](const char* name) { return task.directory + name; };
+	CTerrain* terrain = task.terrain;
+	switch (task.stage)
 	{
-		TraceError("CMapOutdoor::LoadTerrain AreaProperty FileFormat Error 2\n");
-		return false;
-	}
-
-	const std::string & c_rstrType = stTokenVectorMap["scripttype"][0];
-	const std::string & c_rstrAreaName = stTokenVectorMap["areaname"][0];
-
-	if (c_rstrType != "AreaProperty")
+	case 0:
 	{
-		TraceError("CMapOutdoor::LoadTerrain AreaProperty FileFormat Error 3\n");
-		return false;
+		if (!ready("AreaProperty.txt")) return false;
+		CTokenVectorMap tokens;
+		if (!LoadMultipleTextData(filename("AreaProperty.txt").c_str(), tokens) ||
+			tokens["scripttype"].empty() || tokens["scripttype"][0] != "AreaProperty" || tokens["areaname"].empty())
+		{
+			TraceError("STREAM_TERRAIN invalid property %s", filename("AreaProperty.txt").c_str());
+			task.failed = true; return false;
+		}
+		task.terrain = CTerrain::New(); terrain = task.terrain;
+		terrain->Clear(); terrain->SetMapOutDoor(this); terrain->SetCoordinate(task.x, task.y);
+		terrain->CopySettingFromGlobalSetting(); terrain->SetName(tokens["areaname"][0].c_str());
+		break;
 	}
-
-	CTerrain * pTerrain = CTerrain::New();
-
-	pTerrain->Clear();
-	pTerrain->SetMapOutDoor(this);
-
-	pTerrain->SetCoordinate(wTerrainCoordX, wTerrainCoordY);
-
-	pTerrain->CopySettingFromGlobalSetting();
-
-	char szRawHeightFieldname[64+1];
-	char szWaterMapName[64+1];
-	char szAttrMapName[64+1];
-	char szShadowTexName[64+1];
-	char szShadowMapName[64+1];
-	char szMiniMapTexName[64+1];
-	char szSplatName[64+1];
-
-	_snprintf(szRawHeightFieldname, sizeof(szRawHeightFieldname), "%s\\%06u\\height.raw", GetMapDataDirectory().c_str(), ulID);
-	_snprintf(szSplatName, sizeof(szSplatName), "%s\\%06u\\tile.raw", GetMapDataDirectory().c_str(), ulID);
-	_snprintf(szAttrMapName, sizeof(szAttrMapName), "%s\\%06u\\attr.atr", GetMapDataDirectory().c_str(), ulID);
-	_snprintf(szWaterMapName, sizeof(szWaterMapName), "%s\\%06u\\water.wtr", GetMapDataDirectory().c_str(), ulID);
-	_snprintf(szShadowTexName, sizeof(szShadowTexName), "%s\\%06u\\shadowmap.dds", GetMapDataDirectory().c_str(), ulID);
-	_snprintf(szShadowMapName, sizeof(szShadowMapName), "%s\\%06u\\shadowmap.raw", GetMapDataDirectory().c_str(), ulID);
-	_snprintf(szMiniMapTexName, sizeof(szMiniMapTexName), "%s\\%06u\\minimap.dds", GetMapDataDirectory().c_str(), ulID);
-
-	if(!pTerrain->LoadWaterMap(szWaterMapName))
-		TraceError(" CMapOutdoor::LoadTerrain(%d, %d) LoadWaterMap ERROR", wTerrainCoordX, wTerrainCoordY);
-
-	if (!pTerrain->LoadHeightMap(szRawHeightFieldname))
-		TraceError(" CMapOutdoor::LoadTerrain(%d, %d) LoadHeightMap ERROR", wTerrainCoordX, wTerrainCoordY);
-
-	if (!pTerrain->LoadAttrMap(szAttrMapName))
-		TraceError(" CMapOutdoor::LoadTerrain(%d, %d) LoadAttrMap ERROR", wTerrainCoordX, wTerrainCoordY);
-
-	if (!pTerrain->RAW_LoadTileMap(szSplatName))
-		TraceError(" CMapOutdoor::LoadTerrain(%d, %d) RAW_LoadTileMap ERROR", wTerrainCoordX, wTerrainCoordY);
-
-	pTerrain->LoadShadowTexture(szShadowTexName);
-
-	if (!pTerrain->LoadShadowMap(szShadowMapName))
-		TraceError(" CMapOutdoor::LoadTerrain(%d, %d) LoadShadowMap ERROR", wTerrainCoordX, wTerrainCoordY);
-
-	pTerrain->LoadMiniMapTexture(szMiniMapTexName);
-	pTerrain->SetName(c_rstrAreaName.c_str());
-	pTerrain->CalculateTerrainPatch();
-
-	pTerrain->SetReady();
-
-	Tracef("CMapOutdoor::LoadTerrain %d\n", ELTimer_GetMSec() - dwStartTime);
-
-	m_TerrainVector.push_back(pTerrain);
-
+	case 1:
+		if (!ready("water.wtr")) return false;
+		MapPerformance::Measure("terrain.water", task.directory.c_str(), [&] { terrain->LoadWaterMap(filename("water.wtr").c_str()); }); break;
+	case 2:
+		if (!ready("height.raw")) return false;
+		MapPerformance::Measure("terrain.height_and_normals", task.directory.c_str(), [&] { terrain->LoadHeightMap(filename("height.raw").c_str()); }); break;
+	case 3:
+		if (!ready("attr.atr")) return false;
+		terrain->LoadAttrMap(filename("attr.atr").c_str()); break;
+	case 4:
+		if (!ready("tile.raw")) return false;
+		terrain->LoadTileMapDeferred(filename("tile.raw").c_str()); task.part = 1; break;
+	case 5:
+		if (task.part < terrain->GetBlendMaskCount()) { terrain->PrepareBlendMask(task.part++); return true; }
+		task.part = 0; break;
+	case 6:
+		if (!ready("shadowmap.dds")) return false;
+		terrain->LoadShadowTexture(filename("shadowmap.dds").c_str()); break;
+	case 7:
+		if (!ready("shadowmap.raw")) return false;
+		terrain->LoadShadowMap(filename("shadowmap.raw").c_str()); break;
+	case 8:
+		if (!ready("minimap.dds")) return false;
+		terrain->LoadMiniMapTexture(filename("minimap.dds").c_str()); task.part = 0; break;
+	case 9:
+		if (task.part < terrain->GetGeometryPatchCount()) { terrain->PrepareGeometryPatch(task.part++); return true; }
+		break;
+	case 10:
+		terrain->SetReady(); MapPerformance::Count(MapPerformance::Counter::TerrainPrepared); break;
+	default: return false;
+	}
+	++task.stage;
 	return true;
+}
+
+void CMapOutdoor::CancelStreaming()
+{
+	for (auto& task : m_terrainPreparation) if (task.terrain) CTerrain::Delete(task.terrain);
+	m_terrainPreparation.clear();
+}
+
+void CMapOutdoor::UpdateStreaming(const D3DXVECTOR3& player)
+{
+	MapPerformance::Scope profile("stream.update");
+	const int size = CTerrainImpl::TERRAIN_XSIZE;
+	const int x = m_CurCoordinate.m_sTerrainCoordX, y = m_CurCoordinate.m_sTerrainCoordY;
+	const float localX = player.x - x * size, localY = fabsf(player.y) - y * size;
+	const int nextX = (std::clamp)(x + (localX < size * 0.35f ? -1 : localX > size * 0.65f ? 1 : 0), 0, int(m_sTerrainCountX) - 1);
+	const int nextY = (std::clamp)(y + (localY < size * 0.35f ? -1 : localY > size * 0.65f ? 1 : 0), 0, int(m_sTerrainCountY) - 1);
+	for (auto it = m_terrainPreparation.begin(); it != m_terrainPreparation.end();)
+	{
+		if (isTerrainLoaded(it->x, it->y) || abs(int(it->x) - nextX) > 1 || abs(int(it->y) - nextY) > 1)
+		{
+			if (it->terrain) m_TerrainDeleteVector.push_back(it->terrain);
+			it = m_terrainPreparation.erase(it);
+		}
+		else ++it;
+	}
+	for (int sy = (std::max)(0, nextY - 1); sy <= (std::min)(int(m_sTerrainCountY) - 1, nextY + 1); ++sy)
+		for (int sx = (std::max)(0, nextX - 1); sx <= (std::min)(int(m_sTerrainCountX) - 1, nextX + 1); ++sx)
+		{
+			if (isTerrainLoaded(sx, sy)) continue;
+			if (std::any_of(m_terrainPreparation.begin(), m_terrainPreparation.end(), [&](const STerrainPreparation& t) { return t.x == sx && t.y == sy; })) continue;
+			const size_t capacity = IsWorldMemoryPressure() ? 2u : 6u;
+			if (m_terrainPreparation.size() >= capacity || m_TerrainDeleteVector.size() >= 6) continue;
+			STerrainPreparation task; task.x = WORD(sx); task.y = WORD(sy);
+			char suffix[32]; sprintf(suffix, "\\%06u\\", unsigned(sx) * 1000u + sy);
+			task.directory = GetMapDataDirectory() + suffix;
+			for (auto cached = m_TerrainDeleteVector.begin(); cached != m_TerrainDeleteVector.end(); ++cached)
+			{
+				WORD oldX, oldY; (*cached)->GetCoordinate(&oldX, &oldY);
+				if (oldX == task.x && oldY == task.y && (*cached)->IsReady())
+				{ task.terrain = *cached; task.stage = 11; m_TerrainDeleteVector.erase(cached); break; }
+			}
+			RequestSectorFiles(task.x, task.y); m_terrainPreparation.push_back(std::move(task));
+		}
+	CFrameWorkBudget budget(1.5);
+	bool advanced = true;
+	while (budget.Available() && advanced)
+	{
+		advanced = false;
+		for (auto& task : m_terrainPreparation)
+		{
+			if (!budget.Available()) break;
+			if (!task.failed && task.stage < 11) advanced |= AdvanceTerrainPreparation(task, false);
+			if (budget.Available() && !isAreaLoaded(task.x, task.y))
+			{
+				const auto objects = task.directory + "AreaData.txt";
+				const auto ambience = task.directory + "AreaAmbienceData.txt";
+				if (CEterPackManager::Instance().IsReadAheadReady(objects.c_str()) && CEterPackManager::Instance().IsReadAheadReady(ambience.c_str()))
+					LoadArea(task.x, task.y, 0, 0);
+			}
+		}
+	}
 }
 
 bool CMapOutdoor::LoadSetting(const char * c_szFileName)

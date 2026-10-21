@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
 #include "ModelInstance.h"
 #include "Model.h"
 
@@ -24,6 +25,7 @@ void CGrannyModelInstance::SetMainModelPointer(CGrannyModel* pModel, CGraphicVer
 
 void CGrannyModelInstance::SetLinkedModelPointer(CGrannyModel* pkModel, CGraphicVertexBuffer* pkSharedDeformableVertexBuffer, CGrannyModelInstance** ppkSkeletonInst)
 {
+	MapPerformance::Scope profile("actor.model_skeleton_material_bind");
 	Clear();
 
 	if (m_pModel)

@@ -485,7 +485,7 @@ bool CEterPack::Get(CMappedFile& out_file, const char * filename, LPCVOID * data
 	if (!index)
 		return false;
 
-	out_file.Create(m_stDataFileName.c_str(), data, index->data_position, index->data_size);
+	if (!out_file.Create(m_stDataFileName.c_str(), data, index->data_position, index->data_size)) return false;
 
 	const bool bIsSecurityCheckRequired = ( index->compressed_type == COMPRESSED_TYPE_SECURITY ||
 									  index->compressed_type == COMPRESSED_TYPE_PANAMA );
@@ -598,7 +598,7 @@ bool CEterPack::Get2(CMappedFile& out_file, const char * filename, TEterPackInde
 		return false;
 	}
 
-	out_file.Create(m_stDataFileName.c_str(), data, index->data_position, index->data_size);
+	if (!out_file.Create(m_stDataFileName.c_str(), data, index->data_position, index->data_size)) return false;
 
 	const bool bIsSecurityCheckRequired = ( index->compressed_type == COMPRESSED_TYPE_SECURITY ||
 									  index->compressed_type == COMPRESSED_TYPE_PANAMA );

@@ -205,6 +205,10 @@ class CArea
 		void			Clear();
 
 		bool			Load(const char * c_szPathName);
+		static void BeginPreparationFrame();
+		bool PrepareObjects(D3DXVECTOR3& player);
+		bool ClearStep(unsigned maxObjects);
+		bool IsRetiring() const { return m_retiring; }
 
 		DWORD			GetObjectDataCount() const;
 		bool			GetObjectDataPointer(DWORD dwIndex, const TObjectData ** ppObjectData) const;
@@ -297,6 +301,8 @@ class CArea
 		TCRCWithNumberVector			m_kRenderedThingInstanceCRCWithNumberVector;
 		TThingInstanceVector			m_kRenderedGrapphicThingInstanceVector;
 
+		bool m_retiring = false;
+		std::vector<std::pair<float, DWORD>> m_createCandidates, m_removeCandidates;
 		WORD							m_wX;
 		WORD							m_wY;
 
