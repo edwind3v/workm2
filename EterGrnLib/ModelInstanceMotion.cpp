@@ -7,6 +7,7 @@ void CGrannyModelInstance::CopyMotion(CGrannyModelInstance * pModelInstance, boo
 	if (!pModelInstance->IsMotionPlaying())
 		return;
 
+	InvalidatePose();
 	if (m_pgrnCtrl)
 		GrannyFreeControl(m_pgrnCtrl);
 
@@ -31,6 +32,7 @@ void CGrannyModelInstance::CopyMotion(CGrannyModelInstance * pModelInstance, boo
 	{
 		GrannyFreeControl(pModelInstance->m_pgrnCtrl);
 		pModelInstance->m_pgrnCtrl = nullptr;
+		pModelInstance->InvalidatePose();
 	}
 }
 
@@ -56,6 +58,7 @@ void CGrannyModelInstance::SetMotionPointer(const CGrannyMotion * pMotion, float
 	if (!pgrnModelInstance)
 		return;
 
+	InvalidatePose();
 	const float localTime = GetLocalTime();
 
 	bool isFirst=false;
@@ -112,6 +115,7 @@ void CGrannyModelInstance::ChangeMotionPointer(const CGrannyMotion* pMotion, int
 	if (!pgrnModelInstance)
 		return;
 
+	InvalidatePose();
 	const float fSkipTime = 0.3f;
 	const float localTime = GetLocalTime() - fSkipTime;
 
@@ -142,6 +146,7 @@ void CGrannyModelInstance::SetMotionAtEnd() const
 		return;
 
 	//Tracef("%f\n", endingTime);
+	InvalidatePose();
 	const float endingTime = GrannyGetControlLocalDuration(m_pgrnCtrl);
 	GrannySetControlRawLocalClock(m_pgrnCtrl, endingTime);
 }

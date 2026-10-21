@@ -114,6 +114,8 @@ bool CGrannyMaterial::IsIn(const char* c_szImageName, int* piStage) const
 
 void CGrannyMaterial::SetSpecularInfo(BOOL bFlag, float fPower, BYTE uSphereMapIndex)
 {
+	if (m_specularInitialized && m_fSpecularPower == fPower && m_bSphereMapIndex == uSphereMapIndex && m_bSpecularEnable == bFlag) return;
+	m_specularInitialized = true;
 	m_fSpecularPower = fPower;
 	m_bSphereMapIndex = uSphereMapIndex;
 	m_bSpecularEnable = bFlag;

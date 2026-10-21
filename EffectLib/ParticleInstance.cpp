@@ -120,12 +120,21 @@ BOOL CParticleInstance::Update(float fElapsedTime, float fAngle)
 	return TRUE;
 }
 
-void CParticleInstance::Transform(const D3DXMATRIX * c_matLocal)
+DWORD CParticleInstance::GetColor() const
 {
 #ifdef WORLD_EDITOR
-	STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, m_Color);
+    return static_cast<DWORD>(m_Color);
 #else
-	STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, m_dcColor);
+    return static_cast<DWORD>(m_dcColor);
+#endif
+}
+
+void CParticleInstance::Transform(const D3DXMATRIX * c_matLocal, bool setColorState)
+{
+#ifdef WORLD_EDITOR
+	if (setColorState) STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, m_Color);
+#else
+	if (setColorState) STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, m_dcColor);
 #endif
 
 	/////
@@ -272,12 +281,12 @@ void CParticleInstance::Transform(const D3DXMATRIX * c_matLocal)
 	}
 }
 
-void CParticleInstance::Transform(const D3DXMATRIX * c_matLocal, const float c_fZRotation)
+void CParticleInstance::Transform(const D3DXMATRIX * c_matLocal, const float c_fZRotation, bool setColorState)
 {
 #ifdef WORLD_EDITOR
-	STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, m_Color);
+	if (setColorState) STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, m_Color);
 #else
-	STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, (DWORD)m_dcColor);
+	if (setColorState) STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, (DWORD)m_dcColor);
 #endif
 
 	/////

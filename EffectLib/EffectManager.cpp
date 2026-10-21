@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
 #include "../eterBase/Random.h"
 #include "../eterlib/StateManager.h"
 #include "EffectManager.h"
@@ -53,6 +54,7 @@ void CEffectManager::Update()
 
 		if (!pEffectInstance->isAlive())
 		{
+			InvalidateRenderOrder();
 			itor = m_kEftInstMap.erase(itor);
 
 			CEffectInstance::Delete(pEffectInstance);
@@ -96,16 +98,17 @@ void CEffectManager::Render()
 	}
 	else
 	{
-		static std::vector<CEffectInstance*> s_kVct_pkEftInstSort;
-		s_kVct_pkEftInstSort.clear();
-
-		TEffectInstanceMap& rkMap_pkEftInstSrc=m_kEftInstMap;
-		TEffectInstanceMap::iterator i;
-		for (i=rkMap_pkEftInstSrc.begin(); i!=rkMap_pkEftInstSrc.end(); ++i)
-			s_kVct_pkEftInstSort.emplace_back(i->second);
-
-		std::sort(s_kVct_pkEftInstSort.begin(), s_kVct_pkEftInstSort.end(), CEffectManager_LessEffectInstancePtrRenderOrder());
-		std::for_each(s_kVct_pkEftInstSort.begin(), s_kVct_pkEftInstSort.end(), CEffectManager_FEffectInstanceRender());
+        if (m_renderOrderDirty)
+        {
+            MapPerformance::Scope sortProfile("effects.sort");
+            m_renderOrder.clear();
+            m_renderOrder.reserve(m_kEftInstMap.size());
+            for (const auto& entry : m_kEftInstMap) m_renderOrder.push_back(entry.second);
+            std::sort(m_renderOrder.begin(), m_renderOrder.end(), CEffectManager_LessEffectInstancePtrRenderOrder());
+            m_renderOrderDirty = false;
+            MapPerformance::Count(MapPerformance::Counter::EffectSorts);
+        }
+        std::for_each(m_renderOrder.begin(), m_renderOrder.end(), CEffectManager_FEffectInstanceRender());
 	}
 }
 
@@ -204,6 +207,7 @@ void CEffectManager::CreateEffectInstance(DWORD dwInstanceIndex, DWORD dwID)
 	pEffectInstance->SetEffectDataPointer(pEffect);
 
 	m_kEftInstMap.emplace(dwInstanceIndex, pEffectInstance);
+	InvalidateRenderOrder();
 }
 
 bool CEffectManager::DestroyEffectInstance(DWORD dwInstanceIndex)
@@ -215,6 +219,7 @@ bool CEffectManager::DestroyEffectInstance(DWORD dwInstanceIndex)
 
 	CEffectInstance * pEffectInstance = itor->second;
 
+	InvalidateRenderOrder();
 	m_kEftInstMap.erase(itor);
 
 	CEffectInstance::Delete(pEffectInstance);
@@ -405,6 +410,7 @@ void CEffectManager::DeleteAllInstances()
 
 void CEffectManager::__DestroyEffectInstanceMap()
 {
+	InvalidateRenderOrder();
 	for (auto i = m_kEftInstMap.begin(); i != m_kEftInstMap.end(); ++i)
 	{
 		CEffectInstance * pkEftInst = i->second;
@@ -412,6 +418,7 @@ void CEffectManager::__DestroyEffectInstanceMap()
 	}
 
 	m_kEftInstMap.clear();
+	std::vector<CEffectInstance*>().swap(m_renderOrder);
 }
 
 void CEffectManager::__DestroyEffectCacheMap()

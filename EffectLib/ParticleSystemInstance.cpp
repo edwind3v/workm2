@@ -4,6 +4,8 @@
 #include "ParticleSystemData.h"
 #include "ParticleSystemInstance.h"
 #include "ParticleInstance.h"
+#include "../EterBase/MapPerformance.h"
+#include <array>
 
 CDynamicPool<CParticleSystemInstance>	CParticleSystemInstance::ms_kPool;
 
@@ -273,6 +275,7 @@ void CParticleSystemInstance::CreateParticles(float fElapsedTime)
 
 bool CParticleSystemInstance::OnUpdate(float fElapsedTime)
 {
+	MapPerformance::Scope updateProfile("effects.particles_update");
 	bool bMakeParticle = true;
 
 	/////
@@ -326,8 +329,12 @@ bool CParticleSystemInstance::OnUpdate(float fElapsedTime)
 			{
 				if (pInstance->m_byFrameIndex != dwFrameIndex)
 				{
-					m_ParticleInstanceListVector[dwFrameCount+pInstance->m_byFrameIndex].push_back(*itor);
-					itor = m_ParticleInstanceListVector[dwFrameIndex].erase(itor);
+                    // Move the existing list node; texture animation used to
+                    // allocate and free a node for every migrated particle.
+                    auto moved = itor++;
+                    auto& destination = m_ParticleInstanceListVector[dwFrameCount+pInstance->m_byFrameIndex];
+                    destination.splice(destination.end(), m_ParticleInstanceListVector[dwFrameIndex], moved);
+                    MapPerformance::Count(MapPerformance::Counter::ParticleMoves);
 				}
 				else
 					++itor;
@@ -348,106 +355,119 @@ bool CParticleSystemInstance::OnUpdate(float fElapsedTime)
 
 namespace NParticleRenderer
 {
-	struct TwoSideRenderer
-	{
-		const D3DXMATRIX * pmat;
-		TwoSideRenderer(const D3DXMATRIX * pmat= nullptr)
-			: pmat(pmat)
-		{
-		}
-
-		inline void operator () (CParticleInstance * pInstance) const
-		{
-			pInstance->Transform(pmat,D3DXToRadian(-30.0f));
-			STATEMANAGER.DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, pInstance->GetParticleMeshPointer(), sizeof(TPTVertex));
-
-			pInstance->Transform(pmat,D3DXToRadian(+30.0f));
-			STATEMANAGER.DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, pInstance->GetParticleMeshPointer(), sizeof(TPTVertex));
-		}
-	};
-
-	struct ThreeSideRenderer
-	{
-		const D3DXMATRIX * pmat;
-		ThreeSideRenderer(const D3DXMATRIX * pmat= nullptr)
-			: pmat(pmat)
-		{
-		}
-
-		inline void operator () (CParticleInstance * pInstance) const
-		{
-			pInstance->Transform(pmat);
-			STATEMANAGER.DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, pInstance->GetParticleMeshPointer(), sizeof(TPTVertex));
-			pInstance->Transform(pmat,D3DXToRadian(-60.0f));
-			STATEMANAGER.DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, pInstance->GetParticleMeshPointer(), sizeof(TPTVertex));
-			pInstance->Transform(pmat,D3DXToRadian(+60.0f));
-			STATEMANAGER.DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, pInstance->GetParticleMeshPointer(), sizeof(TPTVertex));
-		}
-	};
-
-	struct NormalRenderer
-	{
-		inline void operator () (CParticleInstance * pInstance) const
-		{
-			pInstance->Transform();
-			STATEMANAGER.DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, pInstance->GetParticleMeshPointer(), sizeof(TPTVertex));
-		}
-	};
-	struct AttachRenderer
-	{
-		const D3DXMATRIX* pmat;
-		AttachRenderer(const D3DXMATRIX * pmat)
-			: pmat(pmat)
-		{
-		}
-
-		inline void operator () (CParticleInstance * pInstance) const
-		{
-			pInstance->Transform(pmat);
-			STATEMANAGER.DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, pInstance->GetParticleMeshPointer(), sizeof(TPTVertex));
-		}
-	};
+struct Batch
+{
+    struct Vertex { D3DXVECTOR3 position; DWORD diffuse; D3DXVECTOR2 texCoord; };
+    static constexpr unsigned QuadCapacity = 128;
+    static constexpr unsigned Capacity = QuadCapacity * 4;
+    Vertex vertices[Capacity];
+    unsigned count = 0;
+    DWORD lastColor = 0;
+    bool hasColor = false;
+    bool enabled = true;
+    void Flush()
+    {
+        if (!count) return;
+        MapPerformance::Scope submit("effects.particle_submit");
+        static const auto indices = [] {
+            std::array<WORD, QuadCapacity * 6> result{};
+            static constexpr unsigned corners[6] = {0, 1, 2, 2, 1, 3};
+            for (unsigned quad = 0; quad < QuadCapacity; ++quad)
+                for (unsigned corner = 0; corner < 6; ++corner)
+                    result[quad * 6 + corner] = static_cast<WORD>(quad * 4 + corners[corner]);
+            return result;
+        }();
+        STATEMANAGER.DrawIndexedPrimitiveUP(D3DPT_TRIANGLELIST, 0, count, count / 2,
+            indices.data(), D3DFMT_INDEX16, vertices, sizeof(Vertex));
+        MapPerformance::Count(MapPerformance::Counter::ParticleBatches);
+        count = 0;
+    }
+    void Append(CParticleInstance* particle)
+    {
+        if (count + 4 > Capacity) Flush();
+        const TPTVertex* quad = particle->GetParticleMeshPointer();
+        const DWORD color = particle->GetColor();
+        if (!enabled)
+        {
+            STATEMANAGER.DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, quad, sizeof(TPTVertex));
+            MapPerformance::Count(MapPerformance::Counter::ParticleQuads);
+            MapPerformance::Count(MapPerformance::Counter::ParticleBatches);
+            return;
+        }
+        for (unsigned corner = 0; corner < 4; ++corner)
+        {
+            auto& out = vertices[count++];
+            out.position = quad[corner].position;
+            out.diffuse = color;
+            out.texCoord = quad[corner].texCoord;
+        }
+        lastColor = color; hasColor = true;
+        MapPerformance::Count(MapPerformance::Counter::ParticleQuads);
+    }
+};
+struct Renderer
+{
+    Batch& batch;
+    const D3DXMATRIX* matrix;
+    unsigned faces;
+    Renderer(Batch& batch, const D3DXMATRIX* matrix, unsigned faces) : batch(batch), matrix(matrix), faces(faces) {}
+    void Flush() const { batch.Flush(); }
+    void operator()(CParticleInstance* particle) const
+    {
+        if (faces == 2)
+        {
+            particle->Transform(matrix, D3DXToRadian(-30.0f), !batch.enabled); batch.Append(particle);
+            particle->Transform(matrix, D3DXToRadian(+30.0f), !batch.enabled); batch.Append(particle);
+        }
+        else if (faces == 3)
+        {
+            particle->Transform(matrix, !batch.enabled); batch.Append(particle);
+            particle->Transform(matrix, D3DXToRadian(-60.0f), !batch.enabled); batch.Append(particle);
+            particle->Transform(matrix, D3DXToRadian(+60.0f), !batch.enabled); batch.Append(particle);
+        }
+        else
+        {
+            particle->Transform(matrix, !batch.enabled); batch.Append(particle);
+        }
+    }
+};
 }
 
 void CParticleSystemInstance::OnRender()
 {
-	CScreen::Identity();
-	STATEMANAGER.SetRenderState(D3DRS_SRCBLEND, m_pParticleProperty->m_bySrcBlendType);
-	STATEMANAGER.SetRenderState(D3DRS_DESTBLEND, m_pParticleProperty->m_byDestBlendType);
-	STATEMANAGER.SetTextureStageState(0,D3DTSS_COLOROP,m_pParticleProperty->m_byColorOperationType);
-	if (m_pParticleProperty->m_byBillboardType < BILLBOARD_TYPE_2FACE)
-	{
-		if (!m_pParticleProperty->m_bAttachFlag)
-		{
-			ForEachParticleRendering(NParticleRenderer::NormalRenderer());
-		}
-		else
-		{
-			ForEachParticleRendering(NParticleRenderer::AttachRenderer(mc_pmatLocal));
-		}
-	}
-	else if (m_pParticleProperty->m_byBillboardType == BILLBOARD_TYPE_2FACE)
-	{
-		if (!m_pParticleProperty->m_bAttachFlag)
-		{
-			ForEachParticleRendering(NParticleRenderer::TwoSideRenderer());
-		}
-		else
-		{
-			ForEachParticleRendering(NParticleRenderer::TwoSideRenderer(mc_pmatLocal));
-		}
-	}
-	else if (m_pParticleProperty->m_byBillboardType == BILLBOARD_TYPE_3FACE)
-	{
-		if (!m_pParticleProperty->m_bAttachFlag)
-		{
-			ForEachParticleRendering(NParticleRenderer::ThreeSideRenderer());
-		}
-		else
-		{
-			ForEachParticleRendering(NParticleRenderer::ThreeSideRenderer(mc_pmatLocal));
-		}
-	}
+    MapPerformance::Scope profile("effects.particles_render");
+    CScreen::Identity();
+    STATEMANAGER.SetRenderState(D3DRS_SRCBLEND, m_pParticleProperty->m_bySrcBlendType);
+    STATEMANAGER.SetRenderState(D3DRS_DESTBLEND, m_pParticleProperty->m_byDestBlendType);
+    STATEMANAGER.SetTextureStageState(0, D3DTSS_COLOROP, m_pParticleProperty->m_byColorOperationType);
+    // Each quad's old texture-factor color is constant across its vertices.
+    // Diffuse color preserves it while allowing differently colored quads in
+    // one ordered draw. Restore the state expected by following effect meshes.
+    DWORD oldColorArg = 0, oldAlphaArg = 0, secondColorOp = 0;
+    STATEMANAGER.GetTextureStageState(0, D3DTSS_COLORARG1, &oldColorArg);
+    STATEMANAGER.GetTextureStageState(0, D3DTSS_ALPHAARG1, &oldAlphaArg);
+    STATEMANAGER.GetTextureStageState(1, D3DTSS_COLOROP, &secondColorOp);
+    const DWORD oldLighting = STATEMANAGER.GetRenderState(D3DRS_LIGHTING);
+    DWORD oldFVF = 0; STATEMANAGER.GetFVF(&oldFVF);
+    NParticleRenderer::Batch batch;
+    batch.enabled = oldColorArg == D3DTA_TFACTOR && oldAlphaArg == D3DTA_TFACTOR && secondColorOp == D3DTOP_DISABLE;
+    if (batch.enabled)
+    {
+        STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_DIFFUSE);
+        STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_DIFFUSE);
+        STATEMANAGER.SetRenderState(D3DRS_LIGHTING, FALSE);
+        STATEMANAGER.SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1);
+    }
+    const unsigned type = m_pParticleProperty->m_byBillboardType;
+    const unsigned faces = type == BILLBOARD_TYPE_2FACE ? 2u : type == BILLBOARD_TYPE_3FACE ? 3u : 1u;
+    if (type <= BILLBOARD_TYPE_3FACE)
+        ForEachParticleRendering(NParticleRenderer::Renderer(batch, m_pParticleProperty->m_bAttachFlag ? mc_pmatLocal : nullptr, faces));
+    batch.Flush();
+    if (batch.hasColor) STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, batch.lastColor);
+    STATEMANAGER.SetTextureStageState(0, D3DTSS_COLORARG1, oldColorArg);
+    STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAARG1, oldAlphaArg);
+    STATEMANAGER.SetRenderState(D3DRS_LIGHTING, oldLighting);
+    STATEMANAGER.SetFVF(oldFVF);
 }
 
 void CParticleSystemInstance::OnSetDataPointer(CEffectElementBase * pElement)

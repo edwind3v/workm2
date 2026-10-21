@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
 #include "../eterLib/NetPacketHeaderMap.h"
 
 #include "PythonNetworkStream.h"
@@ -667,11 +668,12 @@ bool CPythonNetworkStream::OnProcess()
 	{
 		m_isStartGame = FALSE;
 
+		MapPerformance::Scope enter("network.enter_game_phase");
 		PyCallClassMemberFunc(m_poHandler, "SetGamePhase", Py_BuildValue("()"));
 //		PyCallClassMemberFunc(m_apoPhaseWnd[PHASE_WINDOW_GAME], "StartGame", Py_BuildValue("()"));
 	}
 
-	m_rokNetActorMgr->Update();
+	MapPerformance::Measure("network.actor_visibility_update", nullptr, [&] { m_rokNetActorMgr->Update(); });
 
 	if (m_phaseProcessFunc.IsEmpty())
 		return true;
@@ -679,6 +681,7 @@ bool CPythonNetworkStream::OnProcess()
 	//TPacketHeader header;
 	//while(CheckPacket(&header))
 	{
+		MapPerformance::Scope dispatch("network.packet_dispatch", m_strPhase.c_str());
 		m_phaseProcessFunc.Run();
 	}
 

@@ -26,15 +26,17 @@ class CParticleSystemInstance : public CEffectElementBaseInstance
 			DWORD dwFrameIndex;
 			for(dwFrameIndex=0; dwFrameIndex<m_kVct_pkImgInst.size(); dwFrameIndex++)
 			{
+				FunObj.Flush();
 				STATEMANAGER.SetTexture(0, m_kVct_pkImgInst[dwFrameIndex]->GetTextureReference().GetD3DTexture());
 				auto itor = m_ParticleInstanceListVector[dwFrameIndex].begin();
 				for (; itor != m_ParticleInstanceListVector[dwFrameIndex].end(); ++itor)
 				{
 					if (!InFrustum(*itor))
-						return;
+					{ FunObj.Flush(); return; }
 					FunObj(*itor);
 				}
 			}
+			FunObj.Flush();
 		}
 
 		CParticleSystemInstance();

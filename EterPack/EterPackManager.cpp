@@ -5,6 +5,7 @@
 
 #include "EterPackManager.h"
 #include "ReadAhead.h"
+#include "../EterBase/MapPerformance.h"
 #include "EterPackPolicy_CSHybridCrypt.h"
 
 #include "../eterBase/Debug.h"
@@ -159,7 +160,9 @@ struct TimeChecker
 
 bool CEterPackManager::Get(CMappedFile & rMappedFile, const char * c_szFileName, LPCVOID * pData)
 {
-	if (!CReadAheadFileCache::IsWorker() && m_readAhead && m_readAhead->TryGet(rMappedFile, c_szFileName, pData)) return true;
+	MapPerformance::Scope profile("pack.get", c_szFileName);
+	if (!CReadAheadFileCache::IsWorker() && m_readAhead &&
+		MapPerformance::Measure("pack.read_ahead_lookup", c_szFileName, [&] { return m_readAhead->TryGet(rMappedFile, c_szFileName, pData); })) return true;
 	//TimeChecker timeChecker(c_szFileName);
 	//Logf(1, "Load %s\n", c_szFileName);
 	if (m_iSearchMode == SEARCH_FILE_FIRST)
@@ -182,8 +185,9 @@ bool CEterPackManager::Get(CMappedFile & rMappedFile, const char * c_szFileName,
 
 struct FinderLock
 {
-	FinderLock(CRITICAL_SECTION& cs) : p_cs(&cs)
+	FinderLock(CRITICAL_SECTION& cs, const char* filename = nullptr) : p_cs(&cs)
 	{
+		MapPerformance::Scope wait("pack.lock_wait", filename);
 		EnterCriticalSection(p_cs);
 	}
 
@@ -197,12 +201,15 @@ struct FinderLock
 
 bool CEterPackManager::GetFromPack(CMappedFile & rMappedFile, const char * c_szFileName, LPCVOID * pData)
 {
-	FinderLock lock(m_csFinder);
+	FinderLock lock(m_csFinder, c_szFileName);
+	MapPerformance::Scope held("pack.lock_held", c_szFileName);
+	MapPerformance::Scope lookup("pack.lookup", c_szFileName);
 
 	static std::string strFileName;
 
 	if (0 == ConvertFileName(c_szFileName, strFileName))
 	{
+		lookup.Stop();
 		return m_RootPack.Get(rMappedFile, strFileName.c_str(), pData);
 	}
 	else
@@ -212,6 +219,7 @@ bool CEterPackManager::GetFromPack(CMappedFile & rMappedFile, const char * c_szF
 
 		if (pkCache)
 		{
+			lookup.Stop();
 			rMappedFile.Link(pkCache->m_dwBufSize, pkCache->m_abBufData);
 			return true;
 		}
@@ -221,6 +229,7 @@ bool CEterPackManager::GetFromPack(CMappedFile & rMappedFile, const char * c_szF
 		if (pkFileItem)
 			if (pkFileItem->pkPack)
 			{
+				lookup.Stop();
 				const bool r = pkFileItem->pkPack->Get2(rMappedFile, strFileName.c_str(), pkFileItem->pkInfo, pData);
 				//pkFileItem->pkPack->ClearDataMemoryMap();
 				return r;
@@ -241,6 +250,7 @@ void CEterPackManager::ArrangeMemoryMappedPack() const
 
 bool CEterPackManager::GetFromFile(CMappedFile & rMappedFile, const char * c_szFileName, LPCVOID * pData) const
 {
+	MapPerformance::Scope profile("pack.loose_open_map", c_szFileName);
 	return rMappedFile.Create(c_szFileName, pData, 0, 0) ? true : false;
 }
 

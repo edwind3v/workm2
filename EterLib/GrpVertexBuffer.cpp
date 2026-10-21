@@ -5,7 +5,7 @@
 
 int	CGraphicVertexBuffer::GetVertexStride() const
 {
-	const int retSize = D3DXGetFVFVertexSize(m_dwFVF);
+	const int retSize = m_vertexStride;
 	return retSize;
 }
 
@@ -34,7 +34,19 @@ bool CGraphicVertexBuffer::LockRange(unsigned count, void** pretVertices) const
 	if (FAILED(m_lpd3dVB->Lock(0, dwLockSize, pretVertices, m_dwLockFlag)))
 		return false;
 
+	++m_contentVersion;
 	return true;
+}
+
+bool CGraphicVertexBuffer::LockDiscardRange(unsigned count, void** vertices) const
+{
+    if (!m_lpd3dVB || !vertices || !count || count > static_cast<unsigned>(m_vtxCount)) return false;
+    // This path replaces every vertex subsequently drawn; partial/general locks
+    // retain their original behavior. DISCARD applies to the entire allocation.
+    const DWORD flags = (m_dwUsage & D3DUSAGE_DYNAMIC) ? D3DLOCK_DISCARD : 0;
+    if (FAILED(m_lpd3dVB->Lock(0, m_vertexStride * count, vertices, flags))) return false;
+    ++m_contentVersion;
+    return true;
 }
 
 bool CGraphicVertexBuffer::Lock(void ** pretVertices) const
@@ -46,6 +58,7 @@ bool CGraphicVertexBuffer::Lock(void ** pretVertices) const
 	if (FAILED(m_lpd3dVB->Lock(0, dwLockSize, pretVertices, m_dwLockFlag)))
 		return false;
 
+	++m_contentVersion;
 	return true;
 }
 
@@ -75,6 +88,7 @@ bool CGraphicVertexBuffer::LockDynamic(void** pretVertices) const
 	if (FAILED(m_lpd3dVB->Lock(0, 0, pretVertices, 0)))
 		return false;
 
+	++m_contentVersion;
 	return true;
 }
 
@@ -86,6 +100,7 @@ bool CGraphicVertexBuffer::Lock(void ** pretVertices)
 	if (FAILED(m_lpd3dVB->Lock(0, 0, pretVertices, m_dwLockFlag)))
 		return false;
 
+	++m_contentVersion;
 	return true;
 }
 
@@ -132,6 +147,7 @@ bool CGraphicVertexBuffer::CreateDeviceObjects()
 
 void CGraphicVertexBuffer::DestroyDeviceObjects()
 {
+	++m_contentVersion;
 	safe_release(m_lpd3dVB);
 }
 
@@ -143,12 +159,13 @@ bool CGraphicVertexBuffer::Create(int vtxCount, DWORD fvf, DWORD usage, D3DPOOL 
 	Destroy();
 
 	m_vtxCount = vtxCount;
-	m_dwBufferSize = D3DXGetFVFVertexSize(fvf) * m_vtxCount;
+	m_vertexStride = D3DXGetFVFVertexSize(fvf);
+	m_dwBufferSize = m_vertexStride * m_vtxCount;
 	m_d3dPool = d3dPool;
 	m_dwUsage = usage;
 	m_dwFVF = fvf;
 
-	if (usage == D3DUSAGE_WRITEONLY || usage == D3DUSAGE_DYNAMIC)
+	if (usage & (D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC))
 		m_dwLockFlag = 0;
 	else
 		m_dwLockFlag = D3DLOCK_READONLY;

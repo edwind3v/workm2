@@ -27,11 +27,13 @@ void CGrannyModelInstance::SetSpecularInfo(const char* c_szMtrlName, BOOL bEnabl
 void CGrannyModelInstance::SetLocalTime(float fLocalTime)
 {
 	m_fLocalTime = fLocalTime;
+	InvalidatePose();
 }
 
 int CGrannyModelInstance::ResetLocalTime()
 {
 	m_fLocalTime = 0.0f;
+	InvalidatePose();
 	return 0;
 }
 
@@ -53,6 +55,7 @@ void CGrannyModelInstance::SetParentModelInstance(const CGrannyModelInstance* c_
 {
 	mc_pParentInstance = c_pParentModelInstance;
 	m_iParentBoneIndex = iBone;
+	InvalidatePose();
 }
 
 bool CGrannyModelInstance::IsEmpty() const
@@ -107,6 +110,10 @@ void CGrannyModelInstance::__Initialize()
 
 	m_material_data = {}; // @fixme057
 	m_dwOldUpdateFrame=0;
+    m_poseInputRevision = 1; m_sampledInputRevision = m_poseRevision = 0;
+    m_sampledParent = nullptr; m_hasParentMatrix = false;
+    m_skinnedPoseRevision = m_skinnedBufferVersion = 0; m_skinnedBuffer = nullptr;
+    m_ownsMeshBindings = true;
 }
 
 CGrannyModelInstance::CGrannyModelInstance()
@@ -136,5 +143,6 @@ void CGrannyModelInstance::Delete(CGrannyModelInstance* pkInst)
 void CGrannyModelInstance::DestroySystem()
 {
 	ms_kPool.Destroy();
+	DestroyWorldPoseCache();
 }
 

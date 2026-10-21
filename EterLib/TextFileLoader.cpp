@@ -256,6 +256,7 @@ bool CTextFileLoader::Load(const char * c_szFileName)
 	if (!CEterPackManager::Instance().Get(kFile, c_szFileName, &pvData))
 		return false;
 
+	MapPerformance::Scope interpret("metadata.interpret", c_szFileName);
 	if (m_dwBufCapacity<kFile.Size())
 	{
 		m_dwBufCapacity=kFile.Size();

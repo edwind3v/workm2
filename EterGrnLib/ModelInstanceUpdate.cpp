@@ -2,6 +2,8 @@
 #include "../eterbase/Debug.h"
 #include "ModelInstance.h"
 #include "Model.h"
+#include "../EterBase/MapPerformance.h"
+#include <cstring>
 #include "../eterLib/DX11GrannyProbe.h"
 
 void CGrannyModelInstance::Update(DWORD dwAniFPS)
@@ -19,6 +21,7 @@ void CGrannyModelInstance::Update(DWORD dwAniFPS)
 	//DWORD t1=timeGetTime();
 	GrannyFreeCompletedModelControls(m_pgrnModelInstance); //@fixme029
 	GrannySetModelClock(m_pgrnModelInstance, GetLocalTime());
+	InvalidatePose();
 	//DWORD t2=timeGetTime();
 
 #ifdef __PERFORMANCE_CHECKER__
@@ -57,40 +60,47 @@ void CGrannyModelInstance::UpdateTransform(D3DXMATRIX * pMatrix, float fSecondsE
 	//Tracef("%f %f %f",pMatrix->_41,pMatrix->_42,pMatrix->_43);
 }
 
-void CGrannyModelInstance::Deform(const D3DXMATRIX * c_pWorldMatrix)
+void CGrannyModelInstance::Deform(const D3DXMATRIX* world)
 {
-	if (IsEmpty())
-		return;
-
-	// DELETED
-	//m_pgrnWorldPose = m_pgrnWorldPoseReal;
-	/////////////////////////////////////////////
-
-	UpdateWorldPose();
-	UpdateWorldMatrices(c_pWorldMatrix);
-
-	if (m_pModel->CanDeformPNTVertices())
-	{
-		// WORK
-		CGraphicVertexBuffer& rkDeformableVertexBuffer = __GetDeformableVertexBufferRef();
-		TPNTVertex* pntVertices;
-		if (rkDeformableVertexBuffer.LockRange(m_pModel->GetDeformVertexCount(), (void **)&pntVertices))
-		{
-			DeformPNTVertices(pntVertices);
-			TryCaptureDX11ModelPreview(pntVertices);
-			rkDeformableVertexBuffer.Unlock();
-		}
-		else
-		{
-			TraceError("GRANNY DEFORM DYNAMIC BUFFER LOCK ERROR");
-		}
-		// END_OF_WORK
-	}
-	// Rigid equipment and non-skinned body parts are not in the dynamic
-	// deformed buffer above. Collect them from their cached Granny topology
-	// while the main character's one-shot composite scope is active.
-	if (graphics::IsDX11PrimaryCharacterCaptureActive())
-		TryCaptureDX11ModelPreview(nullptr);
+    if (IsEmpty()) return;
+    MapPerformance::Scope profile("actor.deform");
+    UpdateWorldPose();
+    MapPerformance::Measure("actor.mesh_matrices", nullptr, [&] { UpdateWorldMatrices(world); });
+    if (m_pModel->CanDeformPNTVertices())
+    {
+        CGraphicVertexBuffer& buffer = __GetDeformableVertexBufferRef();
+        const auto poseRevision = GetPoseRevision();
+        // LOD variants share a buffer: a pose cache hit alone is insufficient.
+        // Any other writer or device recreation invalidates the uploaded data.
+        if (m_skinnedPoseRevision == poseRevision && m_skinnedBuffer == &buffer &&
+            m_skinnedBufferVersion == buffer.GetContentVersion() && poseRevision != 0)
+        {
+            MapPerformance::Count(MapPerformance::Counter::SkinReuse);
+        }
+        else
+        {
+            TPNTVertex* vertices = nullptr;
+            const bool locked = MapPerformance::Measure("actor.vertex_lock", nullptr, [&] {
+                return buffer.LockDiscardRange(m_pModel->GetDeformVertexCount(), reinterpret_cast<void**>(&vertices));
+            });
+            if (locked)
+            {
+                MapPerformance::Measure("actor.vertex_skin", nullptr, [&] { DeformPNTVertices(vertices); });
+                TryCaptureDX11ModelPreview(vertices);
+                const bool uploaded = MapPerformance::Measure("actor.vertex_unlock", nullptr, [&] { return buffer.Unlock(); });
+                if (uploaded)
+                {
+                    m_skinnedPoseRevision = poseRevision;
+                    m_skinnedBuffer = &buffer;
+                    m_skinnedBufferVersion = buffer.GetContentVersion();
+                    MapPerformance::Count(MapPerformance::Counter::SkinUploads);
+                    MapPerformance::Count(MapPerformance::Counter::SkinnedVertices, m_pModel->GetDeformVertexCount());
+                }
+            }
+            else TraceError("GRANNY DEFORM DYNAMIC BUFFER LOCK ERROR");
+        }
+    }
+    if (graphics::IsDX11PrimaryCharacterCaptureActive()) TryCaptureDX11ModelPreview(nullptr);
 }
 
 //////////////////////////////////////////////////////
@@ -136,28 +146,42 @@ void CGrannyModelInstance::UpdateSkeleton(const D3DXMATRIX * c_pWorldMatrix, flo
 	//m_pgrnWorldPose = m_pgrnWorldPoseReal;
 	///////////////////////////////////////////
 	UpdateWorldPose();
-	UpdateWorldMatrices(c_pWorldMatrix);
+	MapPerformance::Measure("actor.mesh_matrices", nullptr, [&] { UpdateWorldMatrices(c_pWorldMatrix); });
+}
+
+std::uint64_t CGrannyModelInstance::GetPoseRevision() const
+{
+    if (m_ppkSkeletonInst && *m_ppkSkeletonInst && *m_ppkSkeletonInst != this)
+        return (*m_ppkSkeletonInst)->GetPoseRevision();
+    return m_poseRevision;
 }
 
 void CGrannyModelInstance::UpdateWorldPose() const
 {
-	// WEP	= m_iParentBoneIndex != 0 -> UpdateWorldPose(O)
-	// LOD	= UpdateWorldPose(O)
-	// Hair	= UpdateWorldPose(X)
-
-	if (m_ppkSkeletonInst)
-		if (*m_ppkSkeletonInst!=this)
-			return;
-
-	static CGrannyLocalPose s_SharedLocalPose;
-
-	const granny_skeleton * pgrnSkeleton = GrannyGetSourceSkeleton(m_pgrnModelInstance);
-	granny_local_pose * pgrnLocalPose = s_SharedLocalPose.Get(pgrnSkeleton->BoneCount);
-
-	const float * pAttachBoneMatrix = (mc_pParentInstance) ? mc_pParentInstance->GetBoneMatrixPointer(m_iParentBoneIndex) : nullptr;
-
-	GrannySampleModelAnimationsAccelerated(m_pgrnModelInstance, pgrnSkeleton->BoneCount, pAttachBoneMatrix, pgrnLocalPose, __GetWorldPosePtr());
-	GrannyFreeCompletedModelControls(m_pgrnModelInstance);
+    if (m_ppkSkeletonInst && *m_ppkSkeletonInst != this) return;
+    MapPerformance::Scope profile("actor.pose_evaluate");
+    const float* parentMatrix = mc_pParentInstance ? mc_pParentInstance->GetBoneMatrixPointer(m_iParentBoneIndex) : nullptr;
+    const bool sameParent = m_sampledParent == mc_pParentInstance &&
+        m_hasParentMatrix == (parentMatrix != nullptr) &&
+        (!parentMatrix || memcmp(&m_sampledParentMatrix, parentMatrix, sizeof(m_sampledParentMatrix)) == 0);
+    if (m_poseRevision && m_sampledInputRevision == m_poseInputRevision && sameParent)
+    {
+        MapPerformance::Count(MapPerformance::Counter::PoseReuse);
+        return;
+    }
+    static CGrannyLocalPose localPose;
+    const granny_skeleton* skeleton = GrannyGetSourceSkeleton(m_pgrnModelInstance);
+    granny_local_pose* local = localPose.Get(skeleton->BoneCount);
+    GrannySampleModelAnimationsAccelerated(m_pgrnModelInstance, skeleton->BoneCount, parentMatrix, local, __GetWorldPosePtr());
+    GrannyFreeCompletedModelControls(m_pgrnModelInstance);
+    m_sampledInputRevision = m_poseInputRevision;
+    m_sampledParent = mc_pParentInstance;
+    m_hasParentMatrix = parentMatrix != nullptr;
+    if (parentMatrix) memcpy(&m_sampledParentMatrix, parentMatrix, sizeof(m_sampledParentMatrix));
+    // Monotonic across pooled instances, including skeleton/LOD replacement.
+    static std::uint64_t nextRevision = 0;
+    m_poseRevision = ++nextRevision;
+    MapPerformance::Count(MapPerformance::Counter::PoseSamples);
 }
 
 void CGrannyModelInstance::UpdateWorldMatrices(const D3DXMATRIX* c_pWorldMatrix) const

@@ -2,6 +2,7 @@
 #include "../eterlib/StateManager.h"
 #include "ModelInstance.h"
 #include "Model.h"
+#include "../EterBase/MapPerformance.h"
 #include "../eterLib/DX11GrannyProbe.h"
 
 #include <algorithm>
@@ -423,6 +424,7 @@ void CGrannyModelInstance::RenderWithoutTexture()
 // With One Texture
 void CGrannyModelInstance::RenderMeshNodeListWithOneTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType) const
 {
+	MapPerformance::Scope drawProfile("actor.draw_submit", m_pModel->GetGrannyModelPointer()->Name);
 	assert(m_pModel != nullptr);
 
 	const LPDIRECT3DINDEXBUFFER9 lpd3dIdxBuf = m_pModel->GetD3DIndexBuffer();
@@ -430,6 +432,7 @@ void CGrannyModelInstance::RenderMeshNodeListWithOneTexture(CGrannyMesh::EType e
 
 	const CGrannyModel::TMeshNode * pMeshNode = m_pModel->GetMeshNodeList(eMeshType, eMtrlType);
 
+	CGrannyMaterial* activeMaterial = nullptr;
 	while (pMeshNode)
 	{
 		const CGrannyMesh * pMesh = pMeshNode->pMesh;
@@ -447,14 +450,19 @@ void CGrannyModelInstance::RenderMeshNodeListWithOneTexture(CGrannyMesh::EType e
 
 			CGrannyMaterial& rkMtrl=m_kMtrlPal.GetMaterialRef(pTriGroupNode->mtrlIndex);
 
-			if (!m_material_data.pImage) // @fixme057
-			{
-				rkMtrl.SetSpecularInfo(m_material_data.isSpecularEnable, m_material_data.fSpecularPower, m_material_data.bSphereMapIndex);
-			}
-
-			rkMtrl.ApplyRenderState();
+            // Keep identical adjacent materials active; restore at each change
+            // and on exit. Primitive and transparency ordering is unchanged.
+            if (activeMaterial != &rkMtrl)
+            {
+                if (activeMaterial) activeMaterial->RestoreRenderState();
+                if (!m_material_data.pImage)
+                    rkMtrl.SetSpecularInfo(m_material_data.isSpecularEnable, m_material_data.fSpecularPower, m_material_data.bSphereMapIndex);
+                rkMtrl.ApplyRenderState();
+                activeMaterial = &rkMtrl;
+                MapPerformance::Count(MapPerformance::Counter::MaterialBinds);
+            }
+			MapPerformance::Count(MapPerformance::Counter::ActorDrawCalls);
 			STATEMANAGER.DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, vtxCount, pTriGroupNode->idxPos, pTriGroupNode->triCount, vtxMeshBasePos);
-			rkMtrl.RestoreRenderState();
 
 			pTriGroupNode = pTriGroupNode->pNextTriGroupNode;
 		}
@@ -462,11 +470,13 @@ void CGrannyModelInstance::RenderMeshNodeListWithOneTexture(CGrannyMesh::EType e
 
 		pMeshNode = pMeshNode->pNextMeshNode;
 	}
+	if (activeMaterial) activeMaterial->RestoreRenderState();
 }
 
 // With Two Texture
 void CGrannyModelInstance::RenderMeshNodeListWithTwoTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType) const
 {
+	MapPerformance::Scope drawProfile("actor.draw_submit", m_pModel->GetGrannyModelPointer()->Name);
 	assert(m_pModel != nullptr);
 
 	const LPDIRECT3DINDEXBUFFER9 lpd3dIdxBuf = m_pModel->GetD3DIndexBuffer();
@@ -474,6 +484,7 @@ void CGrannyModelInstance::RenderMeshNodeListWithTwoTexture(CGrannyMesh::EType e
 
 	const CGrannyModel::TMeshNode * pMeshNode = m_pModel->GetMeshNodeList(eMeshType, eMtrlType);
 
+	const CGrannyMaterial* activeMaterial = nullptr;
 	while (pMeshNode)
 	{
 		const CGrannyMesh * pMesh = pMeshNode->pMesh;
@@ -490,8 +501,14 @@ void CGrannyModelInstance::RenderMeshNodeListWithTwoTexture(CGrannyMesh::EType e
 			ms_faceCount += pTriGroupNode->triCount;
 
 			const CGrannyMaterial& rkMtrl=m_kMtrlPal.GetMaterialRef(pTriGroupNode->mtrlIndex);
-			STATEMANAGER.SetTexture(0, rkMtrl.GetD3DTexture(0));
-			STATEMANAGER.SetTexture(1, rkMtrl.GetD3DTexture(1));
+            if (activeMaterial != &rkMtrl)
+            {
+                STATEMANAGER.SetTexture(0, rkMtrl.GetD3DTexture(0));
+                STATEMANAGER.SetTexture(1, rkMtrl.GetD3DTexture(1));
+                activeMaterial = &rkMtrl;
+                MapPerformance::Count(MapPerformance::Counter::MaterialBinds);
+            }
+			MapPerformance::Count(MapPerformance::Counter::ActorDrawCalls);
 			STATEMANAGER.DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, vtxCount, pTriGroupNode->idxPos, pTriGroupNode->triCount, vtxMeshBasePos);
 			pTriGroupNode = pTriGroupNode->pNextTriGroupNode;
 		}
@@ -504,6 +521,7 @@ void CGrannyModelInstance::RenderMeshNodeListWithTwoTexture(CGrannyMesh::EType e
 // Without Texture
 void CGrannyModelInstance::RenderMeshNodeListWithoutTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType) const
 {
+	MapPerformance::Scope drawProfile("actor.draw_submit", m_pModel->GetGrannyModelPointer()->Name);
 	assert(m_pModel != nullptr);
 
 	const LPDIRECT3DINDEXBUFFER9 lpd3dIdxBuf = m_pModel->GetD3DIndexBuffer();
@@ -526,6 +544,7 @@ void CGrannyModelInstance::RenderMeshNodeListWithoutTexture(CGrannyMesh::EType e
 		while (pTriGroupNode)
 		{
 			ms_faceCount += pTriGroupNode->triCount;
+			MapPerformance::Count(MapPerformance::Counter::ActorDrawCalls);
 			STATEMANAGER.DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, vtxCount, pTriGroupNode->idxPos, pTriGroupNode->triCount, vtxMeshBasePos);
 			pTriGroupNode = pTriGroupNode->pNextTriGroupNode;
 		}

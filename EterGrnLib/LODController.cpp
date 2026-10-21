@@ -1,5 +1,7 @@
 #include "StdAfx.h"
 #include "LODController.h"
+#include "../EterBase/FrameWorkBudget.h"
+#include "../EterBase/MapPerformance.h"
 
 static float LODHEIGHT_ACTOR		=	500.0f;
 static float LODDISTANCE_ACTOR		=	5000.0f;
@@ -28,11 +30,25 @@ enum
 static std::vector<CGraphicVertexBuffer*> gs_vbs[SHARED_VB_NUM];
 
 static CGraphicVertexBuffer gs_emptyVB;
+static size_t gs_idleDeformBytes = 0;
 
 #include <time.h>
 
+static void TrimDeformBufferPool()
+{
+    const size_t budget = (IsWorldMemoryPressure() ? 2u : 8u) * 1024u * 1024u;
+    for (auto& bucket : gs_vbs)
+        while (gs_idleDeformBytes > budget && !bucket.empty())
+        {
+            auto* buffer = bucket.back(); bucket.pop_back();
+            gs_idleDeformBytes -= buffer->GetBufferSize();
+            delete buffer;
+        }
+}
+
 static CGraphicVertexBuffer* __AllocDeformVertexBuffer(unsigned deformableVertexCount)
 {
+	TrimDeformBufferPool();
 	if (deformableVertexCount == 0)
 		return &gs_emptyVB;
 
@@ -47,6 +63,8 @@ static CGraphicVertexBuffer* __AllocDeformVertexBuffer(unsigned deformableVertex
 
 			CGraphicVertexBuffer* pkRetVB = vbs.back();
 			vbs.pop_back();
+			gs_idleDeformBytes -= pkRetVB->GetBufferSize();
+			MapPerformance::Count(MapPerformance::Counter::BufferPoolReuse);
 			return pkRetVB;
 		}
 	}
@@ -54,6 +72,7 @@ static CGraphicVertexBuffer* __AllocDeformVertexBuffer(unsigned deformableVertex
 	static time_t base = time(nullptr);
 	//TraceError("NEW %8d: %d(%d)", time(nullptr) - base, capacity, deformableVertexCount);
 
+	MapPerformance::Scope allocateProfile("actor.vertex_buffer_allocate");
 	const auto pkNewVB = new CGraphicVertexBuffer;
 
 	if (!pkNewVB->Create(
@@ -63,6 +82,8 @@ static CGraphicVertexBuffer* __AllocDeformVertexBuffer(unsigned deformableVertex
 		D3DPOOL_DEFAULT))
 	{
 		TraceError("NEW_ERROR %8d: %d(%d)", time(nullptr) - base, capacity, deformableVertexCount);
+		delete pkNewVB;
+		return nullptr;
 	}
 
 	return pkNewVB;
@@ -70,14 +91,18 @@ static CGraphicVertexBuffer* __AllocDeformVertexBuffer(unsigned deformableVertex
 
 void __FreeDeformVertexBuffer(CGraphicVertexBuffer* pkDelVB)
 {
+	TrimDeformBufferPool();
 	if (pkDelVB)
 	{
 		if (pkDelVB == &gs_emptyVB)
 			return;
 
 		const unsigned index = (pkDelVB->GetVertexCount() - 1) / 500;
-		if (index < SHARED_VB_NUM)
+		const size_t budget = (IsWorldMemoryPressure() ? 2u : 8u) * 1024u * 1024u;
+		const size_t bytes = pkDelVB->GetBufferSize();
+		if (index < SHARED_VB_NUM && bytes <= budget && gs_idleDeformBytes <= budget - bytes)
 		{
+			gs_idleDeformBytes += bytes;
 			gs_vbs[index].push_back(pkDelVB);
 		}
 		else
@@ -93,16 +118,22 @@ void __ReserveSharedVertexBuffers(unsigned index, unsigned count)
 	if (index >= SHARED_VB_NUM)
 		return;
 
+	count = (std::min)(count, IsWorldMemoryPressure() ? 8u : 40u);
 	const unsigned capacity = (index + 1) * 500;
 
 	for (unsigned i = 0; i != count; ++i)
 	{
 		auto pkNewVB = new CGraphicVertexBuffer;
-		pkNewVB->Create(
-			capacity,
-			D3DFVF_XYZ|D3DFVF_NORMAL|D3DFVF_TEX1,
-			D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC,
-			D3DPOOL_DEFAULT);
+        const size_t budget = (IsWorldMemoryPressure() ? 2u : 8u) * 1024u * 1024u;
+        const size_t bytes = static_cast<size_t>(capacity) * sizeof(TPNTVertex);
+        if (bytes > budget || gs_idleDeformBytes > budget - bytes ||
+            !pkNewVB->Create(capacity, D3DFVF_XYZ|D3DFVF_NORMAL|D3DFVF_TEX1,
+                D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC, D3DPOOL_DEFAULT))
+        {
+            delete pkNewVB;
+            break;
+        }
+		gs_idleDeformBytes += pkNewVB->GetBufferSize();
 		gs_vbs[index].push_back(pkNewVB);
 	}
 }
@@ -137,8 +168,10 @@ void GrannyDestroySharedDeformBuffer()
 		}
 		vbs.clear();
 	}
+	gs_idleDeformBytes = 0;
 }
 
+// Free-list byte accounting excludes buffers currently used by live actors.
 void CGrannyLODController::SetMinLODMode(bool isEnable)
 {
 	ms_isMinLODModeEnable=isEnable;
@@ -246,13 +279,15 @@ void CGrannyLODController::AddModel(CGraphicThing * pThing, int iSrcModel, CGran
 
 	__ReserveSharedDeformableVertexBuffer(pModel->GetDeformVertexCount());
 
+    CGraphicVertexBuffer* modelBuffer = m_pkSharedDeformableVertexBuffer;
+    if (modelBuffer && modelBuffer->GetVertexCount() < pModel->GetDeformVertexCount()) modelBuffer = nullptr;
 	if (pSkelLODController)
 	{
-		pModelInstance->SetLinkedModelPointer(pModel, m_pkSharedDeformableVertexBuffer, &pSkelLODController->m_pCurrentModelInstance);
+		pModelInstance->SetLinkedModelPointer(pModel, modelBuffer, &pSkelLODController->m_pCurrentModelInstance);
 	}
 	else
 	{
-		pModelInstance->SetLinkedModelPointer(pModel, m_pkSharedDeformableVertexBuffer, nullptr);
+		pModelInstance->SetLinkedModelPointer(pModel, modelBuffer, nullptr);
 	}
 
 	// END_OF_WORK
@@ -292,9 +327,13 @@ void CGrannyLODController::__ReserveSharedDeformableVertexBuffer(DWORD deformabl
 		m_pkSharedDeformableVertexBuffer->GetVertexCount() >= deformableVertexCount)
 		return;
 
-	__FreeDeformVertexBuffer(m_pkSharedDeformableVertexBuffer);
-
-	m_pkSharedDeformableVertexBuffer = __AllocDeformVertexBuffer(deformableVertexCount);
+    CGraphicVertexBuffer* replacement = __AllocDeformVertexBuffer(deformableVertexCount);
+    if (!replacement) return;
+    // Existing LOD variants must stop referring to the old pooled buffer before
+    // it can be reused by another actor. All variants get the larger allocation.
+    for (auto* instance : m_que_pkModelInst) instance->SetDeformBuffer(replacement);
+    __FreeDeformVertexBuffer(m_pkSharedDeformableVertexBuffer);
+    m_pkSharedDeformableVertexBuffer = replacement;
 }
 
 void CGrannyLODController::AttachModelInstance(CGrannyLODController * pSrcLODController, const char * c_szBoneName)

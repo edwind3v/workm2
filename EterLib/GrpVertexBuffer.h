@@ -1,6 +1,7 @@
 #pragma once
 
 #include "GrpBase.h"
+#include <cstdint>
 
 class CGraphicVertexBuffer : public CGraphicBase
 {
@@ -17,6 +18,8 @@ class CGraphicVertexBuffer : public CGraphicBase
 		bool	Copy(int bufSize, const void* srcVertices);
 
 		bool	LockRange(unsigned count, void** pretVertices) const;
+		bool	LockDiscardRange(unsigned count, void** pretVertices) const;
+		std::uint64_t GetContentVersion() const { return m_contentVersion; }
 		bool	Lock(void** pretVertices) const;
 		bool	Unlock() const;
 
@@ -47,5 +50,7 @@ class CGraphicVertexBuffer : public CGraphicBase
 		D3DPOOL					m_d3dPool;
 		int						m_vtxCount;
 		DWORD					m_dwLockFlag;
+		DWORD m_vertexStride = 0;
+		mutable std::uint64_t m_contentVersion = 0;
 };
 

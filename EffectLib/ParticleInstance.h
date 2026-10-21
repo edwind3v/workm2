@@ -60,8 +60,9 @@ class CParticleInstance
 		static CParticleInstance* New();
 		static void DestroySystem();
 
-		void Transform(const D3DXMATRIX * c_matLocal= nullptr);
-		void Transform(const D3DXMATRIX * c_matLocal, const float c_fZRotation);
+		void Transform(const D3DXMATRIX * c_matLocal= nullptr, bool setColorState = true);
+		void Transform(const D3DXMATRIX * c_matLocal, const float c_fZRotation, bool setColorState = true);
+		DWORD GetColor() const;
 
 		TPTVertex * GetParticleMeshPointer();
 

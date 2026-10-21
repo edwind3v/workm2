@@ -2,6 +2,51 @@
 #include "../EterBase/MapPerformance.h"
 #include "ModelInstance.h"
 #include "Model.h"
+#include "../EterBase/FrameWorkBudget.h"
+#include <array>
+
+
+namespace
+{
+struct CachedWorldPose { granny_world_pose* pose = nullptr; size_t bytes = 0; int bones = 0; };
+std::array<CachedWorldPose, 128> cachedWorldPoses;
+size_t cachedWorldPoseBytes = 0;
+
+size_t WorldPoseBytes(int bones)
+{
+#if GrannyProductMinorVersion == 4
+    return GrannyGetResultingWorldPoseSize(bones);
+#else
+    return GrannyGetResultingWorldPoseSize(bones, GrannyIncludeComposites);
+#endif
+}
+void TrimWorldPoses()
+{
+    const bool pressure = IsWorldMemoryPressure();
+    const size_t budget = (pressure ? 2u : 8u) * 1024u * 1024u;
+    unsigned retained = 0;
+    for (auto& entry : cachedWorldPoses)
+        if (entry.pose)
+        {
+            if (cachedWorldPoseBytes > budget || ++retained > (pressure ? 32u : 128u))
+            {
+                GrannyFreeWorldPose(entry.pose);
+                cachedWorldPoseBytes -= entry.bytes;
+                entry = {};
+            }
+        }
+}
+}
+
+void CGrannyModelInstance::DestroyWorldPoseCache()
+{
+    for (auto& entry : cachedWorldPoses)
+    {
+        if (entry.pose) GrannyFreeWorldPose(entry.pose);
+        entry = {};
+    }
+    cachedWorldPoseBytes = 0;
+}
 
 void CGrannyModelInstance::Clear()
 {
@@ -103,18 +148,27 @@ bool CGrannyModelInstance::__CreateMeshBindingVector(CGrannyModelInstance* pkDst
 	if (pkDstModelInst && pkDstModelInst->m_pModel && pkDstModelInst->m_pModel->GetGrannyModelPointer())
 		pgrnDstSkeleton = pkDstModelInst->m_pModel->GetGrannyModelPointer()->Skeleton;
 
+	MapPerformance::Scope bindingProfile("actor.mesh_binding");
+	m_ownsMeshBindings = pgrnDstSkeleton != pgrnModel->Skeleton;
 	m_vct_pgrnMeshBinding.reserve(pgrnModel->MeshBindingCount);
 
 	granny_int32 iMeshBinding;
 	for (iMeshBinding = 0; iMeshBinding != pgrnModel->MeshBindingCount; ++iMeshBinding)
-		m_vct_pgrnMeshBinding.push_back(GrannyNewMeshBinding(pgrnModel->MeshBindings[iMeshBinding].Mesh, pgrnModel->Skeleton, pgrnDstSkeleton));
+        if (m_ownsMeshBindings)
+            m_vct_pgrnMeshBinding.push_back(GrannyNewMeshBinding(pgrnModel->MeshBindings[iMeshBinding].Mesh, pgrnModel->Skeleton, pgrnDstSkeleton));
+        else
+        {
+            m_vct_pgrnMeshBinding.push_back(m_pModel->GetMeshPointer(iMeshBinding)->GetDefaultMeshBinding());
+            MapPerformance::Count(MapPerformance::Counter::BindingReuse);
+        }
 
 	return true;
 }
 
 void CGrannyModelInstance::__DestroyMeshBindingVector()
 {
-	std::for_each(m_vct_pgrnMeshBinding.begin(), m_vct_pgrnMeshBinding.end(), GrannyFreeMeshBinding);
+	if (m_ownsMeshBindings)
+		std::for_each(m_vct_pgrnMeshBinding.begin(), m_vct_pgrnMeshBinding.end(), GrannyFreeMeshBinding);
 	m_vct_pgrnMeshBinding.clear();
 }
 
@@ -133,7 +187,18 @@ void CGrannyModelInstance::__CreateWorldPose(CGrannyModelInstance* pkSkeletonIns
 	const granny_skeleton * pgrnSkeleton = GrannyGetSourceSkeleton(m_pgrnModelInstance);
 
 	// WORK
-	m_pgrnWorldPoseReal = GrannyNewWorldPose(pgrnSkeleton->BoneCount);
+    MapPerformance::Scope profile("actor.pose_allocate");
+    TrimWorldPoses();
+    for (auto& entry : cachedWorldPoses)
+        if (entry.pose && entry.bones == pgrnSkeleton->BoneCount)
+        {
+            m_pgrnWorldPoseReal = entry.pose;
+            cachedWorldPoseBytes -= entry.bytes;
+            entry = {};
+            MapPerformance::Count(MapPerformance::Counter::PosePoolReuse);
+            return;
+        }
+    m_pgrnWorldPoseReal = GrannyNewWorldPose(pgrnSkeleton->BoneCount);
 	// END_OF_WORK
 }
 
@@ -142,8 +207,21 @@ void CGrannyModelInstance::__DestroyWorldPose()
 	if (!m_pgrnWorldPoseReal)
 		return;
 
-	GrannyFreeWorldPose(m_pgrnWorldPoseReal);
-	m_pgrnWorldPoseReal = nullptr;
+    TrimWorldPoses();
+    const int bones = GrannyGetWorldPoseBoneCount(m_pgrnWorldPoseReal);
+    const size_t bytes = WorldPoseBytes(bones);
+    const size_t budget = (IsWorldMemoryPressure() ? 2u : 8u) * 1024u * 1024u;
+    for (auto& entry : cachedWorldPoses)
+        if (!entry.pose && bytes <= budget && cachedWorldPoseBytes <= budget - bytes)
+        {
+            entry = {m_pgrnWorldPoseReal, bytes, bones};
+            cachedWorldPoseBytes += bytes;
+            m_pgrnWorldPoseReal = nullptr;
+            TrimWorldPoses();
+            return;
+        }
+    GrannyFreeWorldPose(m_pgrnWorldPoseReal);
+    m_pgrnWorldPoseReal = nullptr;
 }
 
 void CGrannyModelInstance::__CreateModelInstance()
@@ -231,7 +309,8 @@ CGraphicVertexBuffer& CGrannyModelInstance::__GetDeformableVertexBufferRef()
 void CGrannyModelInstance::__CreateDynamicVertexBuffer()
 {
 	assert(m_pModel != nullptr);
-	assert(m_kLocalDeformableVertexBuffer.IsEmpty());
+	// Shared buffers already provide storage; a local fallback starts empty.
+	if (m_pkSharedDeformableVertexBuffer || m_kLocalDeformableVertexBuffer.GetD3DVertexBuffer()) return;
 
 	const int vtxCount = m_pModel->GetDeformVertexCount();
 

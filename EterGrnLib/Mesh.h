@@ -52,6 +52,7 @@ class CGrannyMesh
 
 		void					DeformPNTVertices(void* dstBaseVertices, D3DXMATRIX* boneMatrices, granny_mesh_binding* pgrnMeshBinding) const;
 		bool					CanDeformPNTVertices() const;
+		granny_mesh_binding* GetDefaultMeshBinding() const { return m_pgrnMeshBindingTemp; }
 		bool					IsTwoSide() const;
 
 		int						GetVertexCount() const;

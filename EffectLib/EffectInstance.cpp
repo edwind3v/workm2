@@ -1,5 +1,6 @@
 #include "StdAfx.h"
 #include "EffectInstance.h"
+#include "../EterBase/MapPerformance.h"
 #include "ParticleSystemInstance.h"
 #include "SimpleLightInstance.h"
 
@@ -73,6 +74,7 @@ struct FEffectUpdator
 
 void CEffectInstance::OnUpdate()
 {
+	MapPerformance::Scope profile("effects.instance_update");
 	Transform();
 
 #ifdef WORLD_EDITOR
@@ -80,9 +82,9 @@ void CEffectInstance::OnUpdate()
 #else
 	FEffectUpdator f(CTimer::Instance().GetCurrentSecond()-m_fLastTime);
 #endif
-	f = std::for_each(m_ParticleInstanceVector.begin(), m_ParticleInstanceVector.end(),f);
-	f = std::for_each(m_MeshInstanceVector.begin(), m_MeshInstanceVector.end(),f);
-	f = std::for_each(m_LightInstanceVector.begin(), m_LightInstanceVector.end(),f);
+	MapPerformance::Measure("effects.emitters_update", nullptr, [&] { f = std::for_each(m_ParticleInstanceVector.begin(), m_ParticleInstanceVector.end(),f); });
+	MapPerformance::Measure("effects.meshes_update", nullptr, [&] { f = std::for_each(m_MeshInstanceVector.begin(), m_MeshInstanceVector.end(),f); });
+	MapPerformance::Measure("effects.lights_update", nullptr, [&] { f = std::for_each(m_LightInstanceVector.begin(), m_LightInstanceVector.end(),f); });
 	m_isAlive = f.isAlive;
 
 	m_fLastTime = CTimer::Instance().GetCurrentSecond();
@@ -90,6 +92,7 @@ void CEffectInstance::OnUpdate()
 
 void CEffectInstance::OnRender()
 {
+	MapPerformance::Scope profile("effects.instance_render");
 	STATEMANAGER.SaveSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_NONE);
 	STATEMANAGER.SaveSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_NONE);
 	STATEMANAGER.SaveRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
@@ -108,7 +111,7 @@ void CEffectInstance::OnRender()
 	STATEMANAGER.SetTextureStageState(0, D3DTSS_ALPHAOP,   D3DTOP_MODULATE);
 	STATEMANAGER.SetFVF(D3DFVF_XYZ|D3DFVF_TEX1);
 	std::for_each(m_ParticleInstanceVector.begin(),m_ParticleInstanceVector.end(),std::void_mem_fun(&CEffectElementBaseInstance::Render));
-	std::for_each(m_MeshInstanceVector.begin(),m_MeshInstanceVector.end(),std::void_mem_fun(&CEffectElementBaseInstance::Render));
+	MapPerformance::Measure("effects.meshes_render", nullptr, [&] { std::for_each(m_MeshInstanceVector.begin(),m_MeshInstanceVector.end(),std::void_mem_fun(&CEffectElementBaseInstance::Render)); });
 
 	/////
 	STATEMANAGER.RestoreSamplerState(0, D3DSAMP_MINFILTER);

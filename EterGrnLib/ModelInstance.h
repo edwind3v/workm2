@@ -6,6 +6,7 @@
 
 #include "Model.h"
 #include "Motion.h"
+#include <cstdint>
 
 class CGrannyModelInstance : public CGraphicCollisionObject
 {
@@ -41,6 +42,7 @@ class CGrannyModelInstance : public CGraphicCollisionObject
 		virtual ~CGrannyModelInstance();
 
 		bool	IsEmpty() const;
+		void SetDeformBuffer(CGraphicVertexBuffer* buffer) { __SetSharedDeformableVertexBuffer(buffer); m_skinnedBuffer = nullptr; }
 		void	Clear();
 
 		bool	CreateDeviceObjects();
@@ -147,6 +149,9 @@ class CGrannyModelInstance : public CGraphicCollisionObject
 		void	UpdateWorldPose() const;
 		void	UpdateWorldMatrices(const D3DXMATRIX * c_pWorldMatrix) const;
 		void	DeformPNTVertices(void * pvDest) const;
+		void InvalidatePose() const { ++m_poseInputRevision; }
+		std::uint64_t GetPoseRevision() const;
+		static void DestroyWorldPoseCache();
 
 		void	RenderMeshNodeListWithOneTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType) const;
 		void	RenderMeshNodeListWithTwoTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType) const;
@@ -186,6 +191,14 @@ class CGrannyModelInstance : public CGraphicCollisionObject
 		CGraphicVertexBuffer			m_kLocalDeformableVertexBuffer;
 		bool							m_isDeformableVertexBuffer;
 		// END_OF_WORK
+
+        mutable std::uint64_t m_poseInputRevision = 1, m_sampledInputRevision = 0, m_poseRevision = 0;
+        mutable const CGrannyModelInstance* m_sampledParent = nullptr;
+        mutable bool m_hasParentMatrix = false;
+        mutable D3DXMATRIX m_sampledParentMatrix;
+        std::uint64_t m_skinnedPoseRevision = 0, m_skinnedBufferVersion = 0;
+        const CGraphicVertexBuffer* m_skinnedBuffer = nullptr;
+        bool m_ownsMeshBindings = true;
 
 		SMaterialData m_material_data{}; // @fixme057
 

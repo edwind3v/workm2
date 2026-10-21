@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
 
 #include <windows.h>
 #include <mmsystem.h>
@@ -480,18 +481,21 @@ bool CEterPack::__BuildIndex(CEterFileDict& rkFileDict, bool bOverwrite)
 
 bool CEterPack::Get(CMappedFile& out_file, const char * filename, LPCVOID * data)
 {
+	MapPerformance::Scope entry("pack.entry", filename);
 	TEterPackIndex * index = FindIndex(filename);
 
 	if (!index)
 		return false;
 
-	if (!out_file.Create(m_stDataFileName.c_str(), data, index->data_position, index->data_size)) return false;
+	if (!MapPerformance::Measure("pack.open_map", filename, [&] { return out_file.Create(m_stDataFileName.c_str(), data, index->data_position, index->data_size); })) return false;
 
 	const bool bIsSecurityCheckRequired = ( index->compressed_type == COMPRESSED_TYPE_SECURITY ||
 									  index->compressed_type == COMPRESSED_TYPE_PANAMA );
 
+	entry.Detail("file=%s packed_bytes=%ld unpacked_bytes=%ld type=%u", filename, index->data_size, index->real_data_size, static_cast<unsigned>(index->compressed_type));
 	if( bIsSecurityCheckRequired )
 	{
+		MapPerformance::Scope validate("pack.validate", filename);
 #ifdef CHECKSUM_CHECK_MD5
 		MD5_CTX context;
 		GenerateMD5Hash( (BYTE*)(*data), index->data_size, context );
@@ -511,6 +515,10 @@ bool CEterPack::Get(CMappedFile& out_file, const char * filename, LPCVOID * data
 		#endif
 #endif
 	}
+
+	MapPerformance::Scope unpack;
+	if (index->compressed_type != COMPRESSED_TYPE_NONE)
+		unpack.Reset("pack.unpack", filename);
 
 	if (COMPRESSED_TYPE_COMPRESS == index->compressed_type)
 	{
@@ -593,18 +601,21 @@ bool CEterPack::Get(CMappedFile& out_file, const char * filename, LPCVOID * data
 
 bool CEterPack::Get2(CMappedFile& out_file, const char * filename, TEterPackIndex * index, LPCVOID * data)
 {
+	MapPerformance::Scope entry("pack.entry", filename);
 	if (!index)
 	{
 		return false;
 	}
 
-	if (!out_file.Create(m_stDataFileName.c_str(), data, index->data_position, index->data_size)) return false;
+	if (!MapPerformance::Measure("pack.open_map", filename, [&] { return out_file.Create(m_stDataFileName.c_str(), data, index->data_position, index->data_size); })) return false;
 
 	const bool bIsSecurityCheckRequired = ( index->compressed_type == COMPRESSED_TYPE_SECURITY ||
 									  index->compressed_type == COMPRESSED_TYPE_PANAMA );
 
+	entry.Detail("file=%s packed_bytes=%ld unpacked_bytes=%ld type=%u", filename, index->data_size, index->real_data_size, static_cast<unsigned>(index->compressed_type));
 	if( bIsSecurityCheckRequired )
 	{
+		MapPerformance::Scope validate("pack.validate", filename);
 #ifdef CHECKSUM_CHECK_MD5
 		MD5_CTX context;
 		GenerateMD5Hash( (BYTE*)(*data), index->data_size, context );
@@ -624,6 +635,10 @@ bool CEterPack::Get2(CMappedFile& out_file, const char * filename, TEterPackInde
 		#endif
 #endif
 	}
+
+	MapPerformance::Scope unpack;
+	if (index->compressed_type != COMPRESSED_TYPE_NONE)
+		unpack.Reset("pack.unpack", filename);
 
 	if (COMPRESSED_TYPE_COMPRESS == index->compressed_type)
 	{

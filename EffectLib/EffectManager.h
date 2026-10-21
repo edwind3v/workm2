@@ -80,6 +80,9 @@ class CEffectManager : public CScreen, public CSingleton<CEffectManager>
 		void __DestroyEffectDataMap();
 
 	protected:
+		void InvalidateRenderOrder() { m_renderOrder.clear(); m_renderOrderDirty = true; }
+		std::vector<CEffectInstance*> m_renderOrder;
+		bool m_renderOrderDirty = true;
 		bool m_isDisableSortRendering;
 		TEffectDataMap					m_kEftDataMap;
 		TEffectInstanceMap				m_kEftInstMap;

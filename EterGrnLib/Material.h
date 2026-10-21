@@ -82,6 +82,7 @@ class CGrannyMaterial : public CReferenceObject
 
 		float					m_fSpecularPower;
 		BOOL					m_bSpecularEnable;
+		bool m_specularInitialized = false;
 		bool					m_bTwoSideRender;
 		DWORD					m_dwLastCullRenderStateForTwoSideRendering;
 		BYTE					m_bSphereMapIndex;
