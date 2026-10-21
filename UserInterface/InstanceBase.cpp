@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
 #include "InstanceBase.h"
 #include "PythonBackground.h"
 #include "PythonNonPlayer.h"
@@ -1877,38 +1878,43 @@ void CInstanceBase::Update()
 {
 	++ms_dwUpdateCounter;
 
-	StateProcess();
-	m_GraphicThingInstance.PhysicsProcess();
-	m_GraphicThingInstance.RotationProcess();
-	m_GraphicThingInstance.ComboProcess();
-	m_GraphicThingInstance.AccumulationMovement();
+    const bool profileSample = MapPerformance::SampledFrame();
+    MapPerformance::MeasureIf(profileSample, "instance.state", [&] { StateProcess(); });
+    MapPerformance::MeasureIf(profileSample, "instance.physics_rotation", [&] {
+        m_GraphicThingInstance.PhysicsProcess();
+        m_GraphicThingInstance.RotationProcess();
+        m_GraphicThingInstance.ComboProcess();
+    });
+    MapPerformance::MeasureIf(profileSample, "instance.root_motion", [&] { m_GraphicThingInstance.AccumulationMovement(); });
 
-	if (m_GraphicThingInstance.IsMovement())
-	{
-		TPixelPosition kPPosCur;
-		NEW_GetPixelPosition(&kPPosCur);
+    MapPerformance::MeasureIf(profileSample, "instance.ground", [&] {
+        if (m_GraphicThingInstance.IsMovement())
+        {
+            TPixelPosition kPPosCur;
+            NEW_GetPixelPosition(&kPPosCur);
 
-		const DWORD dwCurTime=ELTimer_GetFrameMSec();
-		//if (m_dwNextUpdateHeightTime<dwCurTime)
-		{
-			m_dwNextUpdateHeightTime=dwCurTime;
-			kPPosCur.z = __GetBackgroundHeight(kPPosCur.x, kPPosCur.y);
-			NEW_SetPixelPosition(kPPosCur);
-		}
+            const DWORD dwCurTime=ELTimer_GetFrameMSec();
+            //if (m_dwNextUpdateHeightTime<dwCurTime)
+            {
+                m_dwNextUpdateHeightTime=dwCurTime;
+                kPPosCur.z = __GetBackgroundHeight(kPPosCur.x, kPPosCur.y);
+                NEW_SetPixelPosition(kPPosCur);
+            }
 
-		// SetMaterialColor
-		{
-			const DWORD dwMtrlColor=__GetShadowMapColor(kPPosCur.x, kPPosCur.y);
-			m_GraphicThingInstance.SetMaterialColor(dwMtrlColor);
-		}
-	}
+            // SetMaterialColor
+            {
+                const DWORD dwMtrlColor=__GetShadowMapColor(kPPosCur.x, kPPosCur.y);
+                m_GraphicThingInstance.SetMaterialColor(dwMtrlColor);
+            }
+        }
 
-	m_GraphicThingInstance.UpdateAdvancingPointInstance();
+    });
 
-	AttackProcess();
-	MovementProcess();
+    MapPerformance::MeasureIf(profileSample, "instance.advance_points", [&] { m_GraphicThingInstance.UpdateAdvancingPointInstance(); });
 
-	m_GraphicThingInstance.MotionProcess(IsPC());
+    MapPerformance::MeasureIf(profileSample, "instance.attack_movement", [&] { AttackProcess(); MovementProcess(); });
+
+    MapPerformance::MeasureIf(profileSample, "instance.motion_events", [&] { m_GraphicThingInstance.MotionProcess(IsPC()); });
 
 #ifdef ENABLE_EMOTION_HIDE_WEAPON
 	if (m_GraphicThingInstance.GetCurrentMotionIndex() < CRaceMotionData::NAME_CLAP || m_GraphicThingInstance.GetCurrentMotionIndex() == CRaceMotionData::NAME_DIG)
@@ -1933,9 +1939,10 @@ void CInstanceBase::Update()
 		m_kHorse.m_pkActor->HORSE_MotionProcess(FALSE);
 	}
 
-	__ComboProcess();
-
-	while(ProcessDamage()); // @fixme025
+    MapPerformance::MeasureIf(profileSample, "instance.combo_damage", [&] {
+        __ComboProcess();
+        while(ProcessDamage()); // @fixme025
+    });
 }
 
 void CInstanceBase::Transform()

@@ -135,6 +135,8 @@ const granny_int32x* CGrannyModelInstance::__GetMeshBoneIndices(unsigned int iMe
 
 bool CGrannyModelInstance::__CreateMeshBindingVector(CGrannyModelInstance* pkDstModelInst)
 {
+    m_matrixSnapshotValid = false;
+    m_revisionMatricesValid = false;
 	assert(m_vct_pgrnMeshBinding.empty());
 
 	if (!m_pModel)

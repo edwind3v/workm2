@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <bcrypt.h>
 #include <granny.h>
+#include "../EterGrnLib/ConstantMotion.h"
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -10,6 +11,8 @@
 #include <string>
 #include <vector>
 #include <cstring>
+#include <cmath>
+#include <algorithm>
 #include <lzo/lzo1x.h>
 #pragma comment(lib, "bcrypt.lib")
 
@@ -184,6 +187,86 @@ static int Index(const char* filename)
 
 int main(int argc, char** argv)
 {
+    if (argc == 3 && !strcmp(argv[1], "--motion-curves"))
+    {
+        granny_file* file = GrannyReadEntireFile(argv[2]);
+        granny_file_info* info = file ? GrannyGetFileInfo(file) : nullptr;
+        if (!info) { if (file) GrannyFreeFile(file); return 3; }
+        for (int a = 0; a < info->AnimationCount; ++a)
+        {
+            const auto* animation = info->Animations[a];
+            std::cout << "{\"constant_pose_eligible\":" << (IsConstantPoseAnimation(animation) ? "true" : "false") << "}\n";
+            for (int g = 0; g < animation->TrackGroupCount; ++g)
+            {
+                const auto* group = animation->TrackGroups[g];
+                unsigned constant = 0, animatedPosition = 0, animatedRotation = 0, animatedScale = 0;
+                for (int t = 0; t < group->TransformTrackCount; ++t)
+                {
+                    const auto& track = group->TransformTracks[t];
+                    const bool p = GrannyCurveIsConstantOrIdentity(&track.PositionCurve);
+                    const bool r = GrannyCurveIsConstantOrIdentity(&track.OrientationCurve);
+                    const bool s = GrannyCurveIsConstantOrIdentity(&track.ScaleShearCurve);
+                    constant += p && r && s;
+                    animatedPosition += !p; animatedRotation += !r; animatedScale += !s;
+                }
+                std::cout << "{\"animation\":" << Quote(animation->Name) << ",\"duration\":" << animation->Duration
+                    << ",\"group\":" << Quote(group->Name) << ",\"tracks\":" << group->TransformTrackCount
+                    << ",\"constant_tracks\":" << constant << ",\"animated_position\":" << animatedPosition
+                    << ",\"animated_rotation\":" << animatedRotation << ",\"animated_scale\":" << animatedScale
+                    << ",\"vector_tracks\":" << group->VectorTrackCount << ",\"flags\":" << group->Flags
+                    << ",\"periodic\":" << (group->PeriodicLoop ? "true" : "false")
+                    << ",\"loop_translation\":[" << group->LoopTranslation[0] << ',' << group->LoopTranslation[1]
+                    << ',' << group->LoopTranslation[2] << "]}\n";
+            }
+        }
+        GrannyFreeFile(file);
+        return 0;
+    }
+    if (argc == 3 && !strcmp(argv[1], "--mesh-layout"))
+    {
+        granny_file* file = GrannyReadEntireFile(argv[2]);
+        granny_file_info* info = file ? GrannyGetFileInfo(file) : nullptr;
+        if (!info) { if (file) GrannyFreeFile(file); return 3; }
+        for (int m = 0; m < info->ModelCount; ++m)
+        {
+            const granny_skeleton* skeleton = info->Models[m]->Skeleton;
+            if (!skeleton || !skeleton->BoneCount) continue;
+            granny_world_pose* pose = GrannyNewWorldPose(skeleton->BoneCount);
+            if (!pose) continue;
+            GrannyBuildRestWorldPose(skeleton, 0, skeleton->BoneCount, nullptr, pose);
+            GrannyBuildWorldPoseComposites(skeleton, 0, skeleton->BoneCount, pose);
+            const float* first = GrannyGetWorldPoseComposite4x4(pose, 0);
+            unsigned identical = 0;
+            float maxLinear = 0, maxTranslation = 0;
+            for (int b = 0; b < skeleton->BoneCount; ++b)
+            {
+                const float* matrix = GrannyGetWorldPoseComposite4x4(pose, b);
+                identical += !memcmp(first, matrix, sizeof(float) * 16);
+                for (unsigned c = 0; c < 16; ++c)
+                    if (c < 12) maxLinear = (std::max)(maxLinear, std::abs(matrix[c] - first[c]));
+                    else maxTranslation = (std::max)(maxTranslation, std::abs(matrix[c] - first[c]));
+            }
+            std::cout << "{\"model\":" << m << ",\"bones\":" << skeleton->BoneCount
+                << ",\"rest_identical_to_root\":" << identical << ",\"max_linear_delta\":" << maxLinear
+                << ",\"max_translation_delta\":" << maxTranslation << "}\n";
+            GrannyFreeWorldPose(pose);
+        }
+        for (int i = 0; i < info->MeshCount; ++i)
+        {
+            granny_mesh* mesh = info->Meshes[i];
+            unsigned uvSets = 0;
+            for (auto* member = GrannyGetMeshVertexType(mesh); member && member->Type != GrannyEndMember; ++member)
+                if (member->Name && !strncmp(member->Name, GrannyVertexTextureCoordinatesName, strlen(GrannyVertexTextureCoordinatesName))) ++uvSets;
+            std::cout << "{\"mesh\":" << i << ",\"name\":" << Quote(mesh->Name)
+                << ",\"rigid\":" << (GrannyMeshIsRigid(mesh) ? "true" : "false")
+                << ",\"vertices\":" << GrannyGetMeshVertexCount(mesh)
+                << ",\"groups\":" << GrannyGetMeshTriangleGroupCount(mesh)
+                << ",\"uv_sets\":" << uvSets << ",\"bindings\":" << mesh->BoneBindingCount
+                << ",\"first_bone\":" << Quote(mesh->BoneBindingCount > 0 ? mesh->BoneBindings[0].BoneName : "") << "}\n";
+        }
+        GrannyFreeFile(file);
+        return 0;
+    }
     if (argc == 3 && !strcmp(argv[1], "--index")) return Index(argv[2]);
     if (argc != 2) { std::cerr << "AssetInspector file-list.txt\n"; return 2; }
     std::ifstream list(argv[1]);

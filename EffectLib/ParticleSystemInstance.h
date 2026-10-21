@@ -13,6 +13,9 @@ class CParticleSystemInstance : public CEffectElementBaseInstance
 {
 	public:
 		static void DestroySystem();
+        static void BeginRenderBatch(IDirect3DDevice9* device);
+        static void EndRenderBatch();
+        static void FlushRenderBatch();
 
 		static CParticleSystemInstance* New();
 		static void Delete(CParticleSystemInstance* pkData);
@@ -73,7 +76,7 @@ class CParticleSystemInstance : public CEffectElementBaseInstance
 		DWORD m_dwCurrentEmissionCount;
 		int	m_iLoopCount;
 
-		typedef std::list<CParticleInstance*> TParticleInstanceList;
+		typedef std::vector<CParticleInstance*> TParticleInstanceList;
 		typedef std::vector<TParticleInstanceList> TParticleInstanceListVector;
 		TParticleInstanceListVector m_ParticleInstanceListVector;
 

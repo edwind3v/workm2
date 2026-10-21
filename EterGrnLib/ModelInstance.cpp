@@ -114,6 +114,16 @@ void CGrannyModelInstance::__Initialize()
     m_sampledParent = nullptr; m_hasParentMatrix = false;
     m_skinnedPoseRevision = m_skinnedBufferVersion = 0; m_skinnedBuffer = nullptr;
     m_ownsMeshBindings = true;
+    m_gpuSkinning = false;
+    m_uniformRigidMatrices = false;
+    m_sampledWithoutControls = false;
+    m_matrixPoseSnapshot.clear();
+    m_matrixPoseRevision = 0;
+    m_matrixSnapshotValid = false;
+    m_gpuPaletteCaches.clear();
+    m_constantMotion = m_sampledConstantControl = false;
+    m_poseStateRevision = 1; m_sampledPoseStateRevision = 0;
+    m_revisionMatricesValid = false; m_revisionMatricesPose = 0;
 }
 
 CGrannyModelInstance::CGrannyModelInstance()
@@ -144,5 +154,6 @@ void CGrannyModelInstance::DestroySystem()
 {
 	ms_kPool.Destroy();
 	DestroyWorldPoseCache();
+    GPUSkinning::Destroy();
 }
 

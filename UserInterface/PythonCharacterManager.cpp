@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "../EterBase/MapPerformance.h"
 #include "pythoncharactermanager.h"
 #include "PythonBackground.h"
 #include "PythonNonPlayer.h"
@@ -170,6 +171,9 @@ void CPythonCharacterManager::Update()
 	DWORD t1=timeGetTime();
 #endif
 	CInstanceBase::ResetPerformanceCounter();
+    MapPerformance::SetCrowdSize(static_cast<unsigned>(m_kAliveInstMap.size()), static_cast<unsigned>(m_kDeadInstList.size()));
+    const bool profileSample = MapPerformance::SampledFrame();
+    MapPerformance::Scope split(profileSample ? "characters.instance_updates" : nullptr);
 
 	CInstanceBase* pkInstMain=GetMainInstancePtr();
 #ifdef __PERFORMANCE_CHECKER__
@@ -210,17 +214,18 @@ void CPythonCharacterManager::Update()
 #ifdef __PERFORMANCE_CHECKER__
 	DWORD t3=timeGetTime();
 #endif
-	UpdateTransform();
+    split.Stop();
+    MapPerformance::MeasureIf(profileSample, "characters.transforms", [&] { UpdateTransform(); });
 #ifdef __PERFORMANCE_CHECKER__
 	DWORD t4=timeGetTime();
 #endif
 
-	UpdateDeleting();
+    MapPerformance::MeasureIf(profileSample, "characters.deleting", [&] { UpdateDeleting(); });
 #ifdef __PERFORMANCE_CHECKER__
 	DWORD t5=timeGetTime();
 #endif
 
-	__NEW_Pick();
+    MapPerformance::MeasureIf(profileSample, "characters.picking", [&] { __NEW_Pick(); });
 #ifdef __PERFORMANCE_CHECKER__
 	DWORD t6=timeGetTime();
 #endif
@@ -286,6 +291,8 @@ void CPythonCharacterManager::UpdateTransform()
 	DWORD t2=timeGetTime();
 #endif
 
+    const bool profileSample = MapPerformance::SampledFrame();
+    MapPerformance::Scope split(profileSample ? "characters.advancing_collision" : nullptr);
 	const CInstanceBase * pMainInstance = GetMainInstancePtr();
 	if (pMainInstance)
 	{
@@ -317,6 +324,7 @@ void CPythonCharacterManager::UpdateTransform()
 	DWORD t3=timeGetTime();
 #endif
 
+    split.Reset(profileSample ? "characters.actor_transforms" : nullptr);
 	{
 		for (auto itor = m_kAliveInstMap.begin(); itor != m_kAliveInstMap.end(); ++itor)
 		{

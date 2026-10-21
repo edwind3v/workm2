@@ -21,6 +21,7 @@ float CPythonGraphic::GetOrthoDepth() const
 
 void CPythonGraphic::SetInterfaceRenderState() const
 {
+    RestoreOmniLights();
 	STATEMANAGER.SetTransform(D3DTS_PROJECTION, &ms_matIdentity);
  	STATEMANAGER.SetTransform(D3DTS_VIEW, &ms_matIdentity);
 	STATEMANAGER.SetTransform(D3DTS_WORLD, &ms_matIdentity);
@@ -58,14 +59,27 @@ void CPythonGraphic::SetCursorPosition(int x, int y) const
 
 void CPythonGraphic::SetOmniLight() const
 {
+    // Character selection and UI model previews need the same light state in
+    // the device and the GPU-skinning cache. Keep their temporary lights from
+    // leaking into the world renderer after the preview finishes.
+    if (!m_omniLightsActive)
+    {
+        for (DWORD index = 0; index < 2; ++index)
+        {
+            STATEMANAGER.GetLight(index, &m_savedOmniLights[index]);
+            m_savedOmniEnabled[index] = STATEMANAGER.GetLightEnable(index);
+        }
+        STATEMANAGER.GetMaterial(&m_savedOmniMaterial);
+        m_omniLightsActive = true;
+    }
     // Set up a material
-    D3DMATERIAL9 Material;
+    D3DMATERIAL9 Material{};
 	Material.Ambient = D3DXCOLOR(0.3f, 0.3f, 0.3f, 1.0f);
 	Material.Diffuse = D3DXCOLOR(1.0f, 1.0f, 1.0f, 1.0f);
 	Material.Emissive = D3DXCOLOR(0.1f, 0.1f, 0.1f, 1.0f);
     STATEMANAGER.SetMaterial(&Material);
 
-	D3DLIGHT9 Light;
+	D3DLIGHT9 Light{};
 	Light.Type = D3DLIGHT_SPOT;
     Light.Position = D3DXVECTOR3(50.0f, 150.0f, 350.0f);
     Light.Direction = D3DXVECTOR3(-0.15f, -0.3f, -0.9f);
@@ -84,16 +98,32 @@ void CPythonGraphic::SetOmniLight() const
 	Light.Ambient.b = 1.0f;
 	Light.Ambient.a = 1.0f;
     Light.Range = 500.0f;
-	ms_lpd3dDevice->SetLight(0, &Light);
-	ms_lpd3dDevice->LightEnable(0, TRUE);
+	STATEMANAGER.SetLight(0, &Light);
+	STATEMANAGER.LightEnable(0, TRUE);
 
 	Light.Type = D3DLIGHT_POINT;
 	Light.Position = D3DXVECTOR3(0.0f, 200.0f, 200.0f);
 	Light.Attenuation0 = 0.1f;
 	Light.Attenuation1 = 0.01f;
 	Light.Attenuation2 = 0.0f;
-	ms_lpd3dDevice->SetLight(1, &Light);
-	ms_lpd3dDevice->LightEnable(1, TRUE);
+	STATEMANAGER.SetLight(1, &Light);
+	STATEMANAGER.LightEnable(1, TRUE);
+}
+
+void CPythonGraphic::RestoreOmniLights() const
+{
+    if (!m_omniLightsActive) return;
+    for (DWORD index = 0; index < 2; ++index)
+    {
+        // A light which has never been defined has type zero. There is no
+        // valid device light to restore in that case; leave the slot disabled.
+        const auto type = m_savedOmniLights[index].Type;
+        const bool valid = type == D3DLIGHT_DIRECTIONAL || type == D3DLIGHT_POINT || type == D3DLIGHT_SPOT;
+        if (valid) STATEMANAGER.SetLight(index, &m_savedOmniLights[index]);
+        STATEMANAGER.LightEnable(index, valid && m_savedOmniEnabled[index]);
+    }
+    STATEMANAGER.SetMaterial(&m_savedOmniMaterial);
+    m_omniLightsActive = false;
 }
 
 void CPythonGraphic::SetViewport(float fx, float fy, float fWidth, float fHeight)

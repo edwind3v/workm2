@@ -3,6 +3,8 @@
 #include "Model.h"
 #include "Material.h"
 #include "../eterLib/DX11GrannyProbe.h"
+#include "OrderedTriangleBatch.h"
+#include <cmath>
 
 namespace
 {
@@ -71,6 +73,49 @@ void CGrannyMesh::LoadIndices(void * dstBaseIndices) const
 const std::vector<WORD>& CGrannyMesh::GetDX11PreviewIndices() const
 {
 	return m_dx11PreviewIndices;
+}
+
+const CGrannyMesh::TTriGroupNode* CGrannyMesh::GetDrawTriGroupNodeList(
+    CGrannyMaterial::EType type, bool batched) const
+{
+    if (batched && !m_drawGroups[type].empty()) return m_drawGroups[type].data();
+    return GetTriGroupNodeList(type);
+}
+
+void CGrannyMesh::BuildDrawBatches(const WORD* modelIndices, unsigned maxTriangles,
+    std::vector<WORD>& batchedIndices)
+{
+    for (int type = 0; type < CGrannyMaterial::TYPE_MAX_NUM; ++type)
+    {
+        auto& destination = m_drawGroups[type];
+        destination.clear();
+        std::vector<OrderedTriangleBatch::Group> source;
+        for (const TTriGroupNode* group = m_triGroupNodeLists[type]; group;
+            group = group->pNextTriGroupNode)
+            source.push_back({group->idxPos - m_idxBasePos, group->triCount, group->mtrlIndex});
+
+        OrderedTriangleBatch::Result batch;
+        if (!OrderedTriangleBatch::Build(modelIndices + m_idxBasePos,
+            GrannyGetMeshIndexCount(m_pgrnMesh), source, maxTriangles, batch))
+            continue;
+
+        // Bound the extra per-model cache. Exceeding the budget changes only
+        // batching eligibility, never the model's geometry or appearance.
+        constexpr size_t maxIndices = 16u * 1024u * 1024u; // 32 MiB
+        if (batch.indices.size() > maxIndices - batchedIndices.size()) continue;
+        const int base = static_cast<int>(batchedIndices.size());
+        batchedIndices.insert(batchedIndices.end(), batch.indices.begin(), batch.indices.end());
+        destination.resize(batch.groups.size());
+        for (size_t i = 0; i < batch.groups.size(); ++i)
+        {
+            TTriGroupNode& node = destination[i];
+            node.idxPos = base + batch.groups[i].firstIndex;
+            node.triCount = batch.groups[i].triangleCount;
+            node.mtrlIndex = batch.groups[i].material;
+            node.sourceDraws = batch.groups[i].sourceDraws;
+            node.pNextTriGroupNode = i + 1 < destination.size() ? &destination[i + 1] : nullptr;
+        }
+    }
 }
 
 const std::vector<TPNTVertex>& CGrannyMesh::GetDX11PreviewRigidVertices() const
@@ -169,6 +214,103 @@ bool CGrannyMesh::CanDeformPNTVertices() const
 	return m_canDeformPNTVertex;
 }
 
+void CGrannyMesh::LoadGPUSkinVertices()
+{
+    if (!GPUSkinning::Enabled() || !m_canDeformPNTVertex) return;
+    if (m_pgrnMesh->BoneBindingCount <= 0 || m_pgrnMesh->BoneBindingCount > GPUSkinning::MaxBones)
+    {
+        GPUSkinning::ReportFallback("mesh_palette_exceeds_72_bones");
+        return;
+    }
+    // Refuse truncation: meshes with more than four influences keep Granny's
+    // CPU deformer. Convert formats only while their original data is alive.
+    int weightCount = 0, indexCount = 0;
+    for (auto* member = GrannyGetMeshVertexType(m_pgrnMesh); member->Type != GrannyEndMember; ++member)
+    {
+        if (!member->Name) continue;
+        if (strcmp(member->Name, GrannyVertexBoneWeightsName) == 0) weightCount = member->ArrayWidth;
+        if (strcmp(member->Name, GrannyVertexBoneIndicesName) == 0) indexCount = member->ArrayWidth;
+    }
+    if (weightCount <= 0 || weightCount > 4 || indexCount != weightCount)
+    {
+        GPUSkinning::ReportFallback("unsupported_vertex_influences");
+        return;
+    }
+    granny_data_type_definition type[] = {
+        {GrannyReal32Member, GrannyVertexPositionName, nullptr, 3},
+        {GrannyNormalUInt8Member, GrannyVertexBoneWeightsName, nullptr, 4},
+        {GrannyUInt8Member, GrannyVertexBoneIndicesName, nullptr, 4},
+        {GrannyReal32Member, GrannyVertexNormalName, nullptr, 3},
+        {GrannyReal32Member, GrannyVertexTextureCoordinatesName "0", nullptr, 2},
+        {GrannyReal32Member, GrannyVertexTextureCoordinatesName "1", nullptr, 2},
+        {GrannyEndMember}
+    };
+    const int count = GrannyGetMeshVertexCount(m_pgrnMesh);
+    if (count <= 0) return;
+    std::vector<TGPUSkinVertex> vertices(count);
+    GrannyCopyMeshVertices(m_pgrnMesh, type, vertices.data());
+    for (auto& vertex : vertices)
+    {
+        unsigned weightSum = 0;
+        for (unsigned influence = 0; influence < 4; ++influence)
+        {
+            weightSum += vertex.weights[influence];
+            // A zero-weight slot is still fetched by the unrolled VS.
+            if (!vertex.weights[influence]) vertex.indices[influence] = 0;
+            if (vertex.indices[influence] >= m_pgrnMesh->BoneBindingCount)
+            {
+                GPUSkinning::ReportFallback("invalid_vertex_bone_index");
+                return;
+            }
+        }
+        if (weightSum != 255)
+        {
+            GPUSkinning::ReportFallback("non_normalized_vertex_weights");
+            return;
+        }
+        for (float value : vertex.position) if (!std::isfinite(value)) return;
+        for (float value : vertex.normal) if (!std::isfinite(value)) return;
+        for (float value : vertex.uv) if (!std::isfinite(value)) return;
+        for (float value : vertex.uv1) if (!std::isfinite(value)) return;
+    }
+    m_gpuSkinVertices.swap(vertices);
+    m_gpuSkinBoneCount = m_pgrnMesh->BoneBindingCount;
+}
+
+bool CGrannyMesh::CreateGPUSkinDeviceObjects(IDirect3DDevice9* device)
+{
+    if (!device || m_gpuSkinVertices.empty()) return false;
+    if (m_gpuSkinDevice != device) { DestroyGPUSkinDeviceObjects(); m_gpuSkinDevice = device; }
+    if (m_gpuSkinBuffer) return true;
+    if (m_gpuSkinUploadFailed) return false;
+    const UINT bytes = static_cast<UINT>(m_gpuSkinVertices.size() * sizeof(TGPUSkinVertex));
+    HRESULT result = device->CreateVertexBuffer(bytes, D3DUSAGE_WRITEONLY, 0,
+        D3DPOOL_DEFAULT, &m_gpuSkinBuffer, nullptr);
+    void* destination = nullptr;
+    if (SUCCEEDED(result)) result = m_gpuSkinBuffer->Lock(0, bytes, &destination, 0);
+    if (SUCCEEDED(result))
+    {
+        memcpy(destination, m_gpuSkinVertices.data(), bytes);
+        result = m_gpuSkinBuffer->Unlock();
+    }
+    if (FAILED(result))
+    {
+        DestroyGPUSkinDeviceObjects();
+        m_gpuSkinDevice = device;
+        m_gpuSkinUploadFailed = true;
+        GPUSkinning::ReportFallback("static_vertex_buffer_upload");
+        return false;
+    }
+    return true;
+}
+
+void CGrannyMesh::DestroyGPUSkinDeviceObjects()
+{
+    if (m_gpuSkinBuffer) { m_gpuSkinBuffer->Release(); m_gpuSkinBuffer = nullptr; }
+    m_gpuSkinDevice = nullptr;
+    m_gpuSkinUploadFailed = false;
+}
+
 const granny_mesh * CGrannyMesh::GetGrannyMeshPointer() const
 {
 	return m_pgrnMesh;
@@ -258,6 +400,8 @@ bool CGrannyMesh::CreateFromGrannyMeshPointer(granny_skeleton * pgrnSkeleton, gr
 	if (!LoadTriGroupNodeList(rkMtrlPal))
 		return false;
 
+    LoadGPUSkinVertices();
+
 	return true;
 }
 
@@ -344,6 +488,10 @@ void CGrannyMesh::SetPNT2Mesh()
 
 void CGrannyMesh::Destroy()
 {
+    for (auto& groups : m_drawGroups) std::vector<TTriGroupNode>().swap(groups);
+    DestroyGPUSkinDeviceObjects();
+    std::vector<TGPUSkinVertex>().swap(m_gpuSkinVertices);
+    m_gpuSkinBoneCount = 0;
 	const size_t rigidBytes = m_dx11PreviewRigidVertices.size() * sizeof(TPNTVertex);
 	if (rigidBytes)
 	{

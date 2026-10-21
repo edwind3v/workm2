@@ -10,6 +10,7 @@ class CGrannyLODController : public CGraphicBase
 {
 	public:
 		static void SetMinLODMode(bool isEnable);
+        bool HasLODLevels() const { return m_que_pkModelInst.size() > 1; }
 
 	public:
 		struct FSetLocalTime

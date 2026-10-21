@@ -1,0 +1,12 @@
+# Local IDE state and generated build/diagnostic work directories
+.vs/
+**/bin/
+*.obj
+*.sbr
+*.pdb
+*.ilk
+*.tlog
+*.pch
+UserInterface/metin2client.exe
+__pycache__/
+*.pyc

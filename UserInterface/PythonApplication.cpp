@@ -581,15 +581,17 @@ bool CPythonApplication::Process()
 	static UINT		s_uiLoad = 0;
 	static DWORD	s_dwCheckTime = ELTimer_GetMSec();
 
-	if (ELTimer_GetMSec() - s_dwCheckTime > 1000)
+    const DWORD fpsNow = ELTimer_GetMSec();
+    const DWORD fpsElapsed = fpsNow - s_dwCheckTime;
+	if (fpsElapsed >= 1000)
 	{
-		m_dwUpdateFPS		= s_dwUpdateFrameCount;
-		m_dwRenderFPS		= s_dwRenderFrameCount;
+        m_dwUpdateFPS = static_cast<DWORD>((static_cast<unsigned long long>(s_dwUpdateFrameCount) * 1000 + fpsElapsed / 2) / fpsElapsed);
+        m_dwRenderFPS = static_cast<DWORD>((static_cast<unsigned long long>(s_dwRenderFrameCount) * 1000 + fpsElapsed / 2) / fpsElapsed);
 		m_dwLoad			= s_uiLoad;
 
 		m_dwFaceCount		= s_dwFaceCount / max(1, s_dwRenderFrameCount);
 
-		s_dwCheckTime		= ELTimer_GetMSec();
+		s_dwCheckTime = fpsNow;
 
 		s_uiLoad = s_dwFaceCount = s_dwUpdateFrameCount = s_dwRenderFrameCount = 0;
 	}

@@ -15,6 +15,22 @@ class CGrannyModel : public CReferenceObject
 			SMeshNode *			pNextMeshNode;
 		} TMeshNode;
 
+        struct TRigidSource
+        {
+            int mesh;
+            CGrannyMesh::TTriGroupNode group;
+        };
+        struct TRigidBatch
+        {
+            CGrannyMesh::TTriGroupNode group;
+            unsigned firstSource, sourceCount;
+        };
+        const std::vector<TRigidBatch>& GetRigidBatches(CGrannyMaterial::EType type) const { return m_rigidBatches[type]; }
+        const std::vector<TRigidSource>& GetRigidSources(CGrannyMaterial::EType type) const { return m_rigidSources[type]; }
+        bool HasRigidBatches() const { return !m_rigidBatches[0].empty() || !m_rigidBatches[1].empty(); }
+        double GetRigidPositionBound() const { return m_rigidPositionBound; }
+        double GetRigidNormalBound() const { return m_rigidNormalBound; }
+
 	public:
 		CGrannyModel();
 		virtual ~CGrannyModel();
@@ -40,6 +56,7 @@ class CGrannyModel : public CReferenceObject
 
 		LPDIRECT3DVERTEXBUFFER9 GetPNTD3DVertexBuffer() const;
 		LPDIRECT3DINDEXBUFFER9 GetD3DIndexBuffer() const;
+		LPDIRECT3DINDEXBUFFER9 GetBatchedD3DIndexBuffer() const;
 
 		const CGrannyModel::TMeshNode*  GetMeshNodeList(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType) const;
 
@@ -47,11 +64,15 @@ class CGrannyModel : public CReferenceObject
 		void UnlockVertices() const;
 
 		const CGrannyMaterialPalette& GetMaterialPalette() const;
+		void SetDiagnosticAsset(const char* asset) { m_diagnosticAsset = asset ? asset : ""; }
+		const char* GetDiagnosticAsset() const { return m_diagnosticAsset.c_str(); }
 
 	protected:
 		bool LoadMeshs();
 		bool LoadPNTVertices();
 		bool LoadIndices();
+		void UploadBatchedIndices();
+        void BuildRigidBatches(const std::vector<WORD>& source, const D3DCAPS9& caps);
 		void Initialize();
 
 		BOOL CheckMeshIndex(int iIndex) const;
@@ -60,12 +81,18 @@ class CGrannyModel : public CReferenceObject
 	protected:
 		// Granny Data
 		granny_model *			m_pgrnModel;
+		std::string m_diagnosticAsset;
 
 		// Static Data
 		CGrannyMesh *			m_meshs;
 
 		CGraphicVertexBuffer	m_pntVtxBuf;	// for rigid mesh
 		CGraphicIndexBuffer		m_idxBuf;
+		CGraphicIndexBuffer m_batchedIdxBuf;
+		std::vector<WORD> m_batchedIndices;
+        std::vector<TRigidBatch> m_rigidBatches[CGrannyMaterial::TYPE_MAX_NUM];
+        std::vector<TRigidSource> m_rigidSources[CGrannyMaterial::TYPE_MAX_NUM];
+        double m_rigidPositionBound = 1, m_rigidNormalBound = 1;
 
 		TMeshNode *				m_meshNodes;
 		TMeshNode *				m_meshNodeLists[CGrannyMesh::TYPE_MAX_NUM][CGrannyMaterial::TYPE_MAX_NUM];

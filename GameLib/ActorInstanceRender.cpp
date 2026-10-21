@@ -1,5 +1,6 @@
 #include "StdAfx.h"
 #include "../eterLib/StateManager.h"
+#include "../EterBase/MapPerformance.h"
 
 #include "ActorInstance.h"
 
@@ -31,6 +32,7 @@ void CActorInstance::SetMaterialAlpha(DWORD dwAlpha)
 
 void CActorInstance::OnRender()
 {
+	MapPerformance::RenderPassScope pass("actor_main");
 	D3DMATERIAL9 kMtrl;
 	STATEMANAGER.GetMaterial(&kMtrl);
 

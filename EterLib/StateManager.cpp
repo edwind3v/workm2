@@ -11,11 +11,14 @@ struct SLightData
 		LIGHT_NUM = 8,
 	};
 	D3DLIGHT9 m_akD3DLight[LIGHT_NUM];
+    bool enabled[LIGHT_NUM]{};
 } m_kLightData;
 
 void CStateManager::SetLight(DWORD index, CONST D3DLIGHT9* pLight) const
 {
 	assert(index<SLightData::LIGHT_NUM);
+	if (memcmp(&m_kLightData.m_akD3DLight[index], pLight, sizeof(*pLight)) != 0)
+		++m_vertexProcessingRevision;
 	m_kLightData.m_akD3DLight[index]=*pLight;
 
 	m_lpD3DDev->SetLight(index, pLight);
@@ -25,6 +28,23 @@ void CStateManager::GetLight(DWORD index, D3DLIGHT9* pLight) const
 {
 	assert(index<8);
 	*pLight=m_kLightData.m_akD3DLight[index];
+}
+
+void CStateManager::LightEnable(DWORD index, BOOL enabled)
+{
+    assert(index < SLightData::LIGHT_NUM);
+    if (index >= SLightData::LIGHT_NUM) return;
+    if (m_bForce || m_kLightData.enabled[index] != (enabled != FALSE))
+        if (SUCCEEDED(m_lpD3DDev->LightEnable(index, enabled)))
+        {
+            m_kLightData.enabled[index] = enabled != FALSE;
+            ++m_vertexProcessingRevision;
+        }
+}
+
+bool CStateManager::GetLightEnable(DWORD index) const
+{
+    return index < SLightData::LIGHT_NUM && m_kLightData.enabled[index];
 }
 
 bool CStateManager::BeginScene()
@@ -118,17 +138,21 @@ void CStateManager::Restore()
 
 void CStateManager::InvalidateShaderConstants()
 {
+    ++m_vertexProcessingRevision;
+    m_materialValid = false;
     memset(m_vertexConstantsValid, 0, sizeof(m_vertexConstantsValid));
     memset(m_pixelConstantsValid, 0, sizeof(m_pixelConstantsValid));
 }
 
 void CStateManager::SetDefaultState()
 {
+    m_materialValid = false;
     InvalidateShaderConstants();
 	// @fixme039 BEGIN (moved from SetDevice)
 	D3DCAPS9 d3dCaps;
 	m_lpD3DDev->GetDeviceCaps(&d3dCaps);
     m_mipFilterCaps = d3dCaps.TextureFilterCaps;
+    m_vertexConstantLimit = (std::min)(d3dCaps.MaxVertexShaderConst, STATEMANAGER_MAX_VCONSTANTS);
 
 	if (d3dCaps.TextureFilterCaps & D3DPTFILTERCAPS_MAGFANISOTROPIC)
 		m_dwBestMagFilter = D3DTEXF_ANISOTROPIC;
@@ -155,6 +179,8 @@ void CStateManager::SetDefaultState()
 	m_bForce = true;
 
 	D3DXMATRIX Identity;
+    for (DWORD light = 0; light < SLightData::LIGHT_NUM; ++light)
+        LightEnable(light, FALSE);
 	D3DXMatrixIdentity(&Identity);
 
 	SetTransform(D3DTS_WORLD, &Identity);
@@ -317,7 +343,7 @@ void CStateManager::SetDefaultState()
 	SetFVF(D3DFVF_XYZ);
 
 	D3DXVECTOR4 av4Null[STATEMANAGER_MAX_VCONSTANTS]{};
-	SetVertexShaderConstant(0, av4Null, STATEMANAGER_MAX_VCONSTANTS);
+	SetVertexShaderConstant(0, av4Null, m_vertexConstantLimit);
 	SetPixelShaderConstant(0, av4Null, STATEMANAGER_MAX_PCONSTANTS);
 
 	m_bForce = false;
@@ -359,8 +385,12 @@ void CStateManager::RestoreMaterial()
 
 void CStateManager::SetMaterial(const D3DMATERIAL9 * pMaterial)
 {
-	m_lpD3DDev->SetMaterial(pMaterial);
+	if (m_materialValid && !m_bForce && memcmp(&m_CurrentState.m_D3DMaterial, pMaterial, sizeof(*pMaterial)) == 0)
+		return;
+	++m_vertexProcessingRevision;
+	const HRESULT result = m_lpD3DDev->SetMaterial(pMaterial);
 	m_CurrentState.m_D3DMaterial = *pMaterial;
+	m_materialValid = SUCCEEDED(result);
 }
 
 void CStateManager::GetMaterial(D3DMATERIAL9 * pMaterial) const
@@ -409,6 +439,18 @@ void CStateManager::SetRenderState(D3DRENDERSTATETYPE Type, DWORD Value)
 {
 	if (m_CurrentState.m_RenderStates[Type] == Value)
 		return;
+
+    switch (Type)
+    {
+    case D3DRS_LIGHTING: case D3DRS_NORMALIZENORMALS: case D3DRS_RANGEFOGENABLE:
+    case D3DRS_FOGSTART: case D3DRS_FOGEND: case D3DRS_FOGDENSITY:
+    case D3DRS_FOGENABLE: case D3DRS_FOGVERTEXMODE: case D3DRS_SPECULARENABLE:
+    case D3DRS_COLORVERTEX: case D3DRS_DIFFUSEMATERIALSOURCE: case D3DRS_AMBIENTMATERIALSOURCE:
+    case D3DRS_EMISSIVEMATERIALSOURCE: case D3DRS_AMBIENT: case D3DRS_CLIPPLANEENABLE:
+    case D3DRS_VERTEXBLEND: case D3DRS_INDEXEDVERTEXBLENDENABLE:
+        ++m_vertexProcessingRevision;
+        break;
+    }
 
 	m_lpD3DDev->SetRenderState(Type, Value);
 	m_CurrentState.m_RenderStates[Type] = Value;
@@ -479,6 +521,10 @@ void CStateManager::SetTextureStageState(DWORD dwStage, D3DTEXTURESTAGESTATETYPE
 {
 	if (m_CurrentState.m_TextureStates[dwStage][Type] == dwValue)
 		return;
+	// Transform flags are compared explicitly by the skinning cache: its own
+	// VS bind/restore temporarily changes those flags on every draw.
+	if ((dwStage < 2 && Type == D3DTSS_TEXCOORDINDEX) || (dwStage >= 2 && Type == D3DTSS_COLOROP))
+		++m_vertexProcessingRevision;
 
 	m_lpD3DDev->SetTextureStageState(dwStage, Type, dwValue);
 	m_CurrentState.m_TextureStates[dwStage][Type] = dwValue;
@@ -581,6 +627,9 @@ void CStateManager::SetVertexDeclaration(LPDIRECT3DVERTEXDECLARATION9 dwShader)
 
 	m_lpD3DDev->SetVertexDeclaration(dwShader);
 	m_CurrentState.m_dwVertexDeclaration = dwShader;
+    // SetVertexDeclaration and SetFVF select the same device state. A later
+    // SetFVF must rebind it even when that numeric FVF was used before a VS.
+    m_CurrentState.m_dwFVF = 0;
 }
 
 void CStateManager::GetVertexDeclaration(LPDIRECT3DVERTEXDECLARATION9* pdwShader)
@@ -632,6 +681,7 @@ void CStateManager::SetFVF(DWORD dwFVF)
 	{
 		m_lpD3DDev->SetFVF(dwFVF);
 		m_CurrentState.m_dwFVF = dwFVF;
+        m_CurrentState.m_dwVertexDeclaration = nullptr;
 	}
 }
 
@@ -674,6 +724,9 @@ void CStateManager::RestoreTransform(D3DTRANSFORMSTATETYPE Type)
 // Don't cache-check the transform.  To much to do
 void CStateManager::SetTransform(D3DTRANSFORMSTATETYPE Type, const D3DMATRIX* pMatrix)
 {
+    if ((Type == D3DTS_VIEW || Type == D3DTS_PROJECTION || Type == D3DTS_TEXTURE0 || Type == D3DTS_TEXTURE1) &&
+        memcmp(&m_CurrentState.m_Matrices[Type], pMatrix, sizeof(*pMatrix)) != 0)
+        ++m_vertexProcessingRevision;
 	if (m_bScene)
 	{
 		m_lpD3DDev->SetTransform(Type, pMatrix);
@@ -713,19 +766,13 @@ void CStateManager::RestoreVertexShaderConstant(DWORD dwRegister, DWORD dwConsta
 
 void CStateManager::SetVertexShaderConstant(DWORD first, CONST void* data, DWORD count)
 {
-    if (!data || first > STATEMANAGER_MAX_VCONSTANTS || count > STATEMANAGER_MAX_VCONSTANTS - first) return;
-    const auto* values = static_cast<const D3DXVECTOR4*>(data);
-    bool changed = m_bForce;
-    for (DWORD i = 0; i < count && !changed; ++i)
-        changed = !m_vertexConstantsValid[first + i] ||
-            memcmp(&m_CurrentState.m_VertexShaderConstants[first + i], values + i, sizeof(D3DXVECTOR4)) != 0;
-    if (!changed) return;
+    if (!data || first > m_vertexConstantLimit || count > m_vertexConstantLimit - first) return;
+    const size_t bytes = count * sizeof(D3DXVECTOR4);
+    if (!m_bForce && !memchr(m_vertexConstantsValid + first, 0, count) &&
+        memcmp(m_CurrentState.m_VertexShaderConstants + first, data, bytes) == 0) return;
     const HRESULT result = m_lpD3DDev->SetVertexShaderConstantF(first, static_cast<const float*>(data), count);
-    for (DWORD i = 0; i < count; ++i)
-    {
-        m_vertexConstantsValid[first + i] = SUCCEEDED(result);
-        if (SUCCEEDED(result)) m_CurrentState.m_VertexShaderConstants[first + i] = values[i];
-    }
+    memset(m_vertexConstantsValid + first, SUCCEEDED(result) ? 1 : 0, count);
+    if (SUCCEEDED(result)) memmove(m_CurrentState.m_VertexShaderConstants + first, data, bytes);
 }
 
 // SetPixelShaderConstant
@@ -774,19 +821,27 @@ void CStateManager::SaveStreamSource(UINT StreamNumber, LPDIRECT3DVERTEXBUFFER9 
 
 void CStateManager::RestoreStreamSource(UINT StreamNumber)
 {
-	SetStreamSource(StreamNumber,
+	SetStreamSourceOffset(StreamNumber,
 					m_CopyState.m_StreamData[StreamNumber].m_lpStreamData,
-					m_CopyState.m_StreamData[StreamNumber].m_Stride);
+					m_CopyState.m_StreamData[StreamNumber].m_Stride,
+                    m_CopyState.m_StreamData[StreamNumber].m_Offset);
 }
 
 void CStateManager::SetStreamSource(UINT StreamNumber, LPDIRECT3DVERTEXBUFFER9 pStreamData, UINT Stride)
 {
-	const CStreamData kStreamData(pStreamData, Stride);
-	if (m_CurrentState.m_StreamData[StreamNumber] == kStreamData)
-		return;
+    SetStreamSourceOffset(StreamNumber, pStreamData, Stride, 0);
+}
 
-	m_lpD3DDev->SetStreamSource(StreamNumber, pStreamData, 0, Stride);
-	m_CurrentState.m_StreamData[StreamNumber] = kStreamData;
+HRESULT CStateManager::SetStreamSourceOffset(UINT StreamNumber, LPDIRECT3DVERTEXBUFFER9 pStreamData, UINT Stride, UINT Offset)
+{
+	const CStreamData kStreamData(pStreamData, Stride, Offset);
+	if (m_CurrentState.m_StreamData[StreamNumber] == kStreamData)
+		return S_OK;
+
+    const HRESULT result = m_lpD3DDev->SetStreamSource(StreamNumber, pStreamData, Offset, Stride);
+    if (SUCCEEDED(result))
+	    m_CurrentState.m_StreamData[StreamNumber] = kStreamData;
+    return result;
 }
 
 void CStateManager::SaveIndices(LPDIRECT3DINDEXBUFFER9 pIndexData, UINT BaseVertexIndex)

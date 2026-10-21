@@ -86,6 +86,7 @@ void CEffectManager::Render()
 {
 	STATEMANAGER.SetTexture(0, nullptr);
 	STATEMANAGER.SetTexture(1, nullptr);
+    CParticleSystemInstance::BeginRenderBatch(ms_lpd3dDevice);
 
 	if (m_isDisableSortRendering)
 	{
@@ -110,6 +111,7 @@ void CEffectManager::Render()
         }
         std::for_each(m_renderOrder.begin(), m_renderOrder.end(), CEffectManager_FEffectInstanceRender());
 	}
+    CParticleSystemInstance::EndRenderBatch();
 }
 
 BOOL CEffectManager::RegisterEffect(const char * c_szFileName,bool isExistDelete,bool isNeedCache)

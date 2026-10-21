@@ -2,6 +2,7 @@
 
 #include "Material.h"
 #include "../eterLib/GrpBase.h"
+#include "GPUSkinning.h"
 
 extern granny_data_type_definition GrannyPNT3322VertexType[5];
 
@@ -29,6 +30,7 @@ class CGrannyMesh
 			int					idxPos;
 			int					triCount;
 			DWORD				mtrlIndex;
+			unsigned sourceDraws = 1;
 		} TTriGroupNode;
 
 	public:
@@ -52,6 +54,10 @@ class CGrannyMesh
 
 		void					DeformPNTVertices(void* dstBaseVertices, D3DXMATRIX* boneMatrices, granny_mesh_binding* pgrnMeshBinding) const;
 		bool					CanDeformPNTVertices() const;
+        bool CreateGPUSkinDeviceObjects(IDirect3DDevice9* device);
+        void DestroyGPUSkinDeviceObjects();
+        IDirect3DVertexBuffer9* GetGPUSkinBuffer() const { return m_gpuSkinBuffer; }
+        unsigned GetGPUSkinBoneCount() const { return m_gpuSkinBoneCount; }
 		granny_mesh_binding* GetDefaultMeshBinding() const { return m_pgrnMeshBindingTemp; }
 		bool					IsTwoSide() const;
 
@@ -72,12 +78,16 @@ class CGrannyMesh
 
 		const granny_mesh *					GetGrannyMeshPointer() const;
 		const CGrannyMesh::TTriGroupNode *	GetTriGroupNodeList(CGrannyMaterial::EType eMtrlType) const;
+		const TTriGroupNode* GetDrawTriGroupNodeList(CGrannyMaterial::EType type, bool batched) const;
+		void BuildDrawBatches(const WORD* modelIndices, unsigned maxTriangles,
+			std::vector<WORD>& batchedIndices);
 
 		void					RebuildTriGroupNodeList() const;
 		void					ReloadMaterials();
 
 	protected:
 		void					Initialize();
+        void LoadGPUSkinVertices();
 
 		bool					LoadMaterials(CGrannyMaterialPalette& rkMtrlPal);
 		bool					LoadTriGroupNodeList(CGrannyMaterialPalette& rkMtrlPal);
@@ -99,11 +109,17 @@ class CGrannyMesh
 		// TriGroups Data
 		TTriGroupNode *			m_triGroupNodes;
 		TTriGroupNode *			m_triGroupNodeLists[CGrannyMaterial::TYPE_MAX_NUM];
+		std::vector<TTriGroupNode> m_drawGroups[CGrannyMaterial::TYPE_MAX_NUM];
 
 		int						m_vtxBasePos;
 		int						m_idxBasePos;
 		mutable std::vector<WORD>	m_dx11PreviewIndices;
 		mutable std::vector<TPNTVertex> m_dx11PreviewRigidVertices;
+        std::vector<TGPUSkinVertex> m_gpuSkinVertices;
+        IDirect3DVertexBuffer9* m_gpuSkinBuffer = nullptr;
+        IDirect3DDevice9* m_gpuSkinDevice = nullptr;
+        unsigned m_gpuSkinBoneCount = 0;
+        bool m_gpuSkinUploadFailed = false;
 
 		bool					m_canDeformPNTVertex;
 		bool					m_isTwoSide;

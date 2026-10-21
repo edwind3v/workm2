@@ -13,6 +13,7 @@ void CGrannyModelInstance::CopyMotion(CGrannyModelInstance * pModelInstance, boo
 
 	const float localTime = GetLocalTime();
 	m_pgrnAni = pModelInstance->m_pgrnAni;
+    m_constantMotion = pModelInstance->m_constantMotion;
 	m_pgrnCtrl = GrannyPlayControlledAnimation(localTime, m_pgrnAni, m_pgrnModelInstance);
 
 	if (!m_pgrnCtrl)
@@ -84,6 +85,7 @@ void CGrannyModelInstance::SetMotionPointer(const CGrannyMotion * pMotion, float
 	}
 
 	m_pgrnAni = pMotion->GetGrannyAnimationPointer();
+    m_constantMotion = pMotion->HasConstantPose();
 	m_pgrnCtrl = GrannyPlayControlledAnimation(localTime, m_pgrnAni, pgrnModelInstance);
 	if (!m_pgrnCtrl)
 		return;
@@ -128,6 +130,7 @@ void CGrannyModelInstance::ChangeMotionPointer(const CGrannyMotion* pMotion, int
 	}
 
 	m_pgrnAni = pMotion->GetGrannyAnimationPointer();
+    m_constantMotion = pMotion->HasConstantPose();
 	m_pgrnCtrl = GrannyPlayControlledAnimation(localTime, m_pgrnAni, pgrnModelInstance);
 	if (!m_pgrnCtrl)
 		return;

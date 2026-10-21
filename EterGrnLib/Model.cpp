@@ -2,6 +2,8 @@
 #include "../EterBase/MapPerformance.h"
 #include "Model.h"
 #include "Mesh.h"
+#include "OrderedTriangleBatch.h"
+#include <cmath>
 
 const CGrannyMaterialPalette& CGrannyModel::GetMaterialPalette() const
 {
@@ -78,6 +80,23 @@ LPDIRECT3DINDEXBUFFER9 CGrannyModel::GetD3DIndexBuffer() const
 	return m_idxBuf.GetD3DIndexBuffer();
 }
 
+LPDIRECT3DINDEXBUFFER9 CGrannyModel::GetBatchedD3DIndexBuffer() const
+{
+    return m_batchedIdxBuf.GetD3DIndexBuffer();
+}
+
+void CGrannyModel::UploadBatchedIndices()
+{
+    m_batchedIdxBuf.Destroy();
+    if (m_batchedIndices.empty()) return;
+    if (!m_batchedIdxBuf.Create(static_cast<int>(m_batchedIndices.size()), D3DFMT_INDEX16) ||
+        !m_batchedIdxBuf.Copy(static_cast<int>(m_batchedIndices.size() * sizeof(WORD)), m_batchedIndices.data()))
+    {
+        m_batchedIdxBuf.Destroy();
+        TraceError("MODEL_BATCH_FALLBACK reason=index_buffer_upload");
+    }
+}
+
 LPDIRECT3DVERTEXBUFFER9 CGrannyModel::GetPNTD3DVertexBuffer() const
 {
 	return m_pntVtxBuf.GetD3DVertexBuffer();
@@ -136,19 +155,124 @@ bool CGrannyModel::LoadIndices()
 	if (!m_idxBuf.Create(m_idxCount, D3DFMT_INDEX16))
 		return false;
 
+	// Retain the original index layout for collision/debug readers. The optional
+	// second buffer follows the exact existing draw order, including alpha.
+	std::vector<WORD> source(m_idxCount);
+	m_batchedIndices.clear();
+	char batchingMode[8]{};
+	const bool batchingEnabled = !(GetEnvironmentVariableA("M2_MODEL_BATCHING", batchingMode,
+		sizeof(batchingMode)) == 1 && batchingMode[0] == '0');
+	D3DCAPS9 caps{};
+	IDirect3DDevice9* device = nullptr;
+	bool canBatch = false;
+	if (batchingEnabled && SUCCEEDED(m_idxBuf.GetD3DIndexBuffer()->GetDevice(&device)))
+	{
+		canBatch = SUCCEEDED(device->GetDeviceCaps(&caps));
+		device->Release();
+	}
+	for (int m = 0; m < m_pgrnModel->MeshBindingCount; ++m)
+	{
+		CGrannyMesh& mesh = m_meshs[m];
+		mesh.LoadIndices(source.data());
+		if (canBatch) mesh.BuildDrawBatches(source.data(), caps.MaxPrimitiveCount, m_batchedIndices);
+	}
+    if (canBatch) BuildRigidBatches(source, caps);
 	void * indices;
 
 	if (!m_idxBuf.Lock((void**)&indices))
 		return false;
 
-	for (int m = 0; m < m_pgrnModel->MeshBindingCount; ++m)
-	{
-		CGrannyMesh& rMesh = m_meshs[m];
-		rMesh.LoadIndices(indices);
-	}
-
+	memcpy(indices, source.data(), source.size() * sizeof(WORD));
 	m_idxBuf.Unlock();
+	UploadBatchedIndices();
 	return true;
+}
+
+void CGrannyModel::BuildRigidBatches(const std::vector<WORD>& source, const D3DCAPS9& caps)
+{
+    char mode[8]{};
+    if (GetEnvironmentVariableA("M2_RIGID_BATCHING", mode, sizeof(mode)) == 1 && mode[0] == '0') return;
+    if (m_dwFvF != (D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_TEX1) ||
+        m_rigidVtxCount <= 0 || m_rigidVtxCount > 65536 ||
+        static_cast<unsigned>(m_rigidVtxCount - 1) > caps.MaxVertexIndex) return;
+    // Bound any matrix-comparison tolerance by actual vertex magnitudes.
+    // Read source vertices only here, before Granny's source sections are freed.
+    m_rigidPositionBound = m_rigidNormalBound = 1;
+    for (int i = 0; i < GetMeshCount(); ++i)
+    {
+        const CGrannyMesh& mesh = m_meshs[i];
+        if (!GrannyMeshIsRigid(mesh.GetGrannyMeshPointer())) continue;
+        std::vector<TPNTVertex> vertices(mesh.GetVertexCount());
+        GrannyCopyMeshVertices(mesh.GetGrannyMeshPointer(), GrannyPNT332VertexType, vertices.data());
+        for (const auto& vertex : vertices)
+        {
+            const double position = std::abs(static_cast<double>(vertex.position.x)) +
+                std::abs(static_cast<double>(vertex.position.y)) + std::abs(static_cast<double>(vertex.position.z));
+            const double normal = std::abs(static_cast<double>(vertex.normal.x)) +
+                std::abs(static_cast<double>(vertex.normal.y)) + std::abs(static_cast<double>(vertex.normal.z));
+            if (!std::isfinite(position) || !std::isfinite(normal)) return;
+            m_rigidPositionBound = (std::max)(m_rigidPositionBound, position);
+            m_rigidNormalBound = (std::max)(m_rigidNormalBound, normal);
+        }
+    }
+    for (int type = 0; type < CGrannyMaterial::TYPE_MAX_NUM; ++type)
+    {
+        const auto materialType = static_cast<CGrannyMaterial::EType>(type);
+        const TMeshNode* list = GetMeshNodeList(CGrannyMesh::TYPE_RIGID, materialType);
+        if (!list || !list->pNextMeshNode) continue;
+        std::vector<WORD> orderedIndices;
+        std::vector<OrderedTriangleBatch::Group> groups;
+        std::vector<TRigidSource> originals;
+        bool valid = true;
+        // Follow the actual mesh AND group linked lists, never sort by material.
+        for (const TMeshNode* node = list; node && valid; node = node->pNextMeshNode)
+        {
+            const CGrannyMesh& mesh = *node->pMesh;
+            for (const auto* group = mesh.GetTriGroupNodeList(materialType); group; group = group->pNextTriGroupNode)
+            {
+                if (group->idxPos < 0 || group->idxPos > static_cast<int>(source.size()) ||
+                    group->triCount <= 0 || group->triCount > (static_cast<int>(source.size()) - group->idxPos) / 3 ||
+                    orderedIndices.size() + static_cast<size_t>(group->triCount) * 3 > source.size())
+                { valid = false; break; }
+                groups.push_back({static_cast<int>(orderedIndices.size()), group->triCount, group->mtrlIndex});
+                originals.push_back({node->iMesh, *group});
+                for (int i = 0; i < group->triCount * 3; ++i)
+                {
+                    const unsigned local = source[group->idxPos + i];
+                    const unsigned rebased = local + mesh.GetVertexBasePosition();
+                    if (local >= static_cast<unsigned>(mesh.GetVertexCount()) || rebased >= static_cast<unsigned>(m_rigidVtxCount))
+                    { valid = false; break; }
+                    orderedIndices.push_back(static_cast<WORD>(rebased));
+                }
+                if (!valid) break;
+            }
+        }
+        OrderedTriangleBatch::Result batch;
+        if (!valid || !OrderedTriangleBatch::Build(orderedIndices.data(), static_cast<int>(orderedIndices.size()),
+            groups, caps.MaxPrimitiveCount, batch)) continue;
+        constexpr size_t maxIndices = 16u * 1024u * 1024u;
+        if (batch.indices.size() > maxIndices - m_batchedIndices.size()) continue;
+        const int base = static_cast<int>(m_batchedIndices.size());
+        auto& draws = m_rigidBatches[type];
+        draws.clear();
+        unsigned first = 0;
+        for (const auto& group : batch.groups)
+        {
+            TRigidBatch draw{};
+            draw.group.idxPos = base + group.firstIndex;
+            draw.group.triCount = group.triangleCount;
+            draw.group.mtrlIndex = group.material;
+            draw.group.sourceDraws = group.sourceDraws;
+            draw.firstSource = first;
+            draw.sourceCount = group.sourceDraws;
+            first += group.sourceDraws;
+            draws.push_back(draw);
+        }
+        m_rigidSources[type].swap(originals);
+        m_batchedIndices.insert(m_batchedIndices.end(), batch.indices.begin(), batch.indices.end());
+        TraceError("RIGID_BATCH_READY asset=\"%s\" material_type=%d sources=%u draws=%u vertices=%d max_position_error=0.0001 max_normal_error=0.000001",
+            GetDiagnosticAsset(), type, first, static_cast<unsigned>(draws.size()), m_rigidVtxCount);
+    }
 }
 
 bool CGrannyModel::LoadMeshs()
@@ -266,7 +390,7 @@ BOOL CGrannyModel::CheckMeshIndex(int iIndex) const
 {
 	if (iIndex < 0)
 		return FALSE;
-	if (iIndex >= m_meshNodeSize)
+	if (iIndex >= GetMeshCount())
 		return FALSE;
 
 	return TRUE;
@@ -319,6 +443,7 @@ bool CGrannyModel::CreateDeviceObjects()
 	if (m_idxCount > 0)
 		if (!m_idxBuf.CreateDeviceObjects())
 			return false;
+	UploadBatchedIndices();
 
 	const int meshCount = GetMeshCount();
 
@@ -333,6 +458,9 @@ bool CGrannyModel::CreateDeviceObjects()
 
 void CGrannyModel::DestroyDeviceObjects()
 {
+	m_batchedIdxBuf.Destroy();
+    for (int mesh = 0; mesh < GetMeshCount(); ++mesh)
+        m_meshs[mesh].DestroyGPUSkinDeviceObjects();
 	m_pntVtxBuf.DestroyDeviceObjects();
 	m_idxBuf.DestroyDeviceObjects();
 }
@@ -357,6 +485,10 @@ void CGrannyModel::Destroy()
 
 	m_pntVtxBuf.Destroy();
 	m_idxBuf.Destroy();
+	m_batchedIdxBuf.Destroy();
+	std::vector<WORD>().swap(m_batchedIndices);
+    for (auto& batches : m_rigidBatches) std::vector<TRigidBatch>().swap(batches);
+    for (auto& sources : m_rigidSources) std::vector<TRigidSource>().swap(sources);
 
 	Initialize();
 }
@@ -387,6 +519,7 @@ bool CGrannyModel::__LoadVertices()
 
 void CGrannyModel::Initialize()
 {
+	m_diagnosticAsset.clear();
 	memset(m_meshNodeLists, 0, sizeof(m_meshNodeLists));
 
 	m_pgrnModel = nullptr;

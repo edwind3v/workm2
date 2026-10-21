@@ -182,6 +182,9 @@
     </Lib>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="GPUSkinning.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">MinSpace</Optimization>
+    </ClCompile>
     <ClCompile Include="LODController.cpp">
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Disabled</Optimization>
       <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -384,12 +387,16 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="GPUSkinning.h" />
+    <ClInclude Include="GPUSkinningShader.h" />
+    <ClInclude Include="OrderedTriangleBatch.h" />
     <ClInclude Include="LODController.h" />
     <ClInclude Include="Material.h" />
     <ClInclude Include="Mesh.h" />
     <ClInclude Include="Model.h" />
     <ClInclude Include="ModelInstance.h" />
     <ClInclude Include="Motion.h" />
+      <ClInclude Include="ConstantMotion.h" />
     <ClInclude Include="StdAfx.h" />
     <ClInclude Include="Thing.h" />
     <ClInclude Include="ThingInstance.h" />

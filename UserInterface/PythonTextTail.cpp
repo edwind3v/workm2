@@ -1,6 +1,7 @@
 //
 //
 #include "stdafx.h"
+#include "../EterBase/MapPerformance.h"
 #include "InstanceBase.h"
 #include "resource.h"
 #include "PythonTextTail.h"
@@ -54,6 +55,7 @@ void CPythonTextTail::GetInfo(std::string* pstInfo)
 
 void CPythonTextTail::UpdateAllTextTail()
 {
+    MapPerformance::Scope mapProfile("text.distance");
 #ifdef ENABLE_FIX_MOBS_LAG
 	CTextPerformance::Get().BeginFrame();
 	CTextProfileScope profileScope(CTextPerformance::Distance);
@@ -91,6 +93,7 @@ void CPythonTextTail::UpdateAllTextTail()
 
 void CPythonTextTail::UpdateShowingTextTail()
 {
+    MapPerformance::Scope mapProfile("text.projection");
 #ifdef ENABLE_FIX_MOBS_LAG
 	CTextProfileScope profileScope(CTextPerformance::Projection);
 #endif
@@ -161,6 +164,7 @@ void CPythonTextTail::UpdateTextTail(TTextTail * pTextTail) const
 
 void CPythonTextTail::ArrangeTextTail()
 {
+    MapPerformance::Scope mapProfile("text.arrangement");
 	TTextTailList::iterator itor;
 #ifdef ENABLE_FIX_MOBS_LAG
 	CTextProfileScope profileScope(CTextPerformance::Arrangement);
@@ -334,6 +338,7 @@ void CPythonTextTail::ArrangeTextTail()
 
 void CPythonTextTail::Render()
 {
+    MapPerformance::Scope mapProfile("text.render");
 #ifdef ENABLE_FIX_MOBS_LAG
 	CTextPerformance& profile = CTextPerformance::Get();
 	const double renderStart = profile.Enabled() ? profile.Now() : 0.0;
@@ -440,6 +445,7 @@ void CPythonTextTail::UpdateDistance(const TPixelPosition & c_rCenterPosition, T
 
 void CPythonTextTail::ShowAllTextTail()
 {
+    MapPerformance::Scope mapProfile("text.selection");
 #ifdef ENABLE_FIX_MOBS_LAG
 	CTextProfileScope profileScope(CTextPerformance::Selection);
 #endif

@@ -1,5 +1,6 @@
 #include "StdAfx.h"
 #include "Motion.h"
+#include "ConstantMotion.h"
 
 CGrannyMotion::CGrannyMotion()
 {
@@ -24,6 +25,7 @@ void CGrannyMotion::Destroy()
 void CGrannyMotion::Initialize()
 {
 	m_pgrnAni = nullptr;
+    m_constantPose = false;
 }
 
 bool CGrannyMotion::BindGrannyAnimation(granny_animation * pgrnAni)
@@ -31,6 +33,7 @@ bool CGrannyMotion::BindGrannyAnimation(granny_animation * pgrnAni)
 	assert(IsEmpty());
 
 	m_pgrnAni = pgrnAni;
+    m_constantPose = IsConstantPoseAnimation(pgrnAni);
 	return true;
 }
 

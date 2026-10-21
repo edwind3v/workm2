@@ -5,6 +5,20 @@
 #include "EffectUpdateDecorator.h"
 class CParticleProperty;
 class CEmitterProperty;
+class CCamera;
+
+// Shared only for one particle-system render; camera movement never reuses a
+// previous frame's basis. Scales, rotations and attachment positions stay local.
+struct TParticleRenderContext
+{
+    D3DXVECTOR3 up, cross, view, yCross;
+    explicit TParticleRenderContext(const CCamera* camera);
+};
+
+struct TParticleRenderGeometry
+{
+    D3DXVECTOR3 position, up, cross;
+};
 
 class CParticleInstance
 {
@@ -23,6 +37,8 @@ class CParticleInstance
 		float GetRadiusApproximation() const;
 
 		BOOL Update(float fElapsedTime, float fAngle);
+        static bool CompactUpdateEnabled();
+        void InitializeCompactUpdate(const CParticleInstance* first);
 
 	protected:
 		D3DXVECTOR3			m_v3StartPosition;
@@ -56,6 +72,11 @@ class CParticleInstance
 		float m_fGravity;
 
 		NEffectUpdateDecorator::CBaseDecorator * m_pDecorator;
+        // Per-particle curve cursors replace separately allocated decorators.
+        unsigned m_curveCursor[6]{};
+        bool m_compactUpdate = false;
+        BYTE m_updateRotationType = 0, m_updateTextureType = 0;
+        void UpdateCompact(float lifePercentage, float elapsed);
 	public:
 		static CParticleInstance* New();
 		static void DestroySystem();
@@ -63,6 +84,10 @@ class CParticleInstance
 		void Transform(const D3DXMATRIX * c_matLocal= nullptr, bool setColorState = true);
 		void Transform(const D3DXMATRIX * c_matLocal, const float c_fZRotation, bool setColorState = true);
 		DWORD GetColor() const;
+        void PrepareRender(const D3DXMATRIX* local, const TParticleRenderContext& context,
+            TParticleRenderGeometry& geometry) const;
+        void WriteRenderQuad(const TParticleRenderGeometry& geometry, TPDTVertex* vertices,
+            bool rotate = false, float cosine = 1.0f, float sine = 0.0f) const;
 
 		TPTVertex * GetParticleMeshPointer();
 

@@ -4,6 +4,116 @@
 #include "GrpBase.h"
 #include "Camera.h"
 #include "StateManager.h"
+#include <cstdlib>
+
+namespace
+{
+struct ParticleStream
+{
+    static constexpr UINT Capacity = 16384;
+    static constexpr UINT BatchVertices = 512;
+    IDirect3DVertexBuffer9* vertices = nullptr;
+    IDirect3DIndexBuffer9* indices = nullptr;
+    UINT cursor = 0;
+    bool unavailable = false;
+    bool activeLogged = false;
+};
+ParticleStream particleStream;
+bool ParticleStreamingEnabled()
+{
+    static const bool enabled = [] {
+        const char* value = std::getenv("M2_PARTICLE_STREAM");
+        return value && strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+}
+
+void CGraphicBase::DestroyParticleDeviceObjects()
+{
+    if (particleStream.vertices) particleStream.vertices->Release();
+    if (particleStream.indices) particleStream.indices->Release();
+    particleStream = {};
+}
+
+HRESULT CGraphicBase::DrawParticleQuads(const TPDTVertex* vertices, UINT count,
+    const WORD* fallbackIndices, bool* streamed)
+{
+    if (streamed) *streamed = false;
+    if (!vertices || !fallbackIndices || !count || count % 4 || count > ParticleStream::BatchVertices)
+        return D3DERR_INVALIDCALL;
+
+    if (ParticleStreamingEnabled() && !particleStream.unavailable && ms_lpd3dDevice)
+    {
+        if (!particleStream.vertices)
+        {
+            HRESULT result = ms_lpd3dDevice->CreateVertexBuffer(
+                ParticleStream::Capacity * sizeof(TPDTVertex), D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY,
+                D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1, D3DPOOL_DEFAULT, &particleStream.vertices, nullptr);
+            if (SUCCEEDED(result))
+                result = ms_lpd3dDevice->CreateIndexBuffer(ParticleStream::BatchVertices / 4 * 6 * sizeof(WORD),
+                    D3DUSAGE_WRITEONLY, D3DFMT_INDEX16, D3DPOOL_DEFAULT, &particleStream.indices, nullptr);
+            WORD* destination = nullptr;
+            if (SUCCEEDED(result)) result = particleStream.indices->Lock(0, 0, reinterpret_cast<void**>(&destination), 0);
+            if (SUCCEEDED(result))
+            {
+                static const unsigned corners[] = {0, 1, 2, 2, 1, 3};
+                for (unsigned quad = 0; quad < ParticleStream::BatchVertices / 4; ++quad)
+                    for (unsigned corner = 0; corner < 6; ++corner)
+                        destination[quad * 6 + corner] = static_cast<WORD>(quad * 4 + corners[corner]);
+                result = particleStream.indices->Unlock();
+            }
+            if (FAILED(result))
+            {
+                DestroyParticleDeviceObjects();
+                particleStream.unavailable = true;
+                TraceError("[PARTICLE_STREAM] FALLBACK create_hr=0x%08X", static_cast<unsigned>(result));
+            }
+        }
+        if (!particleStream.unavailable)
+        {
+            if (particleStream.cursor + count > ParticleStream::Capacity) particleStream.cursor = 0;
+            void* destination = nullptr;
+            HRESULT result = particleStream.vertices->Lock(particleStream.cursor * sizeof(TPDTVertex),
+                count * sizeof(TPDTVertex), &destination,
+                particleStream.cursor ? D3DLOCK_NOOVERWRITE : D3DLOCK_DISCARD);
+            if (SUCCEEDED(result))
+            {
+                memcpy(destination, vertices, count * sizeof(TPDTVertex));
+                result = particleStream.vertices->Unlock();
+            }
+            if (SUCCEEDED(result))
+            {
+                STATEMANAGER.SetStreamSource(0, particleStream.vertices, sizeof(TPDTVertex));
+                STATEMANAGER.SetIndices(particleStream.indices, 0);
+                result = STATEMANAGER.DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, count, 0,
+                    count / 2, static_cast<INT>(particleStream.cursor));
+                // Match DrawIndexedPrimitiveUP's postconditions, including the
+                // state cache, for effect meshes and any following custom draw.
+                STATEMANAGER.SetStreamSource(0, nullptr, 0);
+                STATEMANAGER.SetIndices(nullptr, 0);
+                particleStream.cursor += count;
+            }
+            if (SUCCEEDED(result))
+            {
+                if (streamed) *streamed = true;
+                if (!particleStream.activeLogged)
+                {
+                    TraceError("[PARTICLE_STREAM] ACTIVE capacity=%u quad_order=preserved disable=M2_PARTICLE_STREAM=0",
+                        ParticleStream::Capacity);
+                    particleStream.activeLogged = true;
+                }
+                return result;
+            }
+            // Do not repeatedly lock a failed resource during the same device
+            // lifetime. Device reset releases it and permits a fresh attempt.
+            particleStream.unavailable = true;
+            TraceError("[PARTICLE_STREAM] FALLBACK draw_hr=0x%08X", static_cast<unsigned>(result));
+        }
+    }
+    return STATEMANAGER.DrawIndexedPrimitiveUP(D3DPT_TRIANGLELIST, 0, count, count / 2,
+        fallbackIndices, D3DFMT_INDEX16, vertices, sizeof(TPDTVertex));
+}
 
 void PixelPositionToD3DXVECTOR3(const D3DXVECTOR3& c_rkPPosSrc, D3DXVECTOR3* pv3Dst)
 {

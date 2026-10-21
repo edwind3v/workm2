@@ -804,6 +804,15 @@ void CGraphicThingInstance::__SetLocalTime(float fLocalTime)
 
 void CGraphicThingInstance::UpdateLODLevel()
 {
+    // Each single-model controller already returns immediately. Avoid the
+    // camera queries and square roots when none can consume these distances.
+    const bool needsDistances = std::any_of(m_LODControllerVector.begin(), m_LODControllerVector.end(),
+        [](const CGrannyLODController* controller) { return controller && controller->HasLODLevels(); });
+    if (!needsDistances)
+    {
+        MapPerformance::Count(MapPerformance::Counter::ActorLODNoWork);
+        return;
+    }
 	const CCamera * pcurCamera = CCameraManager::Instance().GetCurrentCamera();
 	if (!pcurCamera)
 	{
@@ -883,11 +892,13 @@ void CGraphicThingInstance::OnUpdate()
 
 void CGraphicThingInstance::OnRender()
 {
+	MapPerformance::RenderPassScope pass("model_main");
 	RenderWithOneTexture();
 }
 
 void CGraphicThingInstance::OnBlendRender()
 {
+	MapPerformance::RenderPassScope pass("model_blend");
 	BlendRenderWithOneTexture();
 }
 
@@ -933,6 +944,7 @@ void CGraphicThingInstance::BlendRenderWithTwoTexture()
 
 void CGraphicThingInstance::OnRenderToShadowMap()
 {
+	MapPerformance::RenderPassScope pass("shadow_map");
 	if (!m_bUpdated)
 		return;
 
@@ -942,12 +954,14 @@ void CGraphicThingInstance::OnRenderToShadowMap()
 
 void CGraphicThingInstance::OnRenderShadow()
 {
+	MapPerformance::RenderPassScope pass("shadow_projected");
 	const CGrannyLODController::FRenderShadow RenderShadow;
 	std::for_each(m_LODControllerVector.begin(), m_LODControllerVector.end(), RenderShadow);
 }
 
 void CGraphicThingInstance::OnRenderPCBlocker()
 {
+	MapPerformance::RenderPassScope pass("pc_blocker");
 	const CGrannyLODController::FRenderWithOneTexture RenderPCBlocker;
 	std::for_each(m_LODControllerVector.begin(), m_LODControllerVector.end(), RenderPCBlocker);
 }

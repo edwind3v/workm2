@@ -1,5 +1,6 @@
 #include "StdAfx.h"
 #include "../eterLib/StateManager.h"
+#include "../EterBase/MapPerformance.h"
 #include "../eterLib/ResourceManager.h"
 #include "EffectMeshInstance.h"
 #include "../eterlib/GrpMath.h"
@@ -170,10 +171,13 @@ void CEffectMeshInstance::OnRender()
 		STATEMANAGER.SetRenderState(D3DRS_TEXTUREFACTOR, DWORD(Color));
 		STATEMANAGER.SetFVF(D3DFVF_XYZ | D3DFVF_TEX1);
 		if (rFrameData.dwIndexCount) // @fixme027
-			STATEMANAGER.DrawPrimitiveUP(D3DPT_TRIANGLELIST,
+		{
+			const HRESULT result = STATEMANAGER.DrawPrimitiveUP(D3DPT_TRIANGLELIST,
 									 rFrameData.dwIndexCount/3,
 									 &rFrameData.PDTVertexVector[0],
 									 sizeof(TPTVertex));
+			MapPerformance::RecordEffectMeshDrawResult(SUCCEEDED(result), rFrameData.dwIndexCount / 3);
+		}
 		// Render
 	}
 }

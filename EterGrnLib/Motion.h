@@ -15,6 +15,7 @@ class CGrannyMotion
 
 		const char *		GetName() const;
 		float				GetDuration() const;
+        bool HasConstantPose() const { return m_constantPose; }
 		void				GetTextTrack(const char * c_szTextTrackName, int * pCount, float * pArray) const;
 
 	protected:
@@ -22,5 +23,6 @@ class CGrannyMotion
 
 	protected:
 		granny_animation *	m_pgrnAni;
+        bool m_constantPose = false;
 };
 

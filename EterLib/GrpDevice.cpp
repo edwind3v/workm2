@@ -846,6 +846,7 @@ void CGraphicDevice::__DestroyPDTVertexBufferList() const
 		STATEMANAGER.SetIndices(nullptr, 0);
 	}
 	CGraphicTextInstance::DestroyWorldTextDeviceObjects();
+    CGraphicBase::DestroyParticleDeviceObjects();
 	safe_release(m_smallPdtVertexBuffer);
 	safe_release(m_largePdtVertexBuffer);
 }
@@ -887,6 +888,12 @@ void CGraphicDevice::__InitializePDTVertexBufferList() const
 
 void CGraphicDevice::__DestroyPDTVertexBufferList() const
 {
+    if (ms_lpd3dDevice && m_pStateManager)
+    {
+        STATEMANAGER.SetStreamSource(0, nullptr, 0);
+        STATEMANAGER.SetIndices(nullptr, 0);
+    }
+    CGraphicBase::DestroyParticleDeviceObjects();
 	for (UINT i=0; i<PDT_VERTEXBUFFER_NUM; ++i)
 	{
 		if (ms_alpd3dPDTVB[i])

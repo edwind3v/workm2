@@ -283,6 +283,9 @@ class MiniMap(ui.ScriptWindow):
 		self.tooltipAtlasOpen = 0
 		self.tooltipInfo = None
 		self.serverInfo = None
+		self.fpsInfo = None
+		self.lastFPS = -1
+		self.nextFPSUpdate = 0.0
 
 	def SetMapName(self, mapName):
 		self.mapName=mapName
@@ -354,6 +357,19 @@ class MiniMap(ui.ScriptWindow):
 			self.positionInfo.Hide()
 
 		self.serverInfo.SetText(net.GetServerInfo())
+		# Rendered FPS, refreshed without rebuilding unchanged text each frame.
+		(serverX, serverY) = self.serverInfo.GetLocalPosition()
+		self.fpsInfo = ui.TextLine()
+		self.fpsInfo.SetParent(self.OpenWindow)
+		self.fpsInfo.AddFlag("not_pick")
+		self.fpsInfo.SetPosition(serverX, serverY + 18)
+		self.fpsInfo.SetHorizontalAlignCenter()
+		self.fpsInfo.SetOutline()
+		self.fpsInfo.SetText("FPS: --")
+		self.fpsInfo.Show()
+		for info in (self.positionInfo, self.observerCount):
+			(infoX, infoY) = info.GetLocalPosition()
+			info.SetPosition(infoX, infoY + 18)
 		self.ScaleUpButton.SetEvent(ui.__mem_func__(self.ScaleUp))
 		self.ScaleDownButton.SetEvent(ui.__mem_func__(self.ScaleDown))
 		self.MiniMapHideButton.SetEvent(ui.__mem_func__(self.HideMiniMap))
@@ -416,6 +432,14 @@ class MiniMap(ui.ScriptWindow):
 	def OnUpdate(self):
 		(x, y, z) = player.GetMainCharacterPosition()
 		miniMap.Update(x, y)
+		if self.fpsInfo:
+			now = app.GetTime()
+			if now >= self.nextFPSUpdate:
+				self.nextFPSUpdate = now + 0.25
+				fps = app.GetRenderFPS()
+				if fps != self.lastFPS:
+					self.lastFPS = fps
+					self.fpsInfo.SetText("FPS: %d" % fps)
 
 		if localeInfo.IsARABIC():
 			self.positionInfo.SetText("%.0f, %.0f" % (x/100, y/100))

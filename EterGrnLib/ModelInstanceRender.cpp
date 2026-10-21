@@ -298,7 +298,7 @@ void CGrannyModelInstance::RenderWithOneTexture()
 
 	const LPDIRECT3DVERTEXBUFFER9 lpd3dRigidPNTVtxBuf = m_pModel->GetPNTD3DVertexBuffer();
 
-	if (lpd3dDeformPNTVtxBuf)
+	if (lpd3dDeformPNTVtxBuf || m_gpuSkinning)
 	{
 		STATEMANAGER.SetStreamSource(0, lpd3dDeformPNTVtxBuf, sizeof(TPNTVertex));
 		RenderMeshNodeListWithOneTexture(CGrannyMesh::TYPE_DEFORM, CGrannyMaterial::TYPE_DIFFUSE_PNT);
@@ -322,7 +322,7 @@ void CGrannyModelInstance::BlendRenderWithOneTexture()
 
  	STATEMANAGER.SetFVF(ms_pntVS);
 
-	if (lpd3dDeformPNTVtxBuf)
+	if (lpd3dDeformPNTVtxBuf || m_gpuSkinning)
 	{
 		STATEMANAGER.SetStreamSource(0, lpd3dDeformPNTVtxBuf, sizeof(TPNTVertex));
 		RenderMeshNodeListWithOneTexture(CGrannyMesh::TYPE_DEFORM, CGrannyMaterial::TYPE_BLEND_PNT);
@@ -349,7 +349,7 @@ void CGrannyModelInstance::RenderWithTwoTexture()
 	// END_OF_WORK
 	const LPDIRECT3DVERTEXBUFFER9 lpd3dRigidPNTVtxBuf = m_pModel->GetPNTD3DVertexBuffer();
 
-	if (lpd3dDeformPNTVtxBuf)
+	if (lpd3dDeformPNTVtxBuf || m_gpuSkinning)
 	{
 		STATEMANAGER.SetStreamSource(0, lpd3dDeformPNTVtxBuf, sizeof(TPNTVertex));
 		RenderMeshNodeListWithTwoTexture(CGrannyMesh::TYPE_DEFORM, CGrannyMaterial::TYPE_DIFFUSE_PNT);
@@ -373,7 +373,7 @@ void CGrannyModelInstance::BlendRenderWithTwoTexture()
 
  	STATEMANAGER.SetFVF(ms_pntVS);
 
-	if (lpd3dDeformPNTVtxBuf)
+	if (lpd3dDeformPNTVtxBuf || m_gpuSkinning)
 	{
 		STATEMANAGER.SetStreamSource(0, lpd3dDeformPNTVtxBuf, sizeof(TPNTVertex));
 		RenderMeshNodeListWithTwoTexture(CGrannyMesh::TYPE_DEFORM, CGrannyMaterial::TYPE_BLEND_PNT);
@@ -400,7 +400,7 @@ void CGrannyModelInstance::RenderWithoutTexture()
 	// END_OF_WORK
 	const LPDIRECT3DVERTEXBUFFER9 lpd3dRigidPNTVtxBuf = m_pModel->GetPNTD3DVertexBuffer();
 
-	if (lpd3dDeformPNTVtxBuf)
+	if (lpd3dDeformPNTVtxBuf || m_gpuSkinning)
 	{
 		STATEMANAGER.SetStreamSource(0, lpd3dDeformPNTVtxBuf, sizeof(TPNTVertex));
 		RenderMeshNodeListWithoutTexture(CGrannyMesh::TYPE_DEFORM, CGrannyMaterial::TYPE_DIFFUSE_PNT);
@@ -421,11 +421,93 @@ void CGrannyModelInstance::RenderWithoutTexture()
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
+bool CGrannyModelInstance::RenderRigidBatches(CGrannyMaterial::EType materialType, unsigned method)
+{
+    const auto& batches = m_pModel->GetRigidBatches(materialType);
+    if (batches.empty() || !m_pModel->GetBatchedD3DIndexBuffer()) return false;
+    if (!m_uniformRigidMatrices)
+    {
+        MapPerformance::Count(MapPerformance::Counter::RigidBatchMatrixFallbacks);
+        return false;
+    }
+    IDirect3DVertexShader9* vertexShader = nullptr;
+    IDirect3DPixelShader9* pixelShader = nullptr;
+    STATEMANAGER.GetVertexShader(&vertexShader);
+    STATEMANAGER.GetPixelShader(&pixelShader);
+    if (vertexShader || pixelShader || STATEMANAGER.GetRenderState(D3DRS_VERTEXBLEND) != D3DVBF_DISABLE ||
+        STATEMANAGER.GetRenderState(D3DRS_INDEXEDVERTEXBLENDENABLE)) return false;
+
+    MapPerformance::DetailScope detail("model", method == 0 ? "rigid_one" : method == 1 ? "rigid_two" : "rigid_untextured",
+        m_pModel->GetDiagnosticAsset(), m_pModel->GetGrannyModelPointer()->Name,
+        -2, CGrannyMesh::TYPE_RIGID, materialType, m_pModel->GetRigidVertexCount(), "merged_equivalent_transforms");
+    const auto& originals = m_pModel->GetRigidSources(materialType);
+    CGrannyMaterial* active = nullptr;
+    for (const auto& batch : batches)
+    {
+        STATEMANAGER.SetTransform(D3DTS_WORLD, &m_meshMatrices[originals.front().mesh]);
+        CGrannyMaterial& material = m_kMtrlPal.GetMaterialRef(batch.group.mtrlIndex);
+        if (method != 2 && active != &material)
+        {
+            if (method == 0)
+            {
+                if (active) active->RestoreRenderState();
+                if (!m_material_data.pImage)
+                    material.SetSpecularInfo(m_material_data.isSpecularEnable, m_material_data.fSpecularPower, m_material_data.bSphereMapIndex);
+                material.ApplyRenderState();
+            }
+            else
+            {
+                STATEMANAGER.SetTexture(0, material.GetD3DTexture(0));
+                STATEMANAGER.SetTexture(1, material.GetD3DTexture(1));
+            }
+            active = &material;
+            MapPerformance::Count(MapPerformance::Counter::MaterialBinds);
+        }
+        STATEMANAGER.SetIndices(m_pModel->GetBatchedD3DIndexBuffer(), 0);
+        MapPerformance::Count(MapPerformance::Counter::ActorDrawCalls);
+        const HRESULT result = STATEMANAGER.DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0,
+            m_pModel->GetRigidVertexCount(), batch.group.idxPos, batch.group.triCount, 0);
+        MapPerformance::RecordModelDrawResult(SUCCEEDED(result), false, batch.group.triCount);
+        if (SUCCEEDED(result))
+        {
+            ms_faceCount += batch.group.triCount;
+            MapPerformance::Count(MapPerformance::Counter::ModelDrawsSaved, batch.sourceCount - 1);
+            MapPerformance::Count(MapPerformance::Counter::RigidBatchSaved, batch.sourceCount - 1);
+            MapPerformance::Count(MapPerformance::Counter::RigidBatchDraws);
+            static bool logged = false;
+            if (!logged)
+            {
+                logged = true;
+                TraceError("RIGID_BATCH_ACTIVE asset=\"%s\" sources=%u triangles=%d bounded_roundoff=1",
+                    m_pModel->GetDiagnosticAsset(), batch.sourceCount, batch.group.triCount);
+            }
+        }
+        else
+        {
+            // Retry only the failed batch's original groups. Earlier alpha
+            // draws must not be submitted twice if a later batch fails.
+            for (unsigned i = batch.firstSource; i < batch.firstSource + batch.sourceCount; ++i)
+            {
+                const auto& original = originals[i];
+                const CGrannyMesh* mesh = m_pModel->GetMeshPointer(original.mesh);
+                STATEMANAGER.SetTransform(D3DTS_WORLD, &m_meshMatrices[original.mesh]);
+                STATEMANAGER.SetIndices(m_pModel->GetD3DIndexBuffer(), mesh->GetVertexBasePosition());
+                MapPerformance::Count(MapPerformance::Counter::ActorDrawCalls);
+                ms_faceCount += original.group.triCount;
+                DrawMeshTriangle(mesh, original.mesh, &original.group);
+            }
+        }
+    }
+    if (active && method == 0) active->RestoreRenderState();
+    return true;
+}
+
 // With One Texture
-void CGrannyModelInstance::RenderMeshNodeListWithOneTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType) const
+void CGrannyModelInstance::RenderMeshNodeListWithOneTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType)
 {
 	MapPerformance::Scope drawProfile("actor.draw_submit", m_pModel->GetGrannyModelPointer()->Name);
 	assert(m_pModel != nullptr);
+	if (eMeshType == CGrannyMesh::TYPE_RIGID && RenderRigidBatches(eMtrlType, 0)) return;
 
 	const LPDIRECT3DINDEXBUFFER9 lpd3dIdxBuf = m_pModel->GetD3DIndexBuffer();
 	assert(lpd3dIdxBuf != nullptr);
@@ -436,14 +518,18 @@ void CGrannyModelInstance::RenderMeshNodeListWithOneTexture(CGrannyMesh::EType e
 	while (pMeshNode)
 	{
 		const CGrannyMesh * pMesh = pMeshNode->pMesh;
+		MapPerformance::DetailScope detail("model", "one_texture", m_pModel->GetDiagnosticAsset(),
+			m_pModel->GetGrannyModelPointer()->Name, pMeshNode->iMesh, eMeshType, eMtrlType,
+			pMesh->GetVertexCount(), pMesh->GetGrannyMeshPointer()->Name);
 		const int vtxMeshBasePos = pMesh->GetVertexBasePosition();
 
-		STATEMANAGER.SetIndices(lpd3dIdxBuf, vtxMeshBasePos);
+		const auto* batchedBuffer = m_pModel->GetBatchedD3DIndexBuffer();
+		const auto* pTriGroupNode = pMesh->GetDrawTriGroupNodeList(eMtrlType, batchedBuffer != nullptr);
+		const bool batched = pTriGroupNode != pMesh->GetTriGroupNodeList(eMtrlType);
+		STATEMANAGER.SetIndices(batched ? m_pModel->GetBatchedD3DIndexBuffer() : lpd3dIdxBuf, vtxMeshBasePos);
 		STATEMANAGER.SetTransform(D3DTS_WORLD, &m_meshMatrices[pMeshNode->iMesh]);
 
 		/////
-		const CGrannyMesh::TTriGroupNode* pTriGroupNode = pMesh->GetTriGroupNodeList(eMtrlType);
-		const int vtxCount = pMesh->GetVertexCount();
 		while (pTriGroupNode)
 		{
 			ms_faceCount += pTriGroupNode->triCount;
@@ -462,7 +548,7 @@ void CGrannyModelInstance::RenderMeshNodeListWithOneTexture(CGrannyMesh::EType e
                 MapPerformance::Count(MapPerformance::Counter::MaterialBinds);
             }
 			MapPerformance::Count(MapPerformance::Counter::ActorDrawCalls);
-			STATEMANAGER.DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, vtxCount, pTriGroupNode->idxPos, pTriGroupNode->triCount, vtxMeshBasePos);
+			DrawMeshTriangle(pMesh, pMeshNode->iMesh, pTriGroupNode);
 
 			pTriGroupNode = pTriGroupNode->pNextTriGroupNode;
 		}
@@ -474,10 +560,11 @@ void CGrannyModelInstance::RenderMeshNodeListWithOneTexture(CGrannyMesh::EType e
 }
 
 // With Two Texture
-void CGrannyModelInstance::RenderMeshNodeListWithTwoTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType) const
+void CGrannyModelInstance::RenderMeshNodeListWithTwoTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType)
 {
 	MapPerformance::Scope drawProfile("actor.draw_submit", m_pModel->GetGrannyModelPointer()->Name);
 	assert(m_pModel != nullptr);
+	if (eMeshType == CGrannyMesh::TYPE_RIGID && RenderRigidBatches(eMtrlType, 1)) return;
 
 	const LPDIRECT3DINDEXBUFFER9 lpd3dIdxBuf = m_pModel->GetD3DIndexBuffer();
 	assert(lpd3dIdxBuf != nullptr);
@@ -488,14 +575,18 @@ void CGrannyModelInstance::RenderMeshNodeListWithTwoTexture(CGrannyMesh::EType e
 	while (pMeshNode)
 	{
 		const CGrannyMesh * pMesh = pMeshNode->pMesh;
+		MapPerformance::DetailScope detail("model", "two_texture", m_pModel->GetDiagnosticAsset(),
+			m_pModel->GetGrannyModelPointer()->Name, pMeshNode->iMesh, eMeshType, eMtrlType,
+			pMesh->GetVertexCount(), pMesh->GetGrannyMeshPointer()->Name);
 		const int vtxMeshBasePos = pMesh->GetVertexBasePosition();
 
-		STATEMANAGER.SetIndices(lpd3dIdxBuf, vtxMeshBasePos);
+		const auto* batchedBuffer = m_pModel->GetBatchedD3DIndexBuffer();
+		const auto* pTriGroupNode = pMesh->GetDrawTriGroupNodeList(eMtrlType, batchedBuffer != nullptr);
+		const bool batched = pTriGroupNode != pMesh->GetTriGroupNodeList(eMtrlType);
+		STATEMANAGER.SetIndices(batched ? m_pModel->GetBatchedD3DIndexBuffer() : lpd3dIdxBuf, vtxMeshBasePos);
 		STATEMANAGER.SetTransform(D3DTS_WORLD, &m_meshMatrices[pMeshNode->iMesh]);
 
 		/////
-		const CGrannyMesh::TTriGroupNode* pTriGroupNode = pMesh->GetTriGroupNodeList(eMtrlType);
-		const int vtxCount = pMesh->GetVertexCount();
 		while (pTriGroupNode)
 		{
 			ms_faceCount += pTriGroupNode->triCount;
@@ -509,7 +600,7 @@ void CGrannyModelInstance::RenderMeshNodeListWithTwoTexture(CGrannyMesh::EType e
                 MapPerformance::Count(MapPerformance::Counter::MaterialBinds);
             }
 			MapPerformance::Count(MapPerformance::Counter::ActorDrawCalls);
-			STATEMANAGER.DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, vtxCount, pTriGroupNode->idxPos, pTriGroupNode->triCount, vtxMeshBasePos);
+			DrawMeshTriangle(pMesh, pMeshNode->iMesh, pTriGroupNode);
 			pTriGroupNode = pTriGroupNode->pNextTriGroupNode;
 		}
 		/////
@@ -519,10 +610,11 @@ void CGrannyModelInstance::RenderMeshNodeListWithTwoTexture(CGrannyMesh::EType e
 }
 
 // Without Texture
-void CGrannyModelInstance::RenderMeshNodeListWithoutTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType) const
+void CGrannyModelInstance::RenderMeshNodeListWithoutTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType)
 {
 	MapPerformance::Scope drawProfile("actor.draw_submit", m_pModel->GetGrannyModelPointer()->Name);
 	assert(m_pModel != nullptr);
+	if (eMeshType == CGrannyMesh::TYPE_RIGID && RenderRigidBatches(eMtrlType, 2)) return;
 
 	const LPDIRECT3DINDEXBUFFER9 lpd3dIdxBuf = m_pModel->GetD3DIndexBuffer();
 	assert(lpd3dIdxBuf != nullptr);
@@ -532,25 +624,88 @@ void CGrannyModelInstance::RenderMeshNodeListWithoutTexture(CGrannyMesh::EType e
 	while (pMeshNode)
 	{
 		const CGrannyMesh * pMesh = pMeshNode->pMesh;
+		MapPerformance::DetailScope detail("model", "without_texture", m_pModel->GetDiagnosticAsset(),
+			m_pModel->GetGrannyModelPointer()->Name, pMeshNode->iMesh, eMeshType, eMtrlType,
+			pMesh->GetVertexCount(), pMesh->GetGrannyMeshPointer()->Name);
 		const int vtxMeshBasePos = pMesh->GetVertexBasePosition();
 
-		STATEMANAGER.SetIndices(lpd3dIdxBuf, vtxMeshBasePos);
+		const auto* batchedBuffer = m_pModel->GetBatchedD3DIndexBuffer();
+		const auto* pTriGroupNode = pMesh->GetDrawTriGroupNodeList(eMtrlType, batchedBuffer != nullptr);
+		const bool batched = pTriGroupNode != pMesh->GetTriGroupNodeList(eMtrlType);
+		STATEMANAGER.SetIndices(batched ? m_pModel->GetBatchedD3DIndexBuffer() : lpd3dIdxBuf, vtxMeshBasePos);
 		STATEMANAGER.SetTransform(D3DTS_WORLD, &m_meshMatrices[pMeshNode->iMesh]);
 
 		/////
-		const CGrannyMesh::TTriGroupNode* pTriGroupNode = pMesh->GetTriGroupNodeList(eMtrlType);
-		const int vtxCount = pMesh->GetVertexCount();
-
 		while (pTriGroupNode)
 		{
 			ms_faceCount += pTriGroupNode->triCount;
 			MapPerformance::Count(MapPerformance::Counter::ActorDrawCalls);
-			STATEMANAGER.DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, vtxCount, pTriGroupNode->idxPos, pTriGroupNode->triCount, vtxMeshBasePos);
+			DrawMeshTriangle(pMesh, pMeshNode->iMesh, pTriGroupNode);
 			pTriGroupNode = pTriGroupNode->pNextTriGroupNode;
 		}
 		/////
 
 		pMeshNode = pMeshNode->pNextMeshNode;
 	}
+}
+
+void CGrannyModelInstance::DrawMeshTriangle(const CGrannyMesh* mesh, int meshIndex,
+    const CGrannyMesh::TTriGroupNode* group)
+{
+    if (group->sourceDraws > 1)
+    {
+        MapPerformance::Count(MapPerformance::Counter::ModelDrawsSaved, group->sourceDraws - 1);
+        static bool logged = false;
+        if (!logged)
+        {
+            logged = true;
+            TraceError("MODEL_BATCH_ACTIVE model=\"%s\" source_draws=%u triangles=%d",
+                m_pModel->GetGrannyModelPointer()->Name, group->sourceDraws, group->triCount);
+        }
+    }
+    if (m_gpuSkinning && mesh->CanDeformPNTVertices())
+    {
+        if (m_gpuPaletteCaches.size() != static_cast<size_t>(m_pModel->GetMeshCount()))
+            m_gpuPaletteCaches.resize(m_pModel->GetMeshCount());
+        {
+            GPUSkinning::DrawScope gpu(ms_lpd3dDevice, mesh->GetGPUSkinBuffer(),
+                reinterpret_cast<const D3DXMATRIX*>(GrannyGetWorldPoseComposite4x4Array(__GetWorldPosePtr())),
+                __GetMeshBoneIndices(meshIndex), mesh->GetGPUSkinBoneCount(),
+                &m_gpuPaletteCaches[meshIndex], GetPoseRevision());
+            if (gpu)
+            {
+                // This vertex buffer is mesh-local. The currently bound
+                // original/batched index buffer supplies the same triangles.
+                const HRESULT result = STATEMANAGER.DrawIndexedPrimitive(D3DPT_TRIANGLELIST,
+                    0, mesh->GetVertexCount(), group->idxPos, group->triCount, 0);
+                MapPerformance::RecordModelDrawResult(SUCCEEDED(result), true, group->triCount);
+                if (SUCCEEDED(result))
+                {
+                    MapPerformance::Count(MapPerformance::Counter::GPUSkinDraws);
+                    static bool logged = false;
+                    if (!logged)
+                    {
+                        logged = true;
+                        TraceError("GPU_SKINNING_ACTIVE bones=%u", mesh->GetGPUSkinBoneCount());
+                    }
+                    return;
+                }
+                GPUSkinning::ReportFallback("gpu_draw_failed");
+            }
+        }
+        // Unusual lighting or another vertex shader can require the legacy
+        // path for this pass. Materialize CPU vertices on demand, once per
+        // pose/buffer version, including shadow passes and shared LOD buffers.
+        MapPerformance::Count(MapPerformance::Counter::CPUSkinFallbacks);
+        if (!EnsureCPUSkinnedVertices())
+        {
+            MapPerformance::RecordModelDrawSkipped();
+            return;
+        }
+        STATEMANAGER.SetStreamSource(0, __GetDeformableD3DVertexBufferPtr(), sizeof(TPNTVertex));
+    }
+    const HRESULT result = STATEMANAGER.DrawIndexedPrimitive(D3DPT_TRIANGLELIST, 0, mesh->GetVertexCount(),
+        group->idxPos, group->triCount, mesh->GetVertexBasePosition());
+    MapPerformance::RecordModelDrawResult(SUCCEEDED(result), false, group->triCount);
 }
 

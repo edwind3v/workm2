@@ -1,4 +1,5 @@
 #include "StdAfx.h"
+#include "../EterBase/MapPerformance.h"
 #include "ActorInstance.h"
 #include "AreaTerrain.h"
 #include "RaceData.h"
@@ -43,20 +44,16 @@ void CActorInstance::INSTANCEBASE_Transform()
 		m_bNeedUpdateCollision = TRUE;
 	}
 
-	//DWORD t2=ELTimer_GetMSec();
-	Update();
-	//DWORD t3=ELTimer_GetMSec();
-	TransformProcess();
-	//DWORD t4=ELTimer_GetMSec();
-	Transform();
-	//DWORD t5=ELTimer_GetMSec();
-	UpdatePointInstance();
-	//DWORD t6=ELTimer_GetMSec();
-	ShakeProcess();
-	//DWORD t7=ELTimer_GetMSec();
-	UpdateBoundingSphere();
-	//DWORD t8=ELTimer_GetMSec();
-	UpdateAttribute();
+    const bool profileSample = MapPerformance::SampledFrame();
+    MapPerformance::MeasureIf(profileSample, "actor.clock_lod_update", [&] { Update(); });
+    MapPerformance::MeasureIf(profileSample, "actor.transform_process", [&] { TransformProcess(); });
+    MapPerformance::MeasureIf(profileSample, "actor.world_transform", [&] { Transform(); });
+    MapPerformance::MeasureIf(profileSample, "actor.attachment_collision_points", [&] { UpdatePointInstance(); });
+    MapPerformance::MeasureIf(profileSample, "actor.bounds_attributes", [&] {
+        ShakeProcess();
+        UpdateBoundingSphere();
+        UpdateAttribute();
+    });
 }
 
 /*

@@ -529,6 +529,7 @@ void CActorInstance::UseAlphaWeaponTrace()
 
 void CActorInstance::UpdateAttachingInstances()
 {
+    if (m_AttachingEffectList.empty()) return;
 	CEffectManager& rkEftMgr=CEffectManager::Instance();
 
 	std::list<TAttachingEffect>::iterator it;

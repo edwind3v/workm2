@@ -149,13 +149,18 @@ class CGrannyModelInstance : public CGraphicCollisionObject
 		void	UpdateWorldPose() const;
 		void	UpdateWorldMatrices(const D3DXMATRIX * c_pWorldMatrix) const;
 		void	DeformPNTVertices(void * pvDest) const;
-		void InvalidatePose() const { ++m_poseInputRevision; }
+        bool CanUseGPUSkinning();
+        bool EnsureCPUSkinnedVertices();
+        bool RenderRigidBatches(CGrannyMaterial::EType materialType, unsigned textureMethod);
+        void DrawMeshTriangle(const CGrannyMesh* mesh, int meshIndex,
+            const CGrannyMesh::TTriGroupNode* group);
+		void InvalidatePose() const { ++m_poseInputRevision; ++m_poseStateRevision; }
 		std::uint64_t GetPoseRevision() const;
 		static void DestroyWorldPoseCache();
 
-		void	RenderMeshNodeListWithOneTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType) const;
-		void	RenderMeshNodeListWithTwoTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType) const;
-		void	RenderMeshNodeListWithoutTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType) const;
+		void	RenderMeshNodeListWithOneTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType);
+		void	RenderMeshNodeListWithTwoTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType);
+		void	RenderMeshNodeListWithoutTexture(CGrannyMesh::EType eMeshType, CGrannyMaterial::EType eMtrlType);
 
 	protected:
 		// Static Data
@@ -199,6 +204,20 @@ class CGrannyModelInstance : public CGraphicCollisionObject
         std::uint64_t m_skinnedPoseRevision = 0, m_skinnedBufferVersion = 0;
         const CGraphicVertexBuffer* m_skinnedBuffer = nullptr;
         bool m_ownsMeshBindings = true;
+        bool m_gpuSkinning = false;
+        mutable bool m_uniformRigidMatrices = false;
+        mutable bool m_sampledWithoutControls = false;
+        mutable std::vector<D3DXMATRIX> m_matrixPoseSnapshot;
+        mutable D3DXMATRIX m_matrixWorldSnapshot;
+        mutable std::uint64_t m_matrixPoseRevision = 0;
+        mutable bool m_matrixSnapshotValid = false;
+        std::vector<GPUSkinning::PaletteCache> m_gpuPaletteCaches;
+        bool m_constantMotion = false;
+        mutable bool m_sampledConstantControl = false;
+        mutable std::uint64_t m_poseStateRevision = 1, m_sampledPoseStateRevision = 0;
+        mutable bool m_revisionMatricesValid = false;
+        mutable std::uint64_t m_revisionMatricesPose = 0;
+        mutable D3DXMATRIX m_revisionMatricesWorld;
 
 		SMaterialData m_material_data{}; // @fixme057
 

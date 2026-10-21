@@ -60,7 +60,7 @@ static constexpr DWORD STATEMANAGER_MAX_RENDERSTATES = 256;
 static constexpr DWORD STATEMANAGER_MAX_TEXTURESTATES = 128;
 static constexpr DWORD STATEMANAGER_MAX_SAMPLERSTATES = 128;
 static constexpr DWORD STATEMANAGER_MAX_STAGES = 8;
-static constexpr DWORD STATEMANAGER_MAX_VCONSTANTS = 96;
+static constexpr DWORD STATEMANAGER_MAX_VCONSTANTS = 256;
 static constexpr DWORD STATEMANAGER_MAX_PCONSTANTS = 8;
 static constexpr DWORD STATEMANAGER_MAX_TRANSFORMSTATES = 300;	// World1 lives way up there...
 static constexpr DWORD STATEMANAGER_MAX_STREAMS = 16;
@@ -68,17 +68,18 @@ static constexpr DWORD STATEMANAGER_MAX_STREAMS = 16;
 class CStreamData
 {
 	public:
-		CStreamData(LPDIRECT3DVERTEXBUFFER9 pStreamData = nullptr, UINT Stride = 0) : m_lpStreamData(pStreamData), m_Stride(Stride)
+		CStreamData(LPDIRECT3DVERTEXBUFFER9 pStreamData = nullptr, UINT Stride = 0, UINT Offset = 0) : m_lpStreamData(pStreamData), m_Stride(Stride), m_Offset(Offset)
 		{
 		}
 
 		bool operator == (const CStreamData& rhs) const
 		{
-			return ((m_lpStreamData == rhs.m_lpStreamData) && (m_Stride == rhs.m_Stride));
+			return ((m_lpStreamData == rhs.m_lpStreamData) && (m_Stride == rhs.m_Stride) && (m_Offset == rhs.m_Offset));
 		}
 
 		LPDIRECT3DVERTEXBUFFER9	m_lpStreamData;
 		UINT					m_Stride;
+        UINT m_Offset;
 };
 
 class CIndexData
@@ -244,6 +245,10 @@ class CStateManager : public CSingleton<CStateManager>
 
 		void	SetDefaultState();
         void InvalidateShaderConstants();
+        // Shared FFP inputs consumed by GPU skinning. World transforms are
+        // per draw; shader bindings and texture-transform flags are checked
+        // explicitly by the skinning cache rather than advancing this revision.
+        unsigned long long GetVertexProcessingRevision() const { return m_vertexProcessingRevision; }
 		void	Restore();
 
 		bool	BeginScene();
@@ -258,6 +263,8 @@ class CStateManager : public CSingleton<CStateManager>
 
 		void	SetLight(DWORD index, CONST D3DLIGHT9* pLight) const;
 		void	GetLight(DWORD index, D3DLIGHT9* pLight) const;
+		void LightEnable(DWORD index, BOOL enabled);
+		bool GetLightEnable(DWORD index) const;
 
 		// Renderstates
 		void	SaveRenderState(D3DRENDERSTATETYPE Type, DWORD dwValue);
@@ -328,6 +335,9 @@ class CStateManager : public CSingleton<CStateManager>
 		void SaveStreamSource(UINT StreamNumber, LPDIRECT3DVERTEXBUFFER9 pStreamData, UINT Stride);
 		void RestoreStreamSource(UINT StreamNumber);
 		void SetStreamSource(UINT StreamNumber, LPDIRECT3DVERTEXBUFFER9 pStreamData, UINT Stride);
+        HRESULT SetStreamSourceOffset(UINT stream, LPDIRECT3DVERTEXBUFFER9 buffer, UINT stride, UINT offset);
+        CStreamData GetStreamSource(UINT stream) const { return m_CurrentState.m_StreamData[stream]; }
+        CIndexData GetIndices() const { return m_CurrentState.m_IndexData; }
 
 		void SaveIndices(LPDIRECT3DINDEXBUFFER9 pIndexData, UINT BaseVertexIndex);
 		void RestoreIndices();
@@ -346,6 +356,8 @@ class CStateManager : public CSingleton<CStateManager>
 
 	private:
 		bool m_vertexConstantsValid[STATEMANAGER_MAX_VCONSTANTS]{};
+        mutable unsigned long long m_vertexProcessingRevision = 1;
+        bool m_materialValid = false;
         bool m_pixelConstantsValid[STATEMANAGER_MAX_PCONSTANTS]{};
         CStateManagerState	m_ChipState;
 		CStateManagerState	m_CurrentState;
@@ -355,6 +367,7 @@ class CStateManager : public CSingleton<CStateManager>
 		bool				m_bScene;
 		DWORD				m_dwBestMinFilter;
         DWORD m_mipFilterCaps = 0;
+        DWORD m_vertexConstantLimit = 0;
 		DWORD				m_dwBestMagFilter;
 		LPDIRECT3DDEVICE9	m_lpD3DDev;
 

@@ -225,6 +225,9 @@ class CGraphicBase
 		static void SetDefaultIndexBuffer(UINT eDefIB);
 		static bool SetPDTStream(SPDTVertexRaw* pVertices, UINT uVtxCount);
 		static bool SetPDTStream(SPDTVertex* pVertices, UINT uVtxCount);
+        static HRESULT DrawParticleQuads(const TPDTVertex* vertices, UINT vertexCount,
+            const WORD* fallbackIndices, bool* streamed);
+        static void DestroyParticleDeviceObjects();
 #ifndef ENABLE_FIX_MOBS_LAG
 		static bool SetPDTTextLineStream(SPDTVertexRaw* pVertices, UINT uVtxCount);
 #endif

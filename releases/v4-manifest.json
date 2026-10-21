@@ -1,0 +1,30 @@
+{
+  "name": "v4 optimization",
+  "profile_version": 11,
+  "files": {
+    "metin2client.exe": {
+      "bytes": 7869952,
+      "sha256": "61bc181c12ab57f968e63a5488e988a31d61f4e75b6a4d7b52a57b1cd4aa4711"
+    },
+    "pack/root.eix": {
+      "bytes": 3308,
+      "sha256": "4b058c62f4b6f58db2ff539505af4b6c6e2aff11e106819dd8d4b821986cf0ac"
+    },
+    "pack/root.epk": {
+      "bytes": 624896,
+      "sha256": "58f69bb3cb47f2fc373845d15e151797d541855a0773904de928bdd88f5eed4e"
+    },
+    "pack/root/uiminimap.py": {
+      "bytes": 15704,
+      "sha256": "49b6d4c03e3549821c16a8adf1c63289352f6af362a404539dc7e0e2954a800e"
+    },
+    "diagnostics/v10-syserr.txt": {
+      "bytes": 1415923,
+      "sha256": "6787f666a819ab6ecca634658c45e82a8f9595bbcd99b225c6b7f9a83d92a392"
+    },
+    "diagnostics/v11-syserr.txt": {
+      "bytes": 1577817,
+      "sha256": "d298c9c14b2a3351ee19ece61d5ae1d6f7eea18656be23b21bf86907d84e4b2d"
+    }
+  }
+}

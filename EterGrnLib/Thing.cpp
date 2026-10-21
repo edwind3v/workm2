@@ -211,6 +211,7 @@ bool CGraphicThing::LoadModels()
 	{
 		CGrannyModel & rModel = m_models[m];
 		granny_model * pgrnModel = m_pgrnFileInfo->Models[m];
+		rModel.SetDiagnosticAsset(GetFileName());
 
 		if (!rModel.CreateFromGrannyModelPointer(pgrnModel))
 			return false;

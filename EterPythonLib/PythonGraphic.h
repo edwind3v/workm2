@@ -65,5 +65,12 @@ class CPythonGraphic : public CScreen, public CSingleton<CPythonGraphic>
 		D3DVIEWPORT9							m_backupViewport;
 
 		float									m_fOrthoDepth;
+
+    private:
+        void RestoreOmniLights() const;
+        mutable bool m_omniLightsActive = false;
+        mutable D3DLIGHT9 m_savedOmniLights[2]{};
+        mutable bool m_savedOmniEnabled[2]{};
+        mutable D3DMATERIAL9 m_savedOmniMaterial{};
 };
 

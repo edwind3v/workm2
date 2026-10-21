@@ -82,14 +82,15 @@ void CActorInstance::UpdatePointInstance(TCollisionPointInstance * pPointInstanc
 	{
 		const TSphereData & c = sit->GetAttribute();//c_pCollisionData->SphereDataVector[j].GetAttribute();
 
-		D3DXMATRIX matPoint;
-		D3DXMatrixTranslation(&matPoint, c.v3Position.x, c.v3Position.y, c.v3Position.z);
-		matPoint = matPoint * matBone;
+        // Only the translation row was used from Translation * matBone.
+        // Transform that row directly, without a perspective divide.
+        D3DXVECTOR4 point;
+        D3DXVec3Transform(&point, &c.v3Position, &matBone);
 
 		dit->v3LastPosition = dit->v3Position;
-		dit->v3Position.x = matPoint._41;
-		dit->v3Position.y = matPoint._42;
-		dit->v3Position.z = matPoint._43;
+		dit->v3Position.x = point.x;
+		dit->v3Position.y = point.y;
+		dit->v3Position.z = point.z;
 	}
 }
 
@@ -102,7 +103,6 @@ void CActorInstance::UpdateAdvancingPointInstance()
 	if (m_pkHorse)
 		m_pkHorse->UpdateAdvancingPointInstance();
 
-	D3DXMATRIX matPoint;
 	D3DXMATRIX matCenter;
 
 	TCollisionPointInstanceListIterator itor = m_BodyPointInstanceList.begin();
@@ -150,12 +150,12 @@ void CActorInstance::UpdateAdvancingPointInstance()
 				const TSphereData & c = c_pCollisionData->SphereDataVector[j].GetAttribute();
 				CDynamicSphereInstance & rSphereInstance = rInstance.SphereInstanceVector[j];
 
-				D3DXMatrixTranslation(&matPoint, c.v3Position.x, c.v3Position.y, c.v3Position.z);
-				matPoint = matPoint * matCenter;
+                D3DXVECTOR4 point;
+                D3DXVec3Transform(&point, &c.v3Position, &matCenter);
 
-				rSphereInstance.v3LastPosition.x = matPoint._41;
-				rSphereInstance.v3LastPosition.y = matPoint._42;
-				rSphereInstance.v3LastPosition.z = matPoint._43;
+				rSphereInstance.v3LastPosition.x = point.x;
+				rSphereInstance.v3LastPosition.y = point.y;
+				rSphereInstance.v3LastPosition.z = point.z;
 				rSphereInstance.v3Position = rSphereInstance.v3LastPosition;
 				rSphereInstance.v3Position += v3Movement;
 			}
