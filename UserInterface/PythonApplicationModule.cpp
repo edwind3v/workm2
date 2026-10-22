@@ -395,6 +395,20 @@ PyObject* appRenderGame(PyObject* poSelf, PyObject* poArgs)
 	return Py_BuildNone();
 }
 
+PyObject* appGetLoadingScreenImages(PyObject*, PyObject*)
+{
+	const auto& images = CPythonApplication::Instance().GetLoadingScreenImages();
+	PyObject* result = PyTuple_New(static_cast<Py_ssize_t>(images.size()));
+	if (!result) return nullptr;
+	for (size_t index = 0; index < images.size(); ++index)
+	{
+		PyObject* filename = PyString_FromString(images[index].c_str());
+		if (!filename) { Py_DECREF(result); return nullptr; }
+		PyTuple_SET_ITEM(result, index, filename);
+	}
+	return result;
+}
+
 PyObject* appSetMouseHandler(PyObject* poSelf, PyObject* poArgs)
 {
 	PyObject* poHandler;
@@ -1248,6 +1262,7 @@ void initapp()
 		{ "GetInfo",					appGetInfo,						METH_VARARGS },
 		{ "UpdateGame",					appUpdateGame,					METH_VARARGS },
 		{ "RenderGame",					appRenderGame,					METH_VARARGS },
+		{ "GetLoadingScreenImages", appGetLoadingScreenImages, METH_NOARGS },
 		{ "Loop",						appLoop,						METH_VARARGS },
 		{ "Create",						appCreate,						METH_VARARGS },
 		{ "Process",					appProcess,						METH_VARARGS },

@@ -361,7 +361,7 @@ if app.ENABLE_LOADING_PERFORMANCE:
 
 		def Open(self):
 			self.SetSize(wndMgr.GetScreenWidth(), wndMgr.GetScreenHeight())
-			imgFileName = uiScriptLocale.LOCALE_UISCRIPT_PATH + "loading/loading%d.sub" % app.GetRandom(0, 3)
+			imgFileName = self.stream.GetLoadingImageFileName()
 			try:
 				image = ui.ExpandedImageBox()
 				image.SetParent(self)

@@ -128,6 +128,19 @@ class MainStream(ui.NoWindow):
 		self.CreatePopupDialog()
 
 		self.curtain = uiPhaseCurtain.PhaseCurtain()
+		if app.ENABLE_LOADING_PERFORMANCE:
+			self.__CreateLoadingBackground()
+
+	def __CreateLoadingBackground(self):
+		if self.warpLoadingWindow is None:
+			import uiWarpShower
+			self.warpLoadingWindow = uiWarpShower.WarpShowerWindow()
+			self.warpLoadingWindow.SetEscapeEvent(ui.__mem_func__(self.SetLoginPhase))
+
+	def GetLoadingImageFileName(self):
+		self.__CreateLoadingBackground()
+		# Character entry chooses the image. Warps reuse that exact image.
+		return self.warpLoadingWindow.SelectBackground(not self.warpTransitionActive)
 
 	def SetPhaseWindow(self, newPhaseWindow):
 		if self.newPhaseWindow:
@@ -255,10 +268,7 @@ class MainStream(ui.NoWindow):
 	def OpenWarpShowerWindow(self):
 		if not app.ENABLE_LOADING_PERFORMANCE:
 			return
-		if self.warpLoadingWindow is None:
-			import uiWarpShower
-			self.warpLoadingWindow = uiWarpShower.WarpShowerWindow()
-			self.warpLoadingWindow.SetEscapeEvent(ui.__mem_func__(self.SetLoginPhase))
+		self.__CreateLoadingBackground()
 		self.warpTransitionActive = True
 		self.warpTargetOpened = False
 		if self.curtain:

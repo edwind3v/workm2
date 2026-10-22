@@ -163,6 +163,7 @@ class CPythonApplication : public CMSApplication, public CInputKeyboard, public 
 
 		void UpdateGame();
 		void RenderGame();
+		const std::vector<std::string>& GetLoadingScreenImages() const { return m_loadingScreenImages; }
 
 		bool Process();
 
@@ -453,5 +454,6 @@ class CPythonApplication : public CMSApplication, public CInputKeyboard, public 
 	protected:
 		int m_iCursorNum;
 		int m_iContinuousCursorNum;
+		std::vector<std::string> m_loadingScreenImages;
 };
 

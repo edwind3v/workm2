@@ -13,6 +13,7 @@
 #include "PythonApplication.h"
 #include "PythonLoading.h"
 #include "PythonCharacterManager.h"
+#include "../EterPack/EterPackManager.h"
 
 #include "ProcessScanner.h"
 
@@ -1377,6 +1378,30 @@ bool CPythonApplication::Create(PyObject * poSelf, const char * c_szName, int wi
 	// SphereMap
 	CGrannyMaterial::CreateSphereMap(0, "d:/ymir work/special/spheremap.jpg");
 	CGrannyMaterial::CreateSphereMap(1, "d:/ymir work/special/spheremap01.jpg");
+	// Pin the images and their referenced textures through the same static
+	// resource cache used for motion assets, before background loading starts.
+	m_loadingScreenImages.clear();
+	std::vector<std::string> loadingDirectories;
+	const std::string localePath = LocaleService_GetLocalePath();
+#if defined(ENABLE_LOCALE_COMMON)
+	if (localePath != "locale/ae") loadingDirectories.emplace_back("locale/common/ui/loading/");
+#endif
+	loadingDirectories.emplace_back(localePath + "/ui/loading/");
+	for (unsigned index = 0; index < 4; ++index)
+	{
+		for (const auto& directory : loadingDirectories)
+		{
+			const std::string filename = directory + "loading" + std::to_string(index) + ".sub";
+			if (!CEterPackManager::Instance().isExistInPack(filename.c_str())) continue;
+			CResourceManager::Instance().LoadStaticCache(filename.c_str());
+			auto* image = dynamic_cast<CGraphicImage*>(CResourceManager::Instance().GetResourcePointer(filename.c_str()));
+			if (!image || image->IsEmpty() || image->GetWidth() <= 0 || image->GetHeight() <= 0) continue;
+			m_loadingScreenImages.push_back(filename);
+			break;
+		}
+	}
+	TraceError("[LOADING_SCREEN] cached_images=%u first=%s", static_cast<unsigned>(m_loadingScreenImages.size()),
+		m_loadingScreenImages.empty() ? "missing" : m_loadingScreenImages.front().c_str());
 #if defined(ENABLE_LOADING_PERFORMANCE)
 	m_pyLoading.BeginThreadLoading();
 #endif
